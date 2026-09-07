@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}物流異常 · 桂圓帳房{% endblock %}
 {% block body %}
-<div class="head"><div><div class="sup">桂圓帳房 / 物流異常</div><h1 class="serif">物流異常</h1></div></div>
+<div class="head">
+  <div><div class="sup"><a href="/shipping">出貨作業</a> / 物流異常</div><h1 class="serif">物流異常</h1></div>
+  <a href="/shipping"><button class="ghost">回出貨作業</button></a>
+</div>
 <hr class="rule">
 <p class="muted" style="font-size:13px;margin-bottom:14px">
 宅配遺失 / 破損 / 退貨 / 客訴。選處理方式;勾「一併建立理賠重寄單」會複製原訂單品項、開一張金額 0 的重寄單。</p>

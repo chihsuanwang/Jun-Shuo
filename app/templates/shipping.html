@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block title %}出貨作業 · 桂圓帳房{% endblock %}
 {% block body %}
-<div class="head"><div><div class="sup">桂圓帳房 / 出貨作業</div><h1 class="serif">出貨作業</h1></div></div>
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 出貨作業</div><h1 class="serif">出貨作業</h1></div>
+  <a href="/issues"><button class="ghost">物流異常處理</button></a>
+</div>
 <hr class="rule">
 
-<p class="muted" style="font-size:13px;margin:-4px 0 16px">目前 <strong>{{ pending }}</strong> 張訂單待出貨。</p>
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">目前 <strong>{{ pending }}</strong> 張訂單待出貨。包裹破損 / 遺失 / 退貨,點右上「物流異常處理」。</p>
 
 <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:18px">
   <div class="card">
