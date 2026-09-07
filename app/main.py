@@ -125,13 +125,6 @@ def export_report(request: Request):
             ["單號","客戶","日期","金額","狀態","距今天數"],
             [[r["order_no"], r["cust"] or "", r["order_date"], round(r["order_total"]),
               r["payment_status"], r["days"]] for r in rows])
-    if tab == "batch":
-        rows = Q.batch_report(season, asof)
-        return csv_response("批次與效期.csv",
-            ["批次","產季","商品","製造日","到期日","剩餘天數","產出","已出","剩餘","賣出比例","剩餘貨值"],
-            [[r["batch_code"], r["season"], r["pname"] or "", r["mfg_date"], r["expiry"] or "",
-              r["days_left"] if r["days_left"] is not None else "", round(r["output_qty"] or 0),
-              round(r["sold"]), round(r["remain"]), f"{r['rate']*100:.0f}%", round(r["remain_value"])] for r in rows])
     if tab == "compare":
         klist, _ = Q.season_compare()
         return csv_response("跨產季比較.csv",
@@ -165,38 +158,17 @@ def dashboard(request: Request):
     k = Q.kpi(season, asof)
     mon = Q.monthly(season)
     monmax = max([m["rev"] for m in mon] + [1])
-    ch = Q.by_channel(season)
-    chmax = max([c["rev"] for c in ch] + [1])
-    aging, overdue_all = Q.ar_aging(season, asof)
-    overdue = [r for r in overdue_all if r["days"] > 30]
-    agmax = max(list(aging.values()) + [1])
-    bp = Q.batch_progress(season)
-    for b in bp:
-        b["rate"] = (b["sold"] / b["output_qty"]) if b["output_qty"] else 0
-    iss = Q.issues_by_carrier(season)
-    for i in iss:
-        i["rate"] = (i["issues"] / i["shipped"]) if i["shipped"] else 0
-    pm = Q.product_mix(season)
-    pmtot = sum(p["rev"] for p in pm) or 1
-    for p in pm:
-        p["share"] = p["rev"] / pmtot
-    nr = Q.new_vs_repeat(season)
-    nrtot = (nr["repeat_rev"] + nr["new_rev"]) or 1
     fin = Q.finance_summary(season)
     prog = Q.season_progress(season)
-    cum = Q.cumulative_trend(season)
     return tpl.TemplateResponse("dashboard.html", dict(
         request=request, active="dash", k=k, fin=fin, prog=prog,
-        mon_json=json.dumps(mon), monmax=monmax, cum_json=json.dumps(cum),
-        ch=ch, chmax=chmax, aging=aging, agmax=agmax, overdue=overdue,
-        bp=bp, iss=iss, pm=pm, nr=nr, nr_rep_pct=nr["repeat_rev"]/nrtot,
-        top=Q.top_customers(season), alerts=Q.alerts(season, asof), **ctx,
+        mon_json=json.dumps(mon), monmax=monmax,
+        alerts=Q.alerts(season, asof), **ctx,
     ))
 
 
 # ---------- 報表 -----------------------------------------------
-REPORT_TABS = {"profit": "獲利分析", "aging": "收款帳齡",
-               "batch": "批次與效期", "compare": "跨產季比較"}
+REPORT_TABS = {"profit": "獲利分析", "aging": "收款帳齡", "compare": "跨產季比較"}
 
 @app.get("/reports", response_class=HTMLResponse)
 def reports(request: Request):
@@ -206,13 +178,19 @@ def reports(request: Request):
         tab = "profit"
     data = dict(request=request, active="report", tab=tab, tabs=REPORT_TABS, **ctx)
     if tab == "profit":
-        data.update(prod=Q.profit_by_product(season), ch=Q.by_channel(season))
+        pm = Q.product_mix(season)
+        pmtot = sum(p["rev"] for p in pm) or 1
+        for p in pm:
+            p["share"] = p["rev"] / pmtot
+        nr = Q.new_vs_repeat(season)
+        nrtot = (nr["repeat_rev"] + nr["new_rev"]) or 1
+        data.update(prod=Q.profit_by_product(season), ch=Q.by_channel(season),
+                    pm=pm, nr=nr, nr_rep_pct=nr["repeat_rev"] / nrtot,
+                    top=Q.top_customers(season))
     elif tab == "aging":
         buckets, rows = Q.ar_aging(season, asof)
         data.update(buckets=buckets, rows=rows,
                     agmax=max(list(buckets.values()) + [1]))
-    elif tab == "batch":
-        data.update(rows=Q.batch_report(season, asof))
     elif tab == "compare":
         klist, series = Q.season_compare()
         data.update(klist=klist, series=series,
@@ -375,13 +353,8 @@ async def product_save(request: Request):
 # ---------- 批次 -------------------------------------------
 @app.get("/batches", response_class=HTMLResponse)
 def batches_page(request: Request):
-    rows = q("""SELECT b.*,
-                  (SELECT p.name FROM product p WHERE p.product_id=b.product_id) pname,
-                  COALESCE((SELECT SUM(ol.qty) FROM order_line ol WHERE ol.batch_id=b.batch_id),0) sold
-                FROM batch b ORDER BY b.batch_code DESC""")
-    for r in rows:
-        r["remain"] = (r["output_qty"] or 0) - r["sold"]
-        r["rate"] = (r["sold"] / r["output_qty"]) if r["output_qty"] else 0
+    rows = Q.batch_report(None, "latest")
+    rows.sort(key=lambda r: r["batch_code"], reverse=True)
     return tpl.TemplateResponse("batches.html", dict(request=request, active="batch", rows=rows))
 
 @app.get("/batches/new", response_class=HTMLResponse)

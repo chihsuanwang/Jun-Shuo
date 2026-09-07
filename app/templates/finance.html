@@ -28,6 +28,107 @@
   </div>
 </div>
 
+<!-- 1b. 累積稅前利潤 + 毛利率趨勢 -->
+<div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:18px">
+  <div class="card">
+    <h3 class="serif">累積稅前利潤</h3>
+    <div class="muted" style="font-size:11px;margin-bottom:4px">逐月累加。線在 0 以下 = 前期投入還沒被後面的獲利補回來;爬回 0 以上 = 整體轉正。</div>
+    <div id="cumWrap" style="position:relative"></div>
+    <div id="cumTip" class="chart-tip" hidden></div>
+  </div>
+  <div class="card">
+    <h3 class="serif">毛利率趨勢</h3>
+    <div class="muted" style="font-size:11px;margin-bottom:4px">每 100 元營收留下多少毛利。線往下 = 成本漲 / 折太多 / 低毛利品項佔比升高。</div>
+    <div id="mgnWrap" style="position:relative"></div>
+    <div id="mgnTip" class="chart-tip" hidden></div>
+  </div>
+</div>
+<script>
+(function () {
+  var FIN = {{ fin_json | safe }};
+  if (!FIN.length) return;
+  var money = function (v) { return 'NT$ ' + Math.round(v).toLocaleString('en-US'); };
+  var W = 560, padL = 48, padR = 10, top = 12, bot = 118;
+
+  // ---- 累積稅前利潤 ----
+  (function () {
+    var run = 0, D = FIN.map(function (t) { run += t.pretax || 0; return { ym: t.ym, pretax: t.pretax || 0, cum: run }; });
+    var wrap = document.getElementById('cumWrap'), tip = document.getElementById('cumTip');
+    var vals = D.map(function (d) { return d.cum; });
+    var vmax = Math.max.apply(null, vals.concat([0])), vmin = Math.min.apply(null, vals.concat([0]));
+    var span = (vmax - vmin) || 1;
+    var step = (W - padL - padR) / Math.max(D.length - 1, 1);
+    var X = function (i) { return padL + i * step; };
+    var Y = function (v) { return top + (vmax - v) / span * (bot - top); };
+    var k = function (v) { return (Math.abs(v) >= 1000 ? (v / 1000).toFixed(0) + 'k' : v.toFixed(0)); };
+    var y0 = Y(0);
+    var g = ['<svg viewBox="0 0 ' + W + ' 150" style="width:100%;height:auto;display:block">'];
+    [vmax, (vmax + vmin) / 2, vmin].forEach(function (v) {
+      var y = Y(v);
+      g.push('<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="var(--rule-2)"/>');
+      g.push('<text x="' + (padL - 6) + '" y="' + (y + 3) + '" font-size="9" fill="var(--ink-3)" text-anchor="end">' + k(v) + '</text>');
+    });
+    g.push('<line x1="' + padL + '" y1="' + y0 + '" x2="' + (W - padR) + '" y2="' + y0 + '" stroke="var(--ink-3)" stroke-dasharray="3 2"/>');
+    var line = D.map(function (d, i) { return X(i) + ',' + Y(d.cum); }).join(' ');
+    g.push('<polygon points="' + X(0) + ',' + y0 + ' ' + line + ' ' + X(D.length - 1) + ',' + y0 + '" fill="var(--s-mgn)" fill-opacity="0.12"/>');
+    g.push('<polyline points="' + line + '" fill="none" stroke="var(--s-mgn)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>');
+    D.forEach(function (d, i) {
+      g.push('<circle cx="' + X(i) + '" cy="' + Y(d.cum) + '" r="3" fill="' + (d.cum < 0 ? 'var(--seal)' : 'var(--leaf)') + '"/>');
+      g.push('<text x="' + X(i) + '" y="' + (bot + 14) + '" font-size="8" fill="var(--ink-2)" text-anchor="middle">' + d.ym.slice(5) + '</text>');
+      g.push('<rect x="' + (X(i) - step / 2) + '" y="0" width="' + step + '" height="' + bot + '" fill="transparent" class="ch" data-i="' + i + '"/>');
+    });
+    g.push('</svg>');
+    wrap.innerHTML = g.join('');
+    wrap.querySelectorAll('.ch').forEach(function (r) {
+      function show(x, y) {
+        var d = D[+r.dataset.i];
+        tip.innerHTML = '<b>' + d.ym + '</b><br>當月稅前 ' + money(d.pretax) + '<br>累積至此 ' + money(d.cum);
+        tip.hidden = false; tip.style.left = Math.min(x + 14, window.innerWidth - 220) + 'px'; tip.style.top = (y + 14) + 'px';
+      }
+      r.addEventListener('mousemove', function (e) { show(e.clientX, e.clientY); });
+      r.addEventListener('mouseleave', function () { tip.hidden = true; });
+      r.addEventListener('touchstart', function () { var b = r.getBoundingClientRect(); show(b.left, b.top); setTimeout(function () { tip.hidden = true; }, 2200); }, { passive: true });
+    });
+  })();
+
+  // ---- 毛利率趨勢(只取有營收的月) ----
+  (function () {
+    var D = FIN.filter(function (t) { return t.revenue > 0; })
+      .map(function (t) { return { ym: t.ym, mgn: t.gross_profit / t.revenue * 100 }; });
+    var wrap = document.getElementById('mgnWrap'), tip = document.getElementById('mgnTip');
+    if (!D.length) { wrap.innerHTML = '<p class="muted" style="font-size:13px">還沒有銷售資料。</p>'; return; }
+    var step = (W - padL - padR) / Math.max(D.length - 1, 1);
+    var X = function (i) { return padL + i * step; };
+    var Y = function (p) { return bot - (p / 100) * (bot - top); };
+    var g = ['<svg viewBox="0 0 ' + W + ' 150" style="width:100%;height:auto;display:block">'];
+    [100, 50, 0].forEach(function (p) {
+      var y = Y(p);
+      g.push('<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="var(--rule-2)"/>');
+      g.push('<text x="' + (padL - 6) + '" y="' + (y + 3) + '" font-size="9" fill="var(--ink-3)" text-anchor="end">' + p + '%</text>');
+    });
+    var line = D.map(function (d, i) { return X(i) + ',' + Y(d.mgn); }).join(' ');
+    g.push('<polyline points="' + line + '" fill="none" stroke="var(--s-mgn)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>');
+    D.forEach(function (d, i) {
+      g.push('<circle cx="' + X(i) + '" cy="' + Y(d.mgn) + '" r="3" fill="var(--s-mgn)"/>');
+      g.push('<text x="' + X(i) + '" y="' + (bot + 14) + '" font-size="8" fill="var(--ink-2)" text-anchor="middle">' + d.ym.slice(5) + '</text>');
+      g.push('<rect x="' + (X(i) - step / 2) + '" y="0" width="' + step + '" height="' + bot + '" fill="transparent" class="mh" data-i="' + i + '"/>');
+    });
+    g.push('</svg>');
+    wrap.innerHTML = g.join('');
+    wrap.querySelectorAll('.mh').forEach(function (r) {
+      function show(x, y) {
+        var d = D[+r.dataset.i];
+        tip.innerHTML = '<b>' + d.ym + '</b><br>毛利率 ' + d.mgn.toFixed(0) + '%';
+        tip.hidden = false; tip.style.left = Math.min(x + 14, window.innerWidth - 200) + 'px'; tip.style.top = (y + 14) + 'px';
+      }
+      r.addEventListener('mousemove', function (e) { show(e.clientX, e.clientY); });
+      r.addEventListener('mouseleave', function () { tip.hidden = true; });
+      r.addEventListener('touchstart', function () { var b = r.getBoundingClientRect(); show(b.left, b.top); setTimeout(function () { tip.hidden = true; }, 2200); }, { passive: true });
+    });
+  })();
+})();
+</script>
+
 <!-- 2. 選取月份的損益(由點選驅動) -->
 <div class="card" style="margin-bottom:18px">
   <div style="display:flex;justify-content:space-between;align-items:baseline">

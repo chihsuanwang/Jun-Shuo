@@ -32,7 +32,7 @@
     {% endfor %}</tbody>
   </table>
 </div>
-<div class="card">
+<div class="card" style="margin-bottom:20px">
   <h3 class="serif">依銷售管道</h3>
   <table>
     <thead><tr><th>管道</th><th>訂單</th><th>營收</th><th>運費賺賠</th><th>毛利</th><th>毛利率</th></tr></thead>
@@ -43,6 +43,32 @@
           <td class="{{ 'neg' if c.gp < 0 }}">{{ (c.gp / c.rev if c.rev else 0)|pct }}</td></tr>
     {% endfor %}</tbody>
   </table>
+</div>
+
+<div class="grid" style="grid-template-columns:1.1fr 1fr 1fr">
+  <div class="card">
+    <h3 class="serif">品項營收佔比</h3>
+    {% for p in pm %}
+    <div class="row"><span>{{ p.name }}</span><strong>{{ (p.share*100)|round(0) }}% · {{ p.rev|money }}</strong></div>
+    <div class="bar-bg"><i style="width:{{ (p.share*100)|round(0) }}%"></i></div>
+    <div style="height:9px"></div>
+    {% endfor %}
+  </div>
+  <div class="card">
+    <h3 class="serif">新客人 vs 回頭客</h3>
+    <div class="row"><span>回頭客營收</span><strong>{{ nr.repeat_rev|money }}</strong></div>
+    <div class="bar-bg"><i style="width:{{ (nr_rep_pct*100)|round(0) }}%"></i></div>
+    <div style="height:10px"></div>
+    <div class="row"><span>新客營收</span><strong>{{ nr.new_rev|money }}</strong></div>
+    <div class="bar-bg"><i style="width:{{ ((1-nr_rep_pct)*100)|round(0) }}%;background:var(--leaf)"></i></div>
+    <div class="muted" style="font-size:11px;margin-top:10px">回頭客 {{ nr.repeat_customers }} / {{ nr.total_customers }} 位(買過 2 次以上)</div>
+  </div>
+  <div class="card">
+    <h3 class="serif">本產季 Top 客戶</h3>
+    {% for t in top %}
+    <div class="row"><span>{{ loop.index }} · {{ t.display_name }} <span class="muted">{{ t.segment }}</span></span><strong>{{ t.v|money }}</strong></div>
+    {% endfor %}
+  </div>
 </div>
 
 {# ---------- 收款帳齡 ---------- #}
@@ -66,22 +92,6 @@
 </div>
 
 {# ---------- 批次與效期 ---------- #}
-{% elif tab == 'batch' %}
-<div class="card">
-  <h3 class="serif">批次與效期</h3>
-  <table>
-    <thead><tr><th>批次</th><th>產季</th><th>商品</th><th>製造日</th><th>到期日</th><th>剩餘天數</th><th>產出</th><th>已出</th><th>剩餘</th><th>賣出比例</th><th>剩餘貨值</th></tr></thead>
-    <tbody>{% for r in rows %}
-      <tr><td>{{ r.batch_code }}</td><td>{{ r.season }}</td><td>{{ r.pname or '(多品)' }}</td>
-          <td>{{ r.mfg_date or '—' }}</td><td>{{ r.expiry or '—' }}</td>
-          <td class="{{ 'neg' if r.days_left is not none and r.days_left < 30 }}">{{ r.days_left if r.days_left is not none else '—' }}</td>
-          <td>{{ r.output_qty|money }}</td><td>{{ r.sold|money }}</td>
-          <td class="{{ 'neg' if r.remain < 0 }}">{{ r.remain|money }}</td>
-          <td>{{ (r.rate*100)|round(0) }}%</td><td>{{ r.remain_value|money }}</td></tr>
-    {% endfor %}</tbody>
-  </table>
-</div>
-
 {# ---------- 跨產季比較 ---------- #}
 {% elif tab == 'compare' %}
 <div class="card" style="margin-bottom:20px">

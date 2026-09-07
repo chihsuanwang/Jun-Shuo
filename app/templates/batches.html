@@ -6,21 +6,27 @@
   <a href="/batches/new"><button>＋ 新增批次</button></a>
 </div>
 <hr class="rule">
-<div class="card">
+<div class="card" style="overflow-x:auto">
   <table>
-    <thead><tr><th>批次</th><th>產季</th><th>對應商品</th><th>製造日</th><th>產出</th><th>已出</th><th>剩餘</th><th>賣出比例</th><th>單位成本</th><th></th></tr></thead>
+    <thead><tr><th>批次</th><th>產季</th><th>對應商品</th><th>製造日</th><th>到期日</th><th>剩餘天數</th><th>產出</th><th>已出</th><th>剩餘</th><th>賣出比例</th><th>單位成本</th><th>剩餘貨值</th><th></th></tr></thead>
     <tbody>{% for r in rows %}
       <tr>
         <td>{{ r.batch_code }}</td><td>{{ r.season }}</td><td>{{ r.pname or '(多品)' }}</td>
         <td>{{ r.mfg_date or '—' }}</td>
+        <td>{{ r.expiry or '—' }}</td>
+        <td class="{{ 'neg' if r.days_left is not none and r.days_left < 30 }}">{{ r.days_left if r.days_left is not none else '—' }}</td>
         <td>{{ r.output_qty|money }} {{ r.output_uom or '' }}</td>
         <td>{{ r.sold|money }}</td>
         <td class="{{ 'neg' if r.remain < 0 }}">{{ r.remain|money }}</td>
         <td>{{ (r.rate*100)|round(0) }}%</td>
         <td>{{ r.unit_cost|money }}</td>
+        <td>{{ r.remain_value|money }}</td>
         <td><a href="/batches/{{ r.batch_id }}/edit">編輯</a></td>
       </tr>
-    {% else %}<tr><td colspan="10" class="muted" style="text-align:left">尚無批次。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="13" class="muted" style="text-align:left">尚無批次。</td></tr>{% endfor %}</tbody>
   </table>
+</div>
+<div class="muted" style="font-size:11px;margin-top:8px">
+  「剩餘天數」以最新訂單日為結算基準,少於 30 天標紅 —— 優先促銷、通知團購主,或轉做加工品。
 </div>
 {% endblock %}

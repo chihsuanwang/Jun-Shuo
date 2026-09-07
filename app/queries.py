@@ -171,25 +171,6 @@ def ar_aging(season=None, asof=None):
     return buckets, rows
 
 
-def batch_progress(season=None):
-    sc, sp = _S(season, alias="b")
-    return q(f"""SELECT b.batch_code, b.output_qty, b.mfg_date,
-                        COALESCE((SELECT SUM(ol.qty) FROM order_line ol WHERE ol.batch_id=b.batch_id),0) sold
-                 FROM batch b WHERE {sc} ORDER BY b.batch_code""", sp)
-
-
-def issues_by_carrier(season=None):
-    sc, sp = _S(season)
-    return q(f"""SELECT o.carrier,
-                        COUNT(DISTINCT o.order_id) shipped,
-                        (SELECT COUNT(*) FROM shipment_issue si JOIN "order" o2 ON o2.order_id=si.order_id
-                         WHERE o2.carrier=o.carrier) issues,
-                        (SELECT COALESCE(SUM(cost_impact),0) FROM shipment_issue si JOIN "order" o2 ON o2.order_id=si.order_id
-                         WHERE o2.carrier=o.carrier) loss
-                 FROM "order" o WHERE {sc} AND o.carrier IS NOT NULL
-                 GROUP BY o.carrier ORDER BY issues DESC""", sp)
-
-
 def product_mix(season=None):
     sc, sp = _S(season)
     return q(f"""SELECT p.name, SUM(ol.line_subtotal) rev, SUM(ol.qty) qty
@@ -289,7 +270,7 @@ def profit_by_product(season=None):
 def batch_report(season=None, asof=None):
     a = as_of(asof)
     sc, sp = _S(season, alias="b")
-    rows = q(f"""SELECT b.batch_code, b.season, b.output_qty, b.output_uom, b.mfg_date,
+    rows = q(f"""SELECT b.batch_id, b.batch_code, b.season, b.output_qty, b.output_uom, b.mfg_date,
                         b.unit_cost,
                         (SELECT p.name FROM product p WHERE p.product_id=b.product_id) pname,
                         COALESCE(
