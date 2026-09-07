@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+{% block title %}儀表板 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">南投中寮 · 百年龍眼樹</div><h1 class="serif">銷售儀表板</h1></div>
+  <div style="text-align:right">
+    {% include "_filterbar.html" %}
+    <div class="muted" style="font-size:11px;margin-top:4px">實際結算日 {{ k.as_of }}</div>
+  </div>
+</div>
+<hr class="rule">
+
+{% if alerts %}
+<div class="warn">
+  <div class="t">需要注意</div>
+  <div class="chips">{% for a in alerts %}
+    {% if a.href %}<a class="chip" href="{{ a.href }}">{{ a.text }} →</a>
+    {% else %}<span class="chip">{{ a.text }}</span>{% endif %}
+  {% endfor %}</div>
+</div>
+{% endif %}
+
+<div class="grid" style="grid-template-columns:repeat(6,minmax(0,1fr));margin-bottom:20px">
+  <div class="card kpi"><div class="lab">本產季營收</div><div class="val">{{ k.revenue|money }}</div><div class="sub">銷售訂單</div></div>
+  <div class="card kpi" style="border-top-color:var(--s-mgn)"><div class="lab">毛利率</div><div class="val">{{ k.margin|pct }}</div><div class="sub">毛利 {{ k.gross_profit|money }}(營收扣進貨/製造成本)</div></div>
+  <div class="card kpi" style="border-top-color:var(--leaf)"><div class="lab">訂單數</div><div class="val">{{ k.orders }}</div><div class="sub">平均每單 {{ k.aov|money }}</div></div>
+  <div class="card kpi" style="border-top-color:var(--seal)"><div class="lab">本產季稅前利潤</div><div class="val {{ 'neg' if fin.pretax < 0 }}">{{ fin.pretax|money }}</div><div class="sub">毛利再扣通路抽成 / 運費 / 全產季營運費用</div></div>
+  <div class="card kpi"><div class="lab">還沒收到的貨款</div><div class="val">{{ k.ar_amount|money }}</div><div class="sub">{{ k.ar_count }} 筆</div></div>
+  <div class="card kpi" style="border-top-color:var(--ink-2)"><div class="lab">送出去的貨(成本)</div><div class="val">{{ k.pr_cost|money }}</div><div class="sub">公關·贈送·樣品 · 佔營收 {{ k.pr_ratio|pct }}</div></div>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:18px">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <h3 class="serif">本產季損益(濃縮版)</h3>
+      <a href="/finance" style="font-size:12px">看每月完整損益 →</a>
+    </div>
+    <table class="pnl">
+      <tr><td>營收</td><td class="r">{{ fin.revenue|money }}</td></tr>
+      <tr><td>− 銷貨成本(進貨/製造)</td><td class="r">−{{ fin.cogs|money }}</td></tr>
+      <tr class="sum"><td>= 毛利<span class="muted">（{{ fin.margin|pct }}）</span></td>
+          <td class="r {{ 'neg' if fin.gross_profit < 0 }}">{{ fin.gross_profit|money }}</td></tr>
+      <tr><td>− 通路抽成</td><td class="r">−{{ fin.platform_fee|money }}</td></tr>
+      <tr><td>{{ '+' if fin.ship_pnl >= 0 else '−' }} 運費賺賠</td>
+          <td class="r {{ 'neg' if fin.ship_pnl < 0 }}">{{ fin.ship_pnl|money }}</td></tr>
+      <tr><td>− 營運費用<span class="muted">（{{ fin.opex_months }} 個月,含淡季）</span></td>
+          <td class="r">−{{ fin.opex|money }}</td></tr>
+      <tr class="sum"><td>= 稅前利潤</td>
+          <td class="r {{ 'neg' if fin.pretax < 0 }}"><strong>{{ fin.pretax|money }}</strong></td></tr>
+    </table>
+    <div class="muted" style="font-size:11px;margin-top:6px">產季區間 {{ fin.window }}</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <h3 class="serif">產季目標 &amp; 進度</h3>
+      <a href="/targets" style="font-size:12px">設定目標 →</a>
+    </div>
+    {% if prog and prog.target %}
+    <div class="row"><span>目標營收</span><strong>{{ prog.target|money }}</strong></div>
+    <div class="row"><span>實際營收</span><strong>{{ prog.revenue|money }}</strong></div>
+    <div class="bar-bg"><i style="width:{{ [(prog.pct*100)|round(0), 100]|min }}%"></i></div>
+    <div class="row" style="margin-top:4px"><span>達成率</span>
+      <strong class="{{ 'neg' if prog.pct < 0.8 }}">{{ prog.pct|pct }}</strong></div>
+    <hr class="rule" style="margin:10px 0">
+    <div class="row"><span>已出貨月數</span><span>{{ prog.months_done }} / {{ prog.selling_months }} 旺季月</span></div>
+    {% if prog.projected %}
+    <div class="row"><span>依目前速度預估季末</span>
+      <strong>{{ prog.projected|money }}<span class="muted"> · {{ prog.proj_pct|pct }}</span></strong></div>
+    {% endif %}
+    {% if prog.breakeven %}
+    <div class="row"><span>損益兩平需營收</span><strong>{{ prog.breakeven|money }}</strong></div>
+    <div class="bar-bg"><i style="width:{{ [(prog.be_pct*100)|round(0), 100]|min }}%;background:{{ 'var(--leaf)' if prog.be_pct >= 1 else 'var(--seal)' }}"></i></div>
+    <div class="muted" style="font-size:11px;margin-top:4px">
+      {{ '已越過損益兩平' if prog.be_pct >= 1 else '尚未達損益兩平' }}(固定成本 {{ prog.opex|money }} ÷ 毛利率 {{ prog.margin|pct }})</div>
+    {% endif %}
+    {% else %}
+    <p class="muted" style="font-size:13px">
+      {{ '這個產季還沒設定營收目標。' if prog else '尚無產季資料。' }}
+      {% if prog %}<a href="/targets">前往設定 →</a>{% endif %}
+    </p>
+    {% if prog and prog.breakeven %}
+    <div class="row" style="margin-top:8px"><span>損益兩平需營收</span><strong>{{ prog.breakeven|money }}</strong></div>
+    <div class="row"><span>目前實際</span>
+      <strong class="{{ 'neg' if prog.be_pct < 1 }}">{{ prog.revenue|money }} · {{ prog.be_pct|pct }}</strong></div>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:18px">
+  <div style="display:flex;justify-content:space-between;align-items:baseline">
+    <h3 class="serif">累積稅前利潤趨勢</h3>
+    <span class="muted" style="font-size:12px">
+      {% if season_sel == 'all' %}全期間、跨產季逐月累加{% else %}{{ season_sel }} 產季內逐月累加{% endif %}
+    </span>
+  </div>
+  <div id="cumWrap" style="position:relative"></div>
+  <div id="cumTip" class="chart-tip" hidden></div>
+  <div class="muted" style="font-size:11px;margin-top:4px">
+    線在 0 以下 = 到當月為止,前期投入還沒被後面的獲利補回來;爬回 0 以上 = 這段期間整體轉正。
+  </div>
+</div>
+<script>
+(function () {
+  var CUM = {{ cum_json | safe }};
+  var wrap = document.getElementById('cumWrap'), tip = document.getElementById('cumTip');
+  if (!CUM.length) { wrap.innerHTML = '<p class="muted" style="font-size:13px">此區間沒有損益資料。</p>'; return; }
+  var W = 760, H = 200, padL = 52, padR = 12, top = 14, bot = 165, step = (W - padL - padR) / Math.max(CUM.length - 1, 1);
+  var vals = CUM.map(function (m) { return m.cum; });
+  var vmax = Math.max.apply(null, vals.concat([0])), vmin = Math.min.apply(null, vals.concat([0]));
+  var span = (vmax - vmin) || 1;
+  var X = function (i) { return padL + i * step; };
+  var Y = function (v) { return top + (vmax - v) / span * (bot - top); };
+  var kfmt = function (v) { return (Math.abs(v) >= 1000 ? (v / 1000).toFixed(0) + 'k' : v.toFixed(0)); };
+  var money = function (v) { return 'NT$ ' + Math.round(v).toLocaleString('en-US'); };
+  var y0 = Y(0);
+  var g = ['<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block">'];
+  [vmax, (vmax + vmin) / 2, vmin].forEach(function (v) {
+    var y = Y(v);
+    g.push('<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="var(--rule-2)"/>');
+    g.push('<text x="' + (padL - 6) + '" y="' + (y + 3) + '" font-size="9" fill="var(--ink-3)" text-anchor="end">' + kfmt(v) + '</text>');
+  });
+  // 零線(強調)
+  g.push('<line x1="' + padL + '" y1="' + y0 + '" x2="' + (W - padR) + '" y2="' + y0 + '" stroke="var(--ink-3)" stroke-dasharray="3 2"/>');
+  // 面積 + 折線
+  var line = CUM.map(function (m, i) { return X(i) + ',' + Y(m.cum); }).join(' ');
+  g.push('<polygon points="' + X(0) + ',' + y0 + ' ' + line + ' ' + X(CUM.length - 1) + ',' + y0 + '" fill="var(--s-mgn)" fill-opacity="0.12"/>');
+  g.push('<polyline points="' + line + '" fill="none" stroke="var(--s-mgn)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>');
+  CUM.forEach(function (m, i) {
+    g.push('<circle cx="' + X(i) + '" cy="' + Y(m.cum) + '" r="3" fill="' + (m.cum < 0 ? 'var(--seal)' : 'var(--leaf)') + '"/>');
+    g.push('<text x="' + X(i) + '" y="' + (bot + 14) + '" font-size="9" fill="var(--ink-2)" text-anchor="middle">' + m.ym.slice(5) + '</text>');
+    if (i === 0 || CUM[i - 1].ym.slice(0, 4) !== m.ym.slice(0, 4))
+      g.push('<text x="' + X(i) + '" y="' + (bot + 26) + '" font-size="8" fill="var(--ink-3)" text-anchor="middle">' + m.ym.slice(0, 4) + '</text>');
+    g.push('<rect x="' + (X(i) - step / 2) + '" y="0" width="' + step + '" height="' + bot + '" fill="transparent" class="cumhit" data-i="' + i + '"/>');
+  });
+  g.push('</svg>');
+  wrap.innerHTML = g.join('');
+  function show(m, x, y) {
+    tip.innerHTML = '<b>' + m.ym + '</b><br>當月稅前 ' + money(m.pretax) + '<br>累積至此 ' + money(m.cum);
+    tip.hidden = false;
+    tip.style.left = Math.min(x + 14, window.innerWidth - 220) + 'px';
+    tip.style.top = (y + 14) + 'px';
+  }
+  wrap.querySelectorAll('.cumhit').forEach(function (r) {
+    r.addEventListener('mousemove', function (e) { show(CUM[+r.dataset.i], e.clientX, e.clientY); });
+    r.addEventListener('mouseleave', function () { tip.hidden = true; });
+    r.addEventListener('touchstart', function () {
+      var b = r.getBoundingClientRect(); show(CUM[+r.dataset.i], b.left, b.top);
+      setTimeout(function () { tip.hidden = true; }, 2200);
+    }, { passive: true });
+  });
+})();
+</script>
+
+<div class="grid" style="grid-template-columns:1.4fr 1fr;margin-bottom:18px">
+  <div class="card">
+    <h3 class="serif">月營收 / 毛利趨勢</h3>
+    <div id="monWrap" style="position:relative"></div>
+    <div id="monTip" class="chart-tip" hidden></div>
+    <div style="font-size:12px;margin-top:4px">
+      <span style="display:inline-block;width:14px;height:3px;background:var(--s-rev);vertical-align:middle;margin-right:6px"></span>營收
+      <span style="display:inline-block;width:14px;height:3px;background:var(--s-mgn);vertical-align:middle;margin:0 6px 0 14px"></span>毛利
+      <span class="muted" style="margin-left:10px">滑過看各月金額</span>
+    </div>
+    <h3 class="serif" style="margin-top:14px">毛利率趨勢</h3>
+    <div id="mgnWrap" style="position:relative"></div>
+  </div>
+  <script>
+  (function () {
+    var MON = {{ mon_json | safe }};
+    var wrap = document.getElementById('monWrap'), tip = document.getElementById('monTip');
+    if (!MON.length) { wrap.innerHTML = '<p class="muted" style="font-size:13px">此區間沒有銷售資料。</p>'; return; }
+    var W = 600, H = 190, padL = 46, padR = 10, top = 14, bot = 150;
+    var ymax = Math.max.apply(null, MON.map(function (m) { return m.rev; })) || 1;
+    var step = (W - padL - padR) / Math.max(MON.length - 1, 1);
+    var X = function (i) { return padL + i * step; };
+    var Y = function (v) { return bot - (v / ymax) * (bot - top); };
+    var kfmt = function (v) { return (v / 1000).toFixed(0) + 'k'; };
+    var money = function (v) { return 'NT$ ' + Math.round(v).toLocaleString('en-US'); };
+    var g = ['<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block">'];
+    [1, 0.66, 0.33, 0].forEach(function (f) {
+      var y = Y(ymax * f);
+      g.push('<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="var(--rule-2)"/>');
+      g.push('<text x="' + (padL - 6) + '" y="' + (y + 3) + '" font-size="9" fill="var(--ink-3)" text-anchor="end">' + kfmt(ymax * f) + '</text>');
+    });
+    ['gp', 'rev'].forEach(function (key) {
+      var pts = MON.map(function (m, i) { return X(i) + ',' + Y(m[key]); }).join(' ');
+      g.push('<polyline points="' + pts + '" fill="none" stroke="var(--s-' + (key === 'rev' ? 'rev' : 'mgn') + ')" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>');
+    });
+    MON.forEach(function (m, i) {
+      g.push('<circle cx="' + X(i) + '" cy="' + Y(m.rev) + '" r="3" fill="var(--s-rev)"/>');
+      g.push('<circle cx="' + X(i) + '" cy="' + Y(m.gp) + '" r="3" fill="var(--s-mgn)"/>');
+      g.push('<text x="' + X(i) + '" y="' + (bot + 14) + '" font-size="9" fill="var(--ink-2)" text-anchor="middle">' + m.ym.slice(5) + '</text>');
+      if (i === 0 || MON[i - 1].ym.slice(0, 4) !== m.ym.slice(0, 4))
+        g.push('<text x="' + X(i) + '" y="' + (bot + 26) + '" font-size="8" fill="var(--ink-3)" text-anchor="middle">' + m.ym.slice(0, 4) + '</text>');
+      g.push('<rect x="' + (X(i) - step / 2) + '" y="0" width="' + step + '" height="' + bot + '" fill="transparent" class="monhit" data-i="' + i + '"/>');
+    });
+    g.push('</svg>');
+    wrap.innerHTML = g.join('');
+    wrap.querySelectorAll('.monhit').forEach(function (r) {
+      r.addEventListener('mousemove', function (e) {
+        var m = MON[+r.dataset.i];
+        var mg = m.rev ? (m.gp / m.rev * 100).toFixed(0) : '0';
+        tip.innerHTML = '<b>' + m.ym + '</b><br>營收 ' + money(m.rev) + '<br>毛利 ' + money(m.gp) + '<br>毛利率 ' + mg + '%';
+        tip.hidden = false;
+        tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 220) + 'px';
+        tip.style.top = (e.clientY + 14) + 'px';
+      });
+      r.addEventListener('mouseleave', function () { tip.hidden = true; });
+      r.addEventListener('touchstart', function (e) {
+        var m = MON[+r.dataset.i], b = r.getBoundingClientRect();
+        var mg = m.rev ? (m.gp / m.rev * 100).toFixed(0) : '0';
+        tip.innerHTML = '<b>' + m.ym + '</b><br>營收 ' + money(m.rev) + '<br>毛利 ' + money(m.gp) + '<br>毛利率 ' + mg + '%';
+        tip.hidden = false;
+        tip.style.left = Math.min(b.left, window.innerWidth - 220) + 'px';
+        tip.style.top = (b.top + 10) + 'px';
+        setTimeout(function () { tip.hidden = true; }, 2200);
+      }, { passive: true });
+    });
+
+    // ---- 毛利率趨勢(小圖,0~100%)----
+    var mw = document.getElementById('mgnWrap');
+    var mh = 110, mbot = 82, mtop = 10;
+    var MY = function (p) { return mbot - (p / 100) * (mbot - mtop); };
+    var mg = ['<svg viewBox="0 0 ' + W + ' ' + mh + '" style="width:100%;height:auto;display:block">'];
+    [100, 50, 0].forEach(function (p) {
+      var y = MY(p);
+      mg.push('<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="var(--rule-2)"/>');
+      mg.push('<text x="' + (padL - 6) + '" y="' + (y + 3) + '" font-size="9" fill="var(--ink-3)" text-anchor="end">' + p + '%</text>');
+    });
+    var mpts = MON.map(function (m, i) { return X(i) + ',' + MY(m.rev ? m.gp / m.rev * 100 : 0); }).join(' ');
+    mg.push('<polyline points="' + mpts + '" fill="none" stroke="var(--s-mgn)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>');
+    MON.forEach(function (m, i) {
+      var p = m.rev ? m.gp / m.rev * 100 : 0;
+      mg.push('<circle cx="' + X(i) + '" cy="' + MY(p) + '" r="3" fill="var(--s-mgn)"/>');
+      mg.push('<text x="' + X(i) + '" y="' + (mbot + 14) + '" font-size="9" fill="var(--ink-2)" text-anchor="middle">' + m.ym.slice(5) + '</text>');
+    });
+    mg.push('</svg>');
+    mw.innerHTML = mg.join('');
+  })();
+</script>
+
+  <div class="card">
+    <h3 class="serif">各銷售管道:營收 vs 毛利</h3>
+    <table>
+      <thead><tr><th>銷售管道</th><th>營收</th><th>毛利</th><th>毛利率</th></tr></thead>
+      <tbody>{% for c in ch %}
+        <tr><td>{{ c.name }}</td><td>{{ c.rev|money }}</td>
+            <td class="{{ 'neg' if c.gp < 0 }}">{{ c.gp|money }}</td>
+            <td class="{{ 'neg' if c.gp < 0 }}">{{ (c.gp / c.rev if c.rev else 0)|pct }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:18px">
+  <div class="card">
+    <h3 class="serif">還沒收到的貨款(依拖欠天數)</h3>
+    {% for k2, v in aging.items() %}
+    <div class="row"><span>{{ k2 }}</span><strong>{{ v|money }}</strong></div>
+    <div class="bar-bg"><i style="width:{{ (v/agmax*100)|round(0) }}%;{{ 'background:var(--seal)' if '31' in k2 }}"></i></div>
+    <div style="height:10px"></div>
+    {% endfor %}
+    {% if overdue %}<div class="muted" style="font-size:11px">逾 30 天 {{ overdue|length }} 筆需追款</div>{% endif %}
+  </div>
+
+  <div class="card">
+    <h3 class="serif">各批賣出進度 &amp; 到期</h3>
+    {% for b in bp %}
+    <div class="row"><span>{{ b.batch_code }} · 製 {{ b.mfg_date }}</span><strong>{{ (b.rate*100)|round(0) }}%</strong></div>
+    <div class="bar-bg"><i style="width:{{ (b.rate*100)|round(0) }}%;{{ 'background:var(--leaf)' if b.rate<0.7 }}"></i></div>
+    <div style="height:10px"></div>
+    {% endfor %}
+  </div>
+
+  <div class="card">
+    <h3 class="serif">物流異常</h3>
+    <table>
+      <thead><tr><th>物流商</th><th>件數</th><th>異常率</th><th>損失</th></tr></thead>
+      <tbody>{% for i in iss %}
+        <tr><td>{{ i.carrier }}</td>
+            <td class="{{ 'neg' if i.rate>0.05 }}">{{ i.issues }}</td>
+            <td class="{{ 'neg' if i.rate>0.05 }}">{{ i.rate|pct }}</td>
+            <td>{{ i.loss|money }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid" style="grid-template-columns:1.1fr 1fr 1fr">
+  <div class="card">
+    <h3 class="serif">品項銷售結構</h3>
+    {% for p in pm %}
+    <div class="row"><span>{{ p.name }}</span><strong>{{ (p.share*100)|round(0) }}% · {{ p.rev|money }}</strong></div>
+    <div class="bar-bg"><i style="width:{{ (p.share*100)|round(0) }}%"></i></div>
+    <div style="height:9px"></div>
+    {% endfor %}
+  </div>
+
+  <div class="card">
+    <h3 class="serif">新客人 vs 回頭客</h3>
+    <div class="row"><span>回頭客營收</span><strong>{{ nr.repeat_rev|money }}</strong></div>
+    <div class="bar-bg"><i style="width:{{ (nr_rep_pct*100)|round(0) }}%"></i></div>
+    <div style="height:10px"></div>
+    <div class="row"><span>新客營收</span><strong>{{ nr.new_rev|money }}</strong></div>
+    <div class="bar-bg"><i style="width:{{ ((1-nr_rep_pct)*100)|round(0) }}%;background:var(--leaf)"></i></div>
+    <div class="muted" style="font-size:11px;margin-top:10px">回頭客 {{ nr.repeat_customers }} / {{ nr.total_customers }} 位（買過 2 次以上)</div>
+  </div>
+
+  <div class="card">
+    <h3 class="serif">本產季 Top 客戶</h3>
+    {% for t in top %}
+    <div class="row"><span>{{ loop.index }} · {{ t.display_name }} <span class="muted">{{ t.segment }}</span></span><strong>{{ t.v|money }}</strong></div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

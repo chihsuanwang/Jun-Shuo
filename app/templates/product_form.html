@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ '編輯商品' if p else '新增商品' }} · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup"><a href="/products">商品目錄</a> / {{ '編輯' if p else '新增' }}</div>
+  <h1 class="serif">{{ p.name if p else '新增商品' }}</h1>
+</div></div>
+<hr class="rule">
+
+<form method="post" action="/products">
+{% if p %}<input type="hidden" name="product_id" value="{{ p.product_id }}">{% endif %}
+
+<div class="card" style="max-width:820px;margin-bottom:16px">
+  <h3 class="serif">基本</h3>
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div><label>商品編號</label><input name="sku" value="{{ p.sku if p else '' }}" required placeholder="例:GY-DRY-300"></div>
+    <div><label>品名</label><input name="name" value="{{ p.name if p else '' }}" required></div>
+    <div><label>型態</label><select name="product_type"><option value="">—</option>
+      {% for t in types %}<option {{ 'selected' if p and p.product_type==t }}>{{ t }}</option>{% endfor %}</select></div>
+    <div><label>舊稱呼 / 原代號</label><input name="type_code_raw" value="{{ p.type_code_raw if p else '' }}" placeholder="例:#26"></div>
+    <div><label>內容量(克,秤重品留空)</label><input name="net_weight_g" type="number" value="{{ p.net_weight_g if p and p.net_weight_g is not none else '' }}"></div>
+    <div><label>每單位克數(換算用)</label><input name="grams_per_uom" type="number" value="{{ p.grams_per_uom if p and p.grams_per_uom is not none else '' }}"></div>
+    <div><label>計價單位</label><select name="uom">
+      {% for u in uoms %}<option {{ 'selected' if p and p.uom==u }}>{{ u }}</option>{% endfor %}</select></div>
+    <div><label>包裝型態</label><select name="package_form"><option value="">—</option>
+      {% for x in forms %}<option {{ 'selected' if p and p.package_form==x }}>{{ x }}</option>{% endfor %}</select></div>
+    <div><label>保存天數</label><input name="shelf_life_days" type="number" value="{{ p.shelf_life_days if p and p.shelf_life_days is not none else '' }}"></div>
+    <div><label>保存條件</label><select name="storage_condition">
+      {% for s in storage %}<option {{ 'selected' if p and p.storage_condition==s }}>{{ s }}</option>{% endfor %}</select></div>
+    <div><label>原料成分</label><input name="ingredients" value="{{ p.ingredients if p else '龍眼(南投中寮)' }}"></div>
+    <div><label>國際條碼</label><input name="barcode" value="{{ p.barcode if p else '' }}"></div>
+    <div><label>狀態</label><select name="status">
+      <option {{ 'selected' if p and p.status=='在售' }}>在售</option>
+      <option {{ 'selected' if p and p.status=='停售' }}>停售</option></select></div>
+    <div style="display:flex;align-items:end;gap:8px"><label style="margin:0"><input type="checkbox" name="gift_only" value="1" {{ 'checked' if p and p.gift_only }} style="width:auto"> 僅供贈品(不販售)</label></div>
+  </div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ p.note if p else '' }}"></div>
+</div>
+
+<div class="card" style="max-width:820px;margin-bottom:16px">
+  <h3 class="serif">定價(各客戶分級,可留空)</h3>
+  <div class="grid" style="grid-template-columns:repeat(5,1fr)">
+    {% for s in segs %}
+    <div><label>{{ s }}</label><input name="price_{{ s }}" type="number" value="{{ prices.get(s, '') }}"></div>
+    {% endfor %}
+  </div>
+  <p class="muted" style="font-size:11px;margin-top:8px">新增訂單時會依客戶分級自動帶入這裡的價;實際賣得比這裡低,系統會把差額算成折扣。</p>
+</div>
+
+<button type="submit">儲存</button>
+<a href="/products" style="margin-left:12px">取消</a>
+</form>
+{% endblock %}

@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% set editing = cust and cust.customer_id %}
+{% block title %}{{ '編輯客戶' if editing else '新增客戶' }} · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup"><a href="/customers">客戶資料庫</a> / {{ '編輯' if editing else '新增' }}</div>
+  <h1 class="serif">{{ cust.display_name if editing else '新增客戶' }}</h1>
+</div></div>
+<hr class="rule">
+
+{% if dups %}
+<div class="card" style="max-width:760px;margin-bottom:16px;border-color:#E4B79C;background:var(--warn-bg)">
+  <h3 class="serif" style="color:var(--seal)">已有 {{ dups|length }} 位「{{ cust.display_name }}」</h3>
+  <table style="margin-bottom:10px">
+    <thead><tr><th>名稱</th><th>分級</th><th>電話</th><th>訂單數</th><th>最近購買</th><th>地址</th><th></th></tr></thead>
+    <tbody>{% for d in dups %}
+      <tr><td>{{ d.display_name }}</td><td>{{ d.segment or '未分級' }}</td><td>{{ d.phone or '—' }}</td>
+          <td>{{ d.n }}</td><td>{{ d.last_order or '—' }}</td>
+          <td style="text-align:left">{{ d.addr or '—' }}</td>
+          <td><a href="/customers/{{ d.customer_id }}" target="_blank">查看</a></td></tr>
+    {% endfor %}</tbody>
+  </table>
+  <p class="muted" style="font-size:13px">如果是同一個人,請按「取消」回去選現有那位。<br>
+  如果真的是不同人,建議在「名稱」加個區分詞(例:{{ cust.display_name }}(台中)),再勾下面這格。</p>
+  <label style="font-size:13px;display:flex;align-items:center;gap:6px;margin-top:8px">
+    <input type="checkbox" name="confirm_dup" value="1" style="width:auto"> 確認這是不同的人,仍要新增</label>
+</div>
+{% endif %}
+
+<form method="post" action="/customers">
+{% if editing %}<input type="hidden" name="customer_id" value="{{ cust.customer_id }}">{% endif %}
+<input type="hidden" name="next" value="{{ next }}">
+
+<div class="card" style="max-width:760px;margin-bottom:16px">
+  <h3 class="serif">基本</h3>
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div><label>名稱</label><input name="display_name" id="cf_name" value="{{ cust.display_name if cust else '' }}" required>
+      <div id="cf_namehint" class="muted" style="font-size:11px;margin-top:4px"></div></div>
+    <div><label>電話</label><input name="phone" value="{{ cust.phone if cust else '' }}"></div>
+    <div><label>類型</label><select name="customer_type"><option value="">—</option>
+      {% for t in types %}<option {{ 'selected' if cust and cust.customer_type==t }}>{{ t }}</option>{% endfor %}
+    </select></div>
+    <div><label>分級</label><select name="segment"><option value="">未分級</option>
+      {% for s in segs %}<option {{ 'selected' if cust and cust.segment==s }}>{{ s }}</option>{% endfor %}
+    </select></div>
+    <div><label>主要銷售管道</label><select name="primary_channel_id"><option value="">—</option>
+      {% for c in channels %}<option value="{{ c.channel_id }}" {{ 'selected' if cust and cust.primary_channel_id==c.channel_id }}>{{ c.name }}</option>{% endfor %}
+    </select></div>
+    <div><label>Email</label><input name="email" value="{{ cust.email if cust else '' }}"></div>
+    <div><label>聯絡人</label><input name="contact_person" value="{{ cust.contact_person if cust else '' }}"></div>
+    <div><label>標籤(逗號分隔)</label><input name="tags" value="{{ cust.tags if cust else '' }}" placeholder="例:老客戶,送禮"></div>
+  </div>
+</div>
+
+<div class="card" style="max-width:760px;margin-bottom:16px">
+  <h3 class="serif">開單據 / 收件</h3>
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div><label>發票抬頭</label><input name="invoice_title" value="{{ cust.invoice_title if cust else '' }}"></div>
+    <div><label>統一編號</label><input name="tax_id" value="{{ cust.tax_id if cust else '' }}"></div>
+    <div><label>單據需求</label><select name="tax_doc_pref"><option value="">—</option>
+      {% for d in docs %}<option {{ 'selected' if cust and cust.tax_doc_pref==d }}>{{ d }}</option>{% endfor %}
+    </select></div>
+    <div><label>收件人</label><input name="addr_recipient" value="{{ addr.recipient_name if addr else (cust.addr_recipient if cust else '') }}"></div>
+    <div><label>收件電話</label><input name="addr_phone" value="{{ addr.recipient_phone if addr else (cust.addr_phone if cust else '') }}"></div>
+    <div><label>郵遞區號</label><input name="addr_zip" value="{{ addr.zipcode if addr else (cust.addr_zip if cust else '') }}"></div>
+    <div style="grid-column:1 / -1"><label>地址</label><input name="addr_full" value="{{ addr.address_full if addr else (cust.addr_full if cust else '') }}"></div>
+  </div>
+</div>
+
+<div class="card" style="max-width:760px;margin-bottom:16px">
+  <div><label>備註</label><input name="note" value="{{ cust.note if cust else '' }}"></div>
+  {% if aliases %}<div class="muted" style="font-size:12px;margin-top:12px">舊稱呼(歷史各種寫法,自動對應):{{ aliases | map(attribute='alias_text') | join('、') }}</div>{% endif %}
+</div>
+
+<button type="submit">儲存</button>
+<a href="{{ next }}" style="margin-left:12px">取消</a>
+</form>
+
+{% if not editing %}
+<script>
+(function () {
+  var nm = document.getElementById('cf_name'), hint = document.getElementById('cf_namehint'), t;
+  nm.addEventListener('input', function () {
+    clearTimeout(t); var v = nm.value.trim();
+    if (!v) { hint.textContent = ''; return; }
+    t = setTimeout(function () {
+      fetch('/api/customers?q=' + encodeURIComponent(v))
+        .then(function (r) { return r.json(); })
+        .then(function (rows) {
+          var same = rows.filter(function (r) { return r.name === v; });
+          hint.textContent = same.length
+            ? '⚠ 已有 ' + same.length + ' 位同名,存檔時會再提醒'
+            : '';
+          hint.style.color = same.length ? 'var(--seal)' : '';
+        }).catch(function () {});
+    }, 250);
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

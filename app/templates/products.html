@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}商品目錄 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 商品目錄</div><h1 class="serif">商品目錄</h1></div>
+  <a href="/products/new"><button>＋ 新增商品</button></a>
+</div>
+<hr class="rule">
+<div class="card">
+  <table>
+    <thead><tr><th>商品編號</th><th>品名</th><th>型態</th><th>內容量</th><th>單位</th><th>每單位克數</th><th>保存天數</th><th>狀態</th><th></th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr>
+        <td>{{ r.sku }}</td><td>{{ r.name }}</td><td>{{ r.product_type or '' }}</td>
+        <td>{{ r.net_weight_g or '—' }}</td><td>{{ r.uom }}</td>
+        <td>{{ r.grams_per_uom or '' }}</td><td>{{ r.shelf_life_days or '' }}</td>
+        <td class="{{ 'muted' if r.status=='停售' }}">{{ r.status }}</td>
+        <td><a href="/products/{{ r.product_id }}/edit">編輯</a></td>
+      </tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+<p class="muted" style="font-size:12px;margin-top:14px">
+「商品編號」是每一種品項＋規格的專屬代號(例:桂圓乾 300g 一個、500g 另一個),下訂單時用它挑商品、報表也靠它分類。編輯商品時可一併設定各客戶分級的定價。</p>
+{% endblock %}

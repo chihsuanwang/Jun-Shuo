@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}客戶資料庫 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 客戶</div><h1 class="serif">客戶資料庫</h1></div>
+  <div style="display:flex;gap:8px">
+    <a href="/export/customers.csv"><button class="ghost">匯出 CSV</button></a>
+    <a href="/customers/new"><button>＋ 新增客戶</button></a>
+  </div>
+</div>
+<hr class="rule">
+
+<form method="get" action="/customers" style="margin-bottom:14px;display:flex;gap:8px;max-width:420px">
+  <input name="q" value="{{ kw }}" placeholder="搜尋名稱或舊稱呼">
+  <button type="submit" class="ghost">搜尋</button>
+  {% if kw %}<a href="/customers" style="align-self:center">清除</a>{% endif %}
+</form>
+
+<div class="card">
+  <table>
+    <thead><tr><th>名稱</th><th>分級</th><th>類型</th><th>主要管道</th><th>電話</th><th>訂單數</th><th>累計金額</th><th>最近購買</th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr>
+        <td><a href="/customers/{{ r.customer_id }}">{{ r.display_name }}</a></td>
+        <td class="{{ 'neg' if not r.segment }}">{{ r.segment or '未分級' }}</td>
+        <td>{{ r.customer_type or '' }}</td>
+        <td>{{ r.chan or '' }}</td>
+        <td>{{ r.phone or '' }}</td>
+        <td>{{ r.n_orders }}</td>
+        <td>{{ r.total|money }}</td>
+        <td>{{ r.last_order or '—' }}</td>
+      </tr>
+    {% endfor %}</tbody>
+  </table>
+  {% if not rows %}<p class="muted" style="padding:16px">沒有符合的客戶。</p>{% endif %}
+</div>
+{% endblock %}

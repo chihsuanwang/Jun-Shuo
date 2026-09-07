@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}物流異常 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div><div class="sup">桂圓帳房 / 物流異常</div><h1 class="serif">物流異常</h1></div></div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin-bottom:14px">
+宅配遺失 / 破損 / 退貨 / 客訴。選處理方式;勾「一併建立理賠重寄單」會複製原訂單品項、開一張金額 0 的重寄單。</p>
+
+<div class="card">
+  <table>
+    <thead><tr><th>日期</th><th>單號</th><th>客戶</th><th>物流商</th><th>類型</th><th>處理方式</th><th>重寄單</th><th>動作</th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr>
+        <td>{{ r.issue_date }}</td>
+        <td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td>
+        <td>{{ r.cust or '—' }}</td>
+        <td>{{ r.carrier or '' }}</td>
+        <td>{{ r.issue_type }}</td>
+        <td colspan="3">
+          <form method="post" action="/issues/{{ r.issue_id }}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select name="resolution">
+              <option value="">未處理</option>
+              {% for x in resolutions %}<option {{ 'selected' if r.resolution==x }}>{{ x }}</option>{% endfor %}
+            </select>
+            <input name="reason_note" value="{{ r.reason_note or '' }}" placeholder="說明" style="max-width:180px">
+            {% if r.linked_reship_order_id %}
+              <span class="muted" style="font-size:12px">已建重寄單</span>
+            {% else %}
+              <label style="font-size:12px;display:flex;align-items:center;gap:5px;margin:0">
+                <input type="checkbox" name="make_reship" value="1" style="width:auto">一併建立理賠重寄單</label>
+            {% endif %}
+            <button type="submit" class="ghost" style="padding:5px 12px">儲存</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">目前沒有物流異常。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endblock %}

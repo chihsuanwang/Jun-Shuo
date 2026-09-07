@@ -1,0 +1,163 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+  <style>
+    :root{
+      --paper:#F5EDDE; --paper-2:#FBF6EA; --card:#FFFDF6;
+      --ink:#2E2115; --ink-2:#6B5A44; --ink-3:#9C8A70;
+      --rule:#D9C7A6; --rule-2:#E7DBC2;
+      --seal:#A8321E; --leaf:#5B6B3A; --gold:#C08A2B;
+      --rev:#eb6834; --cost:#9C8A70; --gp:#1baf7a; --good:#2F7A4F;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:"Noto Sans TC",system-ui,sans-serif;color:var(--ink);background:var(--paper)}
+    a{color:var(--seal)} a:hover{color:#7f2415}
+    h1,h2,h3,.serif{font-family:"Noto Serif TC","Noto Sans TC",serif}
+    .card{background:var(--card);border:1px solid var(--rule);border-radius:10px;padding:20px 22px}
+    .card h3{margin:0 0 14px;font-size:16px;font-weight:700}
+    .muted{color:var(--ink-3)}
+    table{width:100%;border-collapse:collapse}
+    td{font-size:13px;padding:9px 4px}
+  </style>
+</helmet>
+
+<div style="background:var(--paper);padding:30px 40px 44px;min-width:0">
+
+  <div style="display:flex;align-items:flex-end;justify-content:space-between">
+    <div>
+      <div style="font-size:12px;letter-spacing:3px;color:var(--ink-3)">南投中寮 · 百年龍眼樹</div>
+      <h1 class="serif" style="margin:4px 0 0;font-size:27px;font-weight:900;letter-spacing:1px">財務健康 · 月損益</h1>
+    </div>
+    <div style="display:flex;gap:10px;font-size:13px">
+      <span style="background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:8px 14px">月份 <strong class="serif">2026-01</strong> ▾</span>
+      <span style="background:var(--seal);color:#FBF6EA;border-radius:8px;padding:8px 14px">實際</span>
+      <span style="background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:8px 14px;color:var(--ink-3)">預估</span>
+    </div>
+  </div>
+  <div style="height:1px;background:var(--rule);margin:16px 0 22px"></div>
+
+  <!-- 損益階梯 -->
+  <div class="card" style="margin-bottom:20px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px">
+      <h3 class="serif" style="margin:0">從營收到稅前利潤</h3>
+      <span class="muted" style="font-size:11px">2026 年 1 月 · 單位 NT$</span>
+    </div>
+
+    <!-- 階梯條 -->
+    <svg viewBox="0 0 900 210" style="width:100%;height:auto;display:block;margin-bottom:14px">
+      <g font-family="Noto Sans TC" font-size="11" fill="var(--ink-2)" text-anchor="middle">
+        <!-- 營收 -->
+        <rect x="20"  y="40" width="90" height="150" fill="var(--rev)" rx="3"/>
+        <text x="65" y="205">營收</text><text x="65" y="32" fill="var(--ink)" font-weight="700">428,600</text>
+        <!-- 銷貨成本 -->
+        <rect x="150" y="40" width="90" height="82" fill="var(--cost)" rx="3"/>
+        <text x="195" y="205">− 銷貨成本</text><text x="195" y="32">233,000</text>
+        <!-- 毛利 -->
+        <rect x="280" y="122" width="90" height="68" fill="var(--gp)" rx="3"/>
+        <text x="325" y="205">毛利</text><text x="325" y="114" fill="var(--ink)" font-weight="700">195,600</text>
+        <!-- 人事 -->
+        <rect x="410" y="122" width="90" height="34" fill="var(--cost)" rx="3"/>
+        <text x="455" y="205">− 人事</text><text x="455" y="114">96,000</text>
+        <!-- 場地倉儲 -->
+        <rect x="540" y="156" width="90" height="10" fill="var(--cost)" rx="3"/>
+        <text x="585" y="205">− 場地倉儲</text><text x="585" y="148">12,000</text>
+        <!-- 行銷 -->
+        <rect x="670" y="166" width="90" height="14" fill="var(--cost)" rx="3"/>
+        <text x="715" y="205">− 行銷</text><text x="715" y="158">18,000</text>
+        <!-- 稅前利潤 -->
+        <rect x="800" y="180" width="90" height="30" fill="var(--seal)" rx="3"/>
+        <text x="845" y="205" fill="var(--seal)" font-weight="700">稅前利潤</text><text x="845" y="172" fill="var(--seal)" font-weight="700">61,600</text>
+      </g>
+      <line x1="16" y1="190" x2="896" y2="190" stroke="var(--rule)"/>
+    </svg>
+
+    <table>
+      <tbody>
+      <tr style="border-bottom:1px solid var(--rule-2)"><td>營收(來自桂圓帳房實際訂單)</td><td style="text-align:right;font-weight:700">428,600</td></tr>
+      <tr style="border-bottom:1px solid var(--rule-2)"><td class="muted">− 銷貨成本(批次單位成本 × 數量)</td><td style="text-align:right">− 233,000</td></tr>
+      <tr style="border-bottom:1px solid var(--rule-2)"><td style="font-weight:700">= 毛利<span class="muted" style="font-weight:400">(毛利率 46%)</span></td><td style="text-align:right;font-weight:700">195,600</td></tr>
+      <tr style="border-bottom:1px solid var(--rule-2)"><td class="muted">− 人事成本　　　　　<span style="color:var(--seal)">← 郡碩要提供</span></td><td style="text-align:right">− 96,000</td></tr>
+      <tr style="border-bottom:1px solid var(--rule-2)"><td class="muted">− 場地・倉儲　　　　<span style="color:var(--seal)">← 郡碩要提供</span></td><td style="text-align:right">− 12,000</td></tr>
+      <tr style="border-bottom:1px solid var(--rule-2)"><td class="muted">− 行銷　　　　　　　<span style="color:var(--seal)">← 郡碩要提供</span></td><td style="text-align:right">− 18,000</td></tr>
+      <tr style="border-bottom:1px solid var(--rule-2)"><td class="muted">− 金流手續費・其他　<span style="color:var(--seal)">← 郡碩要提供</span></td><td style="text-align:right">− 8,000</td></tr>
+      <tr><td class="serif" style="font-size:16px;font-weight:900">= 稅前利潤</td><td style="text-align:right" class="serif"><span style="font-size:18px;font-weight:900;color:var(--good)">61,600</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+
+    <!-- 營運費用組成 -->
+    <div class="card">
+      <h3 class="serif">營運費用組成(本月)</h3>
+      <div style="display:flex;flex-direction:column;gap:13px;font-size:12px">
+        <div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>人事</span><strong>96,000 · 72%</strong></div><div style="height:9px;background:var(--rule-2);border-radius:5px"><div style="width:72%;height:100%;background:var(--cost);border-radius:5px"></div></div></div>
+        <div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>行銷</span><strong>18,000 · 13%</strong></div><div style="height:9px;background:var(--rule-2);border-radius:5px"><div style="width:13%;height:100%;background:var(--cost);border-radius:5px"></div></div></div>
+        <div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>場地・倉儲</span><strong>12,000 · 9%</strong></div><div style="height:9px;background:var(--rule-2);border-radius:5px"><div style="width:9%;height:100%;background:var(--cost);border-radius:5px"></div></div></div>
+        <div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>金流・其他</span><strong>8,000 · 6%</strong></div><div style="height:9px;background:var(--rule-2);border-radius:5px"><div style="width:6%;height:100%;background:var(--cost);border-radius:5px"></div></div></div>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:14px">合計 NT$ 134,000 / 月(固定成本)</div>
+    </div>
+
+    <!-- 實際 vs 預估 -->
+    <div class="card">
+      <h3 class="serif">實際 vs 當初預估(本月)</h3>
+      <table>
+        <thead><tr style="color:var(--ink-3);font-size:11px"><th style="text-align:left;padding:6px 4px">項目</th><th style="text-align:right;padding:6px 4px">預估</th><th style="text-align:right;padding:6px 4px">實際</th><th style="text-align:right;padding:6px 4px">差</th></tr></thead>
+        <tbody>
+          <tr style="border-top:1px solid var(--rule-2)"><td>營收</td><td style="text-align:right">400,000</td><td style="text-align:right">428,600</td><td style="text-align:right;color:var(--good)">▲ 7%</td></tr>
+          <tr style="border-top:1px solid var(--rule-2)"><td>毛利率</td><td style="text-align:right">45%</td><td style="text-align:right">46%</td><td style="text-align:right;color:var(--good)">▲ 1pt</td></tr>
+          <tr style="border-top:1px solid var(--rule-2)"><td>營運費用</td><td style="text-align:right">120,000</td><td style="text-align:right">134,000</td><td style="text-align:right;color:var(--seal)">▲ 12%</td></tr>
+          <tr style="border-top:1px solid var(--rule-2)"><td style="font-weight:700">稅前利潤</td><td style="text-align:right">60,000</td><td style="text-align:right;font-weight:700">61,600</td><td style="text-align:right;color:var(--good)">▲ 3%</td></tr>
+        </tbody>
+      </table>
+      <div class="muted" style="font-size:11px;margin-top:10px">營收超標,但營運費用也超標,利潤剛好打平預估。</div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:20px">
+    <!-- 月稅前利潤趨勢 -->
+    <div class="card">
+      <h3 class="serif">月稅前利潤趨勢</h3>
+      <svg viewBox="0 0 620 200" style="width:100%;height:auto;display:block">
+        <line x1="30" y1="110" x2="600" y2="110" stroke="var(--rule)"/>
+        <g font-size="9.5" fill="var(--ink-2)" text-anchor="middle">
+          <rect x="40"  y="120" width="46" height="34" fill="var(--seal)" rx="3"/><text x="63" y="170">9月</text>
+          <rect x="120" y="72"  width="46" height="38" fill="var(--good)" rx="3"/><text x="143" y="170">10月</text>
+          <rect x="200" y="40"  width="46" height="70" fill="var(--good)" rx="3"/><text x="223" y="170">11月</text>
+          <rect x="280" y="60"  width="46" height="50" fill="var(--good)" rx="3"/><text x="303" y="170">12月</text>
+          <rect x="360" y="66"  width="46" height="44" fill="var(--good)" rx="3"/><text x="383" y="170">1月</text>
+          <rect x="440" y="120" width="46" height="24" fill="var(--seal)" rx="3"/><text x="463" y="170">2月</text>
+          <rect x="520" y="120" width="46" height="40" fill="var(--seal)" rx="3"/><text x="543" y="170">3月</text>
+        </g>
+        <text x="24" y="113" font-size="9" fill="var(--ink-3)" text-anchor="end">0</text>
+      </svg>
+      <div class="muted" style="font-size:11px;margin-top:2px">產季旺月(10–1 月)有賺,淡月(9、2、3 月)人事固定支出把利潤吃成負的。</div>
+    </div>
+
+    <!-- 損益兩平 -->
+    <div class="card">
+      <h3 class="serif">損益兩平點</h3>
+      <div style="font-size:13px;line-height:2.1">
+        <div style="display:flex;justify-content:space-between"><span class="muted">每月固定成本</span><strong>NT$ 134,000</strong></div>
+        <div style="display:flex;justify-content:space-between"><span class="muted">毛利率</span><strong>46%</strong></div>
+        <div style="height:1px;background:var(--rule);margin:6px 0"></div>
+        <div style="display:flex;justify-content:space-between"><span>打平所需月營收</span><strong class="serif" style="font-size:16px">≈ NT$ 291,000</strong></div>
+        <div style="display:flex;justify-content:space-between"><span>本月實際營收</span><strong style="color:var(--good)">428,600 · 已達成</strong></div>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:12px">每月營收低於 29 萬就開始虧。</div>
+    </div>
+  </div>
+
+  <div style="margin-top:26px;text-align:center;font-size:11px;color:var(--ink-3);letter-spacing:2px">示意圖 · 數據為假資料 · 用於和郡碩討論</div>
+</div>
+</x-dc>
+</body>
+</html>

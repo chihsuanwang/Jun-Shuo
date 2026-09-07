@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}出貨作業 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div><div class="sup">桂圓帳房 / 出貨作業</div><h1 class="serif">出貨作業</h1></div></div>
+<hr class="rule">
+
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">目前 <strong>{{ pending }}</strong> 張訂單待出貨。</p>
+
+<div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:18px">
+  <div class="card">
+    <h3 class="serif">揀貨單</h3>
+    <p style="font-size:13px" class="muted">要出的訂單 + 按商品彙總的撿貨量,可列印。</p>
+    <form method="get" action="/shipping/picklist" style="display:flex;gap:8px;margin-top:10px">
+      <select name="date">
+        <option value="">全部待出貨</option>
+        {% for d in dates %}<option value="{{ d }}">訂單日 {{ d }}</option>{% endfor %}
+      </select>
+      <button type="submit" style="white-space:nowrap">開啟</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3 class="serif">出貨標籤 / 送貨單</h3>
+    <p style="font-size:13px" class="muted">每張訂單一張卡(收件人 / 地址 / 品項 / 單號),整頁列印。</p>
+    <form method="get" action="/shipping/labels" style="display:flex;gap:8px;margin-top:10px">
+      <select name="date">
+        <option value="">全部待出貨</option>
+        {% for d in dates %}<option value="{{ d }}">訂單日 {{ d }}</option>{% endfor %}
+      </select>
+      <button type="submit" style="white-space:nowrap">開啟</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <h3 class="serif">食品標示(貼在包裝上)</h3>
+  <form method="get" action="/shipping/foodlabel" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+    <div><label>商品</label><select name="product_id" required style="min-width:200px">
+      {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
+    </select></div>
+    <div><label>批次(取製造日 / 效期)</label><select name="batch_id">
+      <option value="">—</option>
+      {% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }}</option>{% endfor %}
+    </select></div>
+    <div><label>份數</label><input name="copies" type="number" value="8" min="1" max="60" style="width:80px"></div>
+    <button type="submit">產生標示</button>
+  </form>
+  <p class="muted" style="font-size:11px;margin-top:8px">品名 / 內容量 / 成分 / 產地 / 保存方式 由「商品目錄」帶入;製造日期 / 有效日期 由「批次」帶入。</p>
+</div>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}出貨標籤 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/shipping">出貨作業</a> / 出貨標籤</div>
+    <h1 class="serif">出貨標籤 / 送貨單{% if date %} · {{ date }}{% endif %}</h1></div>
+  <button class="print-hide" onclick="window.print()">列印</button>
+</div>
+<hr class="rule">
+
+{% if not orders %}
+<p class="muted">沒有符合的訂單。</p>
+{% else %}
+<div class="lbl-grid">
+  {% for o in orders %}
+  <div class="lbl">
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:#666">
+      <span>單號 {{ o.order_no }}</span><span>{{ o.order_date }}</span>
+    </div>
+    <div style="margin:6px 0 4px"><b>收件人:{{ o.recipient or o.cust or '—' }}</b>
+      {% if o.rphone or o.phone %}<span style="font-size:12px"> · {{ o.rphone or o.phone }}</span>{% endif %}
+    </div>
+    <div style="font-size:12px;min-height:32px">{{ o.addr or '（未填地址）' }}</div>
+    <div style="border-top:1px dashed #999;margin:8px 0;padding-top:6px;font-size:12px">
+      {% for l in o.lines %}{{ l.pname }} {% if l.spec %}{{ l.spec }} {% endif %}× {{ l.qty|round(0) }}{{ l.uom }}{% if not loop.last %}<br>{% endif %}{% endfor %}
+    </div>
+    <div style="font-size:11px;color:#666">
+      {{ o.ship_method or '' }}{% if o.carrier %} · {{ o.carrier }}{% endif %}{% if o.tracking_no %} · 單號 {{ o.tracking_no }}{% endif %}
+    </div>
+    <div style="font-size:11px;color:#666;margin-top:4px">
+      寄件:{{ sender.name }} · {{ sender.place }} {{ sender.addr }} · {{ sender.phone }}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+<p class="muted print-hide" style="font-size:11px;margin-top:12px">寄件地址 / 電話請在程式的 <code>SENDER</code> 設定(main.py)。</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}{{ o.order_no }} · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/orders">訂單</a> / {{ o.order_no }}</div>
+    <h1 class="serif">{{ o.order_no }} · {{ o.cust or '—' }}</h1></div>
+  <div style="display:flex;gap:8px">
+    <form method="post" action="/orders/{{ o.order_id }}/paid" style="display:inline">
+      <button type="submit" {{ 'disabled' if o.payment_status=='已收款' }}>標記已收款</button></form>
+    <form method="post" action="/orders/{{ o.order_id }}/shipped" style="display:inline">
+      <button type="submit" class="ghost" {{ 'disabled' if o.ship_status!='待出貨' }}>標記已出貨</button></form>
+    <form method="post" action="/orders/{{ o.order_id }}/copy" style="display:inline">
+      <button type="submit" class="ghost">複製訂單</button></form>
+  </div>
+</div>
+<hr class="rule">
+{% if request.query_params.get('ok') %}<div class="ok">已儲存。</div>{% endif %}
+{% if request.query_params.get('done') == 'paid' %}<div class="ok">已標記為「已收款」,收款日填今天,實收金額帶入應收 {{ o.order_total|money }}。</div>{% endif %}
+{% if request.query_params.get('done') == 'shipped' %}<div class="ok">已標記為「已出貨」,出貨日填今天。</div>{% endif %}
+
+<form method="post" action="/orders/{{ o.order_id }}">
+
+<div class="card" style="margin-bottom:16px;position:relative">
+  <h3 class="serif">基本</h3>
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div>
+      <label>客戶</label>
+      <input type="hidden" name="customer_id" id="custId" value="{{ o.customer_id }}">
+      <input id="custSearch" autocomplete="off" value="{{ o.cust or '' }}" placeholder="打名字或電話搜尋…">
+      <div id="custResults" class="ac" hidden></div>
+    </div>
+    <div><label>訂單日</label><input type="date" name="order_date" value="{{ o.order_date }}"></div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <h3 class="serif">品項</h3>
+  <table>
+    <thead><tr><th>品項</th><th>批次</th><th>數量</th><th>單價</th><th>贈品</th><th></th></tr></thead>
+    <tbody id="lines">
+    {% for l in lines %}
+      <tr class="line">
+        <td><select name="product_id">
+          {% for p in products %}<option value="{{ p.product_id }}" {{ 'selected' if p.product_id==l.product_id }}>{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
+        </select></td>
+        <td><select name="batch_id"><option value="">—</option>
+          {% for b in batches %}<option value="{{ b.batch_id }}" {{ 'selected' if b.batch_id==l.batch_id }}>{{ b.batch_code }} 批</option>{% endfor %}
+        </select></td>
+        <td><input name="qty" type="number" step="0.01" min="0" value="{{ l.qty }}"></td>
+        <td><input name="unit_price" type="number" step="1" min="0" value="{{ l.unit_price|round(0) }}"></td>
+        <td><select name="is_gift"><option>否</option><option {{ 'selected' if l.is_gift }}>是</option></select></td>
+        <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
+      </tr>
+    {% endfor %}
+    {% if not lines %}
+      <tr class="line">
+        <td><select name="product_id">{% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}</select></td>
+        <td><select name="batch_id"><option value="">—</option>{% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }} 批</option>{% endfor %}</select></td>
+        <td><input name="qty" type="number" step="0.01" min="0"></td>
+        <td><input name="unit_price" type="number" step="1" min="0"></td>
+        <td><select name="is_gift"><option>否</option><option>是</option></select></td>
+        <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
+      </tr>
+    {% endif %}
+    </tbody>
+  </table>
+  <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
+  <p class="muted" style="font-size:11px;margin-top:6px">改完按下方「儲存」,小計與應收合計會重算。</p>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
+  <div class="card">
+    <h3 class="serif">收款</h3>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div><label>訂單種類</label><select name="order_kind">
+        {% for k in kinds %}<option {{ 'selected' if o.order_kind==k }}>{{ k }}</option>{% endfor %}</select></div>
+      <div><label>付款方式</label><select name="payment_method"><option value="">—</option>
+        {% for p in pay_methods %}<option {{ 'selected' if o.payment_method==p }}>{{ p }}</option>{% endfor %}</select></div>
+      <div><label>收款狀態</label><select name="payment_status">
+        {% for p in pay_status %}<option {{ 'selected' if o.payment_status==p }}>{{ p }}</option>{% endfor %}</select></div>
+      <div><label>收款日</label><input type="date" name="paid_date" value="{{ o.paid_date or '' }}"></div>
+      <div><label>實收金額</label><input name="paid_amount" type="number" value="{{ o.paid_amount or '' }}"></div>
+      <div><label>折扣(少收)</label><input name="discount_total" type="number" value="{{ o.discount_total or 0 }}"></div>
+      <div><label>跟客人收的運費</label><input name="shipping_fee_charged" type="number" value="{{ o.shipping_fee_charged or 0 }}"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3 class="serif">出貨</h3>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div><label>出貨方式</label><select name="ship_method"><option value="">—</option>
+        {% for s in ship_methods %}<option {{ 'selected' if o.ship_method==s }}>{{ s }}</option>{% endfor %}</select></div>
+      <div><label>物流商</label><input name="carrier" value="{{ o.carrier or '' }}"></div>
+      <div><label>物流單號</label><input name="tracking_no" value="{{ o.tracking_no or '' }}"></div>
+      <div><label>我們付出的運費</label><input name="shipping_cost_actual" type="number" value="{{ o.shipping_cost_actual or 0 }}"></div>
+      <div><label>出貨日</label><input type="date" name="shipped_date" value="{{ o.shipped_date or '' }}"></div>
+      <div><label>到貨日</label><input type="date" name="delivered_date" value="{{ o.delivered_date or '' }}"></div>
+      <div><label>出貨狀態</label><select name="ship_status">
+        {% for s in ship_status %}<option {{ 'selected' if o.ship_status==s }}>{{ s }}</option>{% endfor %}</select></div>
+    </div>
+  </div>
+</div>
+<div class="card" style="margin-bottom:16px"><label>備註</label><input name="note" value="{{ o.note or '' }}"></div>
+<button type="submit">儲存</button>
+<a href="/orders" style="margin-left:12px">回列表</a>
+</form>
+
+<script>
+(function () {
+  var body = document.getElementById('lines');
+  document.getElementById('addline').addEventListener('click', function () {
+    var row = body.querySelector('tr.line');
+    var clone = row.cloneNode(true);
+    clone.querySelectorAll('select,input').forEach(function (el) {
+      if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
+    });
+    body.appendChild(clone);
+  });
+  body.addEventListener('click', function (e) {
+    if (!e.target.classList.contains('del')) return;
+    var rows = body.querySelectorAll('tr.line');
+    if (rows.length > 1) e.target.closest('tr').remove();
+  });
+
+  // 改客戶
+  var search = document.getElementById('custSearch'),
+      results = document.getElementById('custResults'),
+      hid = document.getElementById('custId'), t;
+  function render(rows) {
+    if (!rows.length) { results.innerHTML = '<div class="ac-empty">找不到</div>'; results.hidden = false; return; }
+    results.innerHTML = rows.map(function (r) {
+      var meta = [r.segment || '未分級', r.phone || '無電話',
+                  r.last_order ? '最近 ' + r.last_order : '尚無訂單', r.n_orders + ' 筆'].join(' · ');
+      return '<div class="ac-item" data-id="' + r.id + '" data-name="' + r.name.replace(/"/g, '&quot;') +
+             '"><b>' + r.name + '</b><small>' + meta + '</small></div>';
+    }).join('');
+    results.hidden = false;
+  }
+  function query(v) {
+    fetch('/api/customers?q=' + encodeURIComponent(v)).then(function (r) { return r.json(); }).then(render).catch(function () {});
+  }
+  search.addEventListener('focus', function () { query(''); });
+  search.addEventListener('input', function () {
+    clearTimeout(t); t = setTimeout(function () { query(search.value.trim()); }, 200);
+  });
+  results.addEventListener('click', function (e) {
+    var it = e.target.closest('.ac-item'); if (!it) return;
+    hid.value = it.dataset.id; search.value = it.dataset.name; results.hidden = true;
+  });
+  document.addEventListener('click', function (e) {
+    if (!results.contains(e.target) && e.target !== search) results.hidden = true;
+  });
+})();
+</script>
+{% endblock %}

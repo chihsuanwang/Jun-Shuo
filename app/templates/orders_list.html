@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}訂單 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 訂單</div><h1 class="serif">訂單</h1></div>
+  <div style="display:flex;gap:8px">
+    <a href="/export/order_lines.csv"><button class="ghost">匯出明細 CSV</button></a>
+    <a href="/orders/new"><button>＋ 新增訂單</button></a>
+  </div>
+</div>
+<hr class="rule">
+
+<div class="chips" style="margin-bottom:12px;font-size:13px">
+  {% for key, label in filters.items() %}
+    <a class="chip" href="/orders?filter={{ key }}"
+       style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if flt==key }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+<form method="get" action="/orders" style="margin-bottom:14px;display:flex;gap:8px;max-width:420px">
+  <input type="hidden" name="filter" value="{{ flt }}">
+  <input name="q" value="{{ kw }}" placeholder="搜尋單號或客戶">
+  <button type="submit" class="ghost">搜尋</button>
+</form>
+
+<div class="card">
+  <table>
+    <thead><tr><th>單號</th><th>日期</th><th>客戶</th><th>管道</th><th>種類</th><th>金額</th><th>收款</th><th>出貨</th><th>成立天數</th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr>
+        <td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td>
+        <td>{{ r.order_date }}</td>
+        <td>{{ r.cust or '—' }}</td>
+        <td>{{ r.chan or '' }}</td>
+        <td>{{ r.order_kind }}</td>
+        <td>{{ r.order_total|money }}</td>
+        <td class="{{ 'neg' if r.payment_status in ('待收款','部分收款') }}">{{ r.payment_status }}</td>
+        <td class="{{ 'neg' if r.ship_status in ('待出貨','退回','遺失','破損') }}">{{ r.ship_status }}</td>
+        <td class="{{ 'neg' if r.age > 30 and r.payment_status=='待收款' }}">{{ r.age }}</td>
+      </tr>
+    {% else %}<tr><td colspan="9" class="muted" style="text-align:left">沒有符合的訂單。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}揀貨單 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/shipping">出貨作業</a> / 揀貨單</div>
+    <h1 class="serif">揀貨單{% if date %} · {{ date }}{% else %} · 全部待出貨{% endif %}</h1></div>
+  <button class="print-hide" onclick="window.print()">列印</button>
+</div>
+<hr class="rule">
+
+{% if not orders %}
+<p class="muted">沒有符合的訂單。</p>
+{% else %}
+
+<div class="card" style="margin-bottom:18px">
+  <h3 class="serif">要撿的量(按商品彙總)</h3>
+  <table>
+    <thead><tr><th>商品編號</th><th>品名</th><th>合計數量</th><th>單位</th><th>訂單數</th></tr></thead>
+    <tbody>{% for s in summary %}
+      <tr><td>{{ s.sku }}</td><td style="text-align:left">{{ s.pname }}</td>
+          <td style="font-weight:700">{{ s.qty|round(0) }}</td><td>{{ s.uom }}</td><td>{{ s.n_orders }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3 class="serif">逐張訂單({{ orders|length }} 張)</h3>
+  <table>
+    <thead><tr><th>單號</th><th>訂單日</th><th>客戶</th><th>出貨方式</th><th style="text-align:left">品項</th></tr></thead>
+    <tbody>{% for o in orders %}
+      <tr>
+        <td>{{ o.order_no }}</td>
+        <td>{{ o.order_date }}</td>
+        <td>{{ o.recipient or o.cust or '—' }}</td>
+        <td>{{ o.ship_method or '—' }}{% if o.carrier %} · {{ o.carrier }}{% endif %}</td>
+        <td style="text-align:left">
+          {% for l in o.lines %}{{ l.pname }} {% if l.spec %}{{ l.spec }} {% endif %}× {{ l.qty|round(0) }}{{ l.uom }}{% if l.batch_code %}（{{ l.batch_code }}）{% endif %}{% if not loop.last %}　/　{% endif %}{% endfor %}
+        </td>
+      </tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

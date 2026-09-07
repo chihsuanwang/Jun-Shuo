@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}{{ tabs[tab] }} · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 報表</div><h1 class="serif">{{ tabs[tab] }}</h1></div>
+  <div style="text-align:right">
+    {% include "_filterbar.html" %}
+    <a href="/export/report.csv?tab={{ tab }}&season={{ season_sel }}&asof={{ asof_sel }}"
+       style="font-size:12px;display:inline-block;margin-top:6px">匯出這頁 CSV ↓</a>
+  </div>
+</div>
+
+<div class="chips" style="margin:14px 0 20px;font-size:13px">
+  {% for key, label in tabs.items() %}
+    <a class="chip" href="/reports?tab={{ key }}&season={{ season_sel }}&asof={{ asof_sel }}"
+       style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if tab==key }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+{# ---------- 獲利分析 ---------- #}
+{% if tab == 'profit' %}
+<div class="card" style="margin-bottom:20px">
+  <h3 class="serif">依商品</h3>
+  <table>
+    <thead><tr><th>商品</th><th>售出量</th><th>營收</th><th>折扣</th><th>每件成本</th><th>毛利</th><th>毛利率</th><th>實際成交均價 / 定價</th></tr></thead>
+    <tbody>{% for p in prod %}
+      <tr><td>{{ p.name }}</td><td>{{ p.qty|round(0) }} {{ p.uom }}</td><td>{{ p.rev|money }}</td>
+          <td>{{ p.disc|money }}</td><td>{{ (p.unit_cost or 0)|money }}</td>
+          <td class="{{ 'neg' if p.gp < 0 else 'pos' }}">{{ p.gp|money }}</td>
+          <td class="{{ 'neg' if p.gp < 0 }}">{{ (p.gp / p.rev if p.rev else 0)|pct }}</td>
+          <td>{{ (p.avg_price or 0)|money }} / {{ (p.list_price or 0)|money }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+<div class="card">
+  <h3 class="serif">依銷售管道</h3>
+  <table>
+    <thead><tr><th>管道</th><th>訂單</th><th>營收</th><th>運費賺賠</th><th>毛利</th><th>毛利率</th></tr></thead>
+    <tbody>{% for c in ch %}
+      <tr><td>{{ c.name }}</td><td>{{ c.orders }}</td><td>{{ c.rev|money }}</td>
+          <td class="{{ 'neg' if c.ship_pnl < 0 }}">{{ c.ship_pnl|money }}</td>
+          <td class="{{ 'neg' if c.gp < 0 else 'pos' }}">{{ c.gp|money }}</td>
+          <td class="{{ 'neg' if c.gp < 0 }}">{{ (c.gp / c.rev if c.rev else 0)|pct }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+
+{# ---------- 客戶分析 ---------- #}
+{% elif tab == 'customer' %}
+<div class="grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:18px">
+  <div class="card kpi"><div class="lab">有下單客戶</div><div class="val">{{ summary.total }}</div></div>
+  <div class="card kpi" style="border-top-color:var(--leaf)"><div class="lab">回頭客</div><div class="val">{{ summary.repeat }}</div><div class="sub">佔 {{ (summary.repeat / summary.total if summary.total else 0)|pct }}</div></div>
+  <div class="card kpi" style="border-top-color:var(--s-mgn)"><div class="lab">回頭客營收</div><div class="val">{{ summary.repeat_rev|money }}</div><div class="sub">新客 {{ summary.new_rev|money }}</div></div>
+  <div class="card kpi" style="border-top-color:var(--seal)"><div class="lab">久未回購(>120天)</div><div class="val">{{ summary.dormant }}</div></div>
+</div>
+<div class="card">
+  <h3 class="serif">客戶明細(RFM)</h3>
+  <table>
+    <thead><tr><th>客戶</th><th>分級</th><th>狀態</th><th>訂單數</th><th>消費金額</th><th>首購</th><th>最近購買</th><th>距今(天)</th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr><td>{{ r.display_name }}</td><td>{{ r.segment or '未分級' }}</td>
+          <td class="{{ 'neg' if r.state=='久未回購' }}">{{ r.state }}</td>
+          <td>{{ r.freq }}</td><td>{{ r.monetary|money }}</td>
+          <td>{{ r.first_order }}</td><td>{{ r.last_order }}</td>
+          <td class="{{ 'neg' if r.recency and r.recency > 120 }}">{{ r.recency }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+
+{# ---------- 物流與運費 ---------- #}
+{% elif tab == 'logistics' %}
+<div class="card" style="margin-bottom:20px">
+  <h3 class="serif">依出貨方式</h3>
+  <table>
+    <thead><tr><th>方式</th><th>筆數</th><th>跟客人收</th><th>我方付出</th><th>賺賠</th></tr></thead>
+    <tbody>{% for r in by_method %}
+      <tr><td>{{ r.k }}</td><td>{{ r.n }}</td><td>{{ r.charged|money }}</td><td>{{ r.cost|money }}</td>
+          <td class="{{ 'neg' if r.pnl < 0 }}">{{ r.pnl|money }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+<div class="card">
+  <h3 class="serif">依物流商</h3>
+  <table>
+    <thead><tr><th>物流商</th><th>出貨筆數</th><th>我方運費</th><th>異常件數</th><th>異常率</th><th>損失</th></tr></thead>
+    <tbody>{% for r in by_carrier %}
+      <tr><td>{{ r.k }}</td><td>{{ r.n }}</td><td>{{ r.cost|money }}</td>
+          <td class="{{ 'neg' if r.rate > 0.05 }}">{{ r.issues }}</td>
+          <td class="{{ 'neg' if r.rate > 0.05 }}">{{ r.rate|pct }}</td>
+          <td>{{ r.loss|money }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+
+{# ---------- 收款帳齡 ---------- #}
+{% elif tab == 'aging' %}
+<div class="grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:18px">
+  {% for k2, v in buckets.items() %}
+  <div class="card kpi" style="{{ 'border-top-color:var(--seal)' if '31' in k2 }}">
+    <div class="lab">{{ k2 }}</div><div class="val">{{ v|money }}</div></div>
+  {% endfor %}
+</div>
+<div class="card">
+  <h3 class="serif">未收款訂單</h3>
+  <table>
+    <thead><tr><th>單號</th><th>客戶</th><th>日期</th><th>金額</th><th>狀態</th><th>距今(天)</th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr><td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td><td>{{ r.cust or '—' }}</td>
+          <td>{{ r.order_date }}</td><td>{{ r.order_total|money }}</td><td>{{ r.payment_status }}</td>
+          <td class="{{ 'neg' if r.days > 30 }}">{{ r.days }}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">沒有未收款訂單。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+
+{# ---------- 批次與效期 ---------- #}
+{% elif tab == 'batch' %}
+<div class="card">
+  <h3 class="serif">批次與效期</h3>
+  <table>
+    <thead><tr><th>批次</th><th>產季</th><th>商品</th><th>製造日</th><th>到期日</th><th>剩餘天數</th><th>產出</th><th>已出</th><th>剩餘</th><th>賣出比例</th><th>剩餘貨值</th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr><td>{{ r.batch_code }}</td><td>{{ r.season }}</td><td>{{ r.pname or '(多品)' }}</td>
+          <td>{{ r.mfg_date or '—' }}</td><td>{{ r.expiry or '—' }}</td>
+          <td class="{{ 'neg' if r.days_left is not none and r.days_left < 30 }}">{{ r.days_left if r.days_left is not none else '—' }}</td>
+          <td>{{ r.output_qty|money }}</td><td>{{ r.sold|money }}</td>
+          <td class="{{ 'neg' if r.remain < 0 }}">{{ r.remain|money }}</td>
+          <td>{{ (r.rate*100)|round(0) }}%</td><td>{{ r.remain_value|money }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+
+{# ---------- 跨產季比較 ---------- #}
+{% elif tab == 'compare' %}
+<div class="card" style="margin-bottom:20px">
+  <h3 class="serif">各產季總覽</h3>
+  <table>
+    <thead><tr><th>產季</th><th>營收</th><th>訂單</th><th>客單價</th><th>毛利</th><th>毛利率</th><th>公關/贈品成本</th></tr></thead>
+    <tbody>{% for d in klist %}
+      <tr><td>{{ d.season }}</td><td>{{ d.revenue|money }}</td><td>{{ d.orders }}</td>
+          <td>{{ d.aov|money }}</td><td>{{ d.gross_profit|money }}</td><td>{{ d.margin|pct }}</td>
+          <td>{{ d.pr_cost|money }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+<div class="card">
+  <h3 class="serif">產季內各月營收(對齊比較)</h3>
+  <svg viewBox="0 0 620 240" style="width:100%;height:auto;max-width:720px">
+    <g stroke="var(--rule-2)">
+      <line x1="40" y1="20" x2="600" y2="20"/><line x1="40" y1="100" x2="600" y2="100"/><line x1="40" y1="180" x2="600" y2="180"/>
+    </g>
+    {% set colors = ['#eb6834','#2a78d6','#1baf7a','#eda100'] %}
+    {% for s, pts in series.items() %}
+      {% set ci = loop.index0 % 4 %}
+      <polyline fill="none" stroke="{{ colors[ci] }}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+        points="{% for m in range(1,8) %}{{ 40 + (m-1)*93 }},{{ 180 - (pts.get(m,0) / smax * 160) }} {% endfor %}"/>
+    {% endfor %}
+    <g font-size="10" fill="var(--ink-2)" text-anchor="middle">
+      {% for lbl in ['9月','10月','11月','12月','1月','2月','3月'] %}
+        <text x="{{ 40 + loop.index0*93 }}" y="200">{{ lbl }}</text>
+      {% endfor %}
+    </g>
+  </svg>
+  <div style="font-size:12px;margin-top:6px">
+    {% set colors = ['#eb6834','#2a78d6','#1baf7a','#eda100'] %}
+    {% for s in series.keys() %}
+      <span style="margin-right:14px"><span style="display:inline-block;width:14px;height:3px;background:{{ colors[loop.index0 % 4] }};vertical-align:middle;margin-right:6px"></span>{{ s }} 產季</span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

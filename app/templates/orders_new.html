@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}新增訂單 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div><div class="sup">桂圓帳房 / 訂單</div><h1 class="serif">新增訂單</h1></div></div>
+<hr class="rule">
+{% if request.query_params.get('ok') %}<div class="ok">訂單已建立。</div>{% endif %}
+{% if request.query_params.get('err') == 'required' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請選擇客戶與銷售管道。</div>{% endif %}
+
+<form method="post" action="/orders">
+<div class="card" style="margin-bottom:16px">
+  <h3 class="serif">基本</h3>
+  <div class="grid" style="grid-template-columns:repeat(4,1fr)">
+    <div><label>訂單日</label><input type="date" name="order_date" value="{{ today }}" required></div>
+    <div style="position:relative">
+      <label>客戶</label>
+      <input type="hidden" name="customer_id" id="custId">
+      <input id="custSearch" autocomplete="off" placeholder="打名字或電話搜尋…">
+      <div id="custResults" class="ac" hidden></div>
+      <div style="font-size:11px;margin-top:4px"><a href="/customers/new?next=/orders/new">找不到?先去新增客戶 →</a></div>
+    </div>
+    <div><label>銷售管道</label><select name="channel_id" required>
+      {% for c in channels %}<option value="{{ c.channel_id }}">{{ c.name }}</option>{% endfor %}
+    </select></div>
+    <div><label>訂單種類</label><select name="order_kind">
+      {% for k in ['銷售','贈送-公關','贈送-捐贈','樣品','理賠重寄','換貨補出','內部領用'] %}<option>{{ k }}</option>{% endfor %}
+    </select></div>
+  </div>
+  <div id="custCard" hidden style="margin-top:14px;background:var(--paper-2);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.7"></div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <h3 class="serif">訂單明細</h3>
+  <table>
+    <thead><tr><th>品項</th><th>批次</th><th>數量</th><th>單價</th><th></th></tr></thead>
+    <tbody id="lines">
+    {% for i in range(3) %}
+      <tr class="line">
+        <td><select name="product_id"><option value="">—</option>
+          {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
+        </select><div class="stockhint muted" style="font-size:11px;margin-top:2px"></div></td>
+        <td><select name="batch_id"><option value="">—</option>
+          {% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }} 批</option>{% endfor %}
+        </select></td>
+        <td><input name="qty" type="number" step="0.01" min="0"></td>
+        <td><input name="unit_price" type="number" step="1" min="0"></td>
+        <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
+  <p class="muted" style="font-size:11px;margin-top:8px">之後會加:自動算小計與應收金額、依客戶類型自動帶入定價、賣得比定價低時自動算成折扣。</p>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
+  <div class="card">
+    <h3 class="serif">物流</h3>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div><label>出貨方式</label><select name="ship_method">
+        <option value="">—</option>{% for s in ['自行配送','客戶自取','宅配','超商店到店','超商賣貨便','冷藏宅配'] %}<option>{{ s }}</option>{% endfor %}
+      </select></div>
+      <div><label>跟客人收的運費</label><input name="shipping_fee_charged" type="number" value="0"></div>
+      <div><label>我們付出的運費</label><input name="shipping_cost_actual" type="number" value="0"></div>
+      <div><label>折扣(少收的金額)</label><input name="discount_total" type="number" value="0"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3 class="serif">收款</h3>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div><label>付款方式</label><select name="payment_method">
+        <option value="">—</option>{% for p in ['現金','銀行匯款','貨到付款','行動支付','信用卡','平台代收','未收款'] %}<option>{{ p }}</option>{% endfor %}
+      </select></div>
+      <div><label>收款狀態</label><select name="payment_status">
+        {% for p in ['待收款','部分收款','已收款','免收款'] %}<option>{{ p }}</option>{% endfor %}
+      </select></div>
+    </div>
+  </div>
+</div>
+
+<button type="submit">存檔並建立訂單</button>
+<a href="/" style="margin-left:12px">取消</a>
+</form>
+
+<script>
+(function () {
+  var body = document.getElementById('lines');
+  document.getElementById('addline').addEventListener('click', function () {
+    var row = body.querySelector('tr.line');
+    var clone = row.cloneNode(true);
+    clone.querySelectorAll('select,input').forEach(function (el) {
+      if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
+    });
+    body.appendChild(clone);
+  });
+  body.addEventListener('click', function (e) {
+    if (!e.target.classList.contains('del')) return;
+    var rows = body.querySelectorAll('tr.line');
+    if (rows.length > 1) e.target.closest('tr').remove();
+    else e.target.closest('tr').querySelectorAll('select,input').forEach(function (el) {
+      if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
+    });
+  });
+
+  // --- 依客戶分級自動帶標準價 + 現貨提示 ---
+  var PRICES = {{ prices_json | safe }};
+  var CUSTSEG = {{ cust_seg_json | safe }};
+  var STOCK = {{ stock_json | safe }};
+  var custId = document.getElementById('custId');
+
+  function seg() { return CUSTSEG[custId.value] || '零售'; }
+  function fillRow(row, force) {
+    var pid = row.querySelector('select[name="product_id"]').value;
+    var priceInput = row.querySelector('input[name="unit_price"]');
+    var hint = row.querySelector('.stockhint');
+    if (hint) {
+      if (pid && STOCK[pid] != null) {
+        var s = Math.round(STOCK[pid]);
+        hint.textContent = '現貨 ' + s;
+        hint.style.color = s <= 0 ? 'var(--seal)' : '';
+      } else if (hint) { hint.textContent = ''; }
+    }
+    if (!pid) return;
+    var std = PRICES[pid] && PRICES[pid][seg()];
+    if (std == null) return;
+    if (force || !priceInput.value) priceInput.value = std;
+  }
+  body.addEventListener('change', function (e) {
+    if (e.target.name === 'product_id') fillRow(e.target.closest('tr'), false);
+  });
+
+  // --- 可搜尋客戶選單 + 確認卡 ---
+  var search = document.getElementById('custSearch');
+  var results = document.getElementById('custResults');
+  var card = document.getElementById('custCard');
+  var td;
+
+  function render(rows) {
+    if (!rows.length) { results.innerHTML = '<div class="ac-empty">找不到,請確認拼字或去新增客戶</div>'; results.hidden = false; return; }
+    results.innerHTML = rows.map(function (r) {
+      var meta = [r.segment || '未分級', r.phone || '無電話',
+                  r.last_order ? '最近 ' + r.last_order : '尚無訂單', r.n_orders + ' 筆'].join(' · ');
+      return '<div class="ac-item" data-id="' + r.id + '" data-name="' + r.name.replace(/"/g, '&quot;') + '">' +
+             '<b>' + r.name + '</b><small>' + meta + '</small></div>';
+    }).join('');
+    results.hidden = false;
+  }
+  function query(v) {
+    fetch('/api/customers?q=' + encodeURIComponent(v))
+      .then(function (r) { return r.json(); }).then(render).catch(function () {});
+  }
+  search.addEventListener('focus', function () { if (!custId.value) query(''); });
+  search.addEventListener('input', function () {
+    custId.value = ''; card.hidden = true;
+    clearTimeout(td); td = setTimeout(function () { query(search.value.trim()); }, 200);
+  });
+  results.addEventListener('click', function (e) {
+    var it = e.target.closest('.ac-item'); if (!it) return;
+    custId.value = it.dataset.id;
+    search.value = it.dataset.name;
+    results.hidden = true;
+    body.querySelectorAll('tr.line').forEach(function (r) { fillRow(r, true); });
+    fetch('/api/customers/' + it.dataset.id).then(function (r) { return r.json(); }).then(function (c) {
+      var a = c.address || {};
+      var os = (c.orders || []).map(function (o) {
+        return o.order_date + '　' + o.order_no + '　NT$ ' + Math.round(o.order_total) + '　' + o.payment_status;
+      }).join('<br>') || '尚無訂單';
+      card.innerHTML =
+        '<b>' + c.name + '</b>（' + (c.segment || '未分級') + '）　' + (c.phone || '無電話') +
+        (c.contact_person ? '　聯絡人 ' + c.contact_person : '') +
+        '<br>地址:' + (a.address_full || '未填') +
+        '<br>累計消費:NT$ ' + Math.round(c.total || 0) +
+        '<br><span style="color:var(--ink-3)">最近訂單</span><br>' + os +
+        '<br><a href="/customers/' + c.id + '" target="_blank">開客戶明細</a>';
+      card.hidden = false;
+    }).catch(function () {});
+  });
+  document.addEventListener('click', function (e) {
+    if (!results.contains(e.target) && e.target !== search) results.hidden = true;
+  });
+  search.form.addEventListener('submit', function (e) {
+    if (!custId.value) { e.preventDefault(); alert('請先從搜尋結果選一位客戶。'); search.focus(); }
+  });
+})();
+</script>
+{% endblock %}

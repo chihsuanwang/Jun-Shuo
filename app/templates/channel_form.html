@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ '編輯管道' if c else '新增管道' }} · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup"><a href="/channels">銷售管道</a> / {{ '編輯' if c else '新增' }}</div>
+  <h1 class="serif">{{ c.name if c else '新增管道' }}</h1>
+</div></div>
+<hr class="rule">
+
+<form method="post" action="/channels">
+{% if c %}<input type="hidden" name="channel_id" value="{{ c.channel_id }}">{% endif %}
+<div class="card" style="max-width:640px">
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div><label>代碼</label><input name="code" value="{{ c.code if c else '' }}" required placeholder="例:WEB"></div>
+    <div><label>名稱</label><input name="name" value="{{ c.name if c else '' }}" required></div>
+    <div><label>分類</label><select name="category"><option value="">—</option>
+      {% for x in cats %}<option {{ 'selected' if c and c.category==x }}>{{ x }}</option>{% endfor %}</select></div>
+    <div><label>抽成(0.05 = 5%)</label><input name="commission_pct" type="number" step="0.01" value="{{ c.commission_pct if c else 0 }}"></div>
+    <div><label>帳期(天)</label><input name="settlement_lag_days" type="number" value="{{ c.settlement_lag_days if c else 0 }}"></div>
+  </div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ c.note if c else '' }}"></div>
+  <div style="margin-top:16px"><button type="submit">儲存</button>
+    <a href="/channels" style="margin-left:12px">取消</a></div>
+</div>
+</form>
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}產季目標 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">分析 / 產季目標</div><h1 class="serif">產季營收目標</h1></div>
+  <a href="/"><button class="ghost">回儀表板</button></a>
+</div>
+<hr class="rule">
+
+<p class="muted" style="font-size:13px;max-width:640px;margin-bottom:16px">
+  一個產季 = 當年 4 月初到隔年 3 月底(從開花養果算到這批桂圓乾賣完)。設定「整季營收目標」後,儀表板會顯示達成率、
+  依目前銷售速度預估的季末營收,以及損益兩平所需營收。
+</p>
+
+<div class="card">
+  <div style="display:flex;gap:10px;font-size:11px;color:var(--ink-3);padding:0 2px 8px">
+    <span style="width:150px">產季</span>
+    <span style="width:150px">目標營收</span>
+    <span style="width:130px">實際營收</span>
+    <span style="width:130px">達成率</span>
+    <span style="width:130px">稅前利潤</span>
+    <span style="width:80px"></span>
+  </div>
+  {% for r in rows %}
+  <div style="display:flex;gap:10px;align-items:center;padding:6px 2px;border-top:1px solid var(--rule-2)">
+    <form method="post" action="/targets" style="display:flex;gap:10px;align-items:center;flex:1">
+      <input type="hidden" name="season" value="{{ r.season }}">
+      <span style="width:150px">{{ r.season }} 產季<br><span class="muted" style="font-size:11px">{{ r.window }}</span></span>
+      <input name="target_amount" type="number" step="1000" value="{{ r.target|round(0) if r.target else '' }}"
+             placeholder="尚未設定" style="width:150px">
+      <span style="width:130px">{{ r.revenue|money }}</span>
+      <span style="width:130px">{% if r.target %}<strong class="{{ 'neg' if r.revenue < r.target * 0.8 }}">{{ (r.revenue / r.target)|pct }}</strong>{% else %}—{% endif %}</span>
+      <span style="width:130px" class="{{ 'neg' if r.pretax < 0 }}">{{ r.pretax|money }}</span>
+      <button type="submit" class="ghost" style="padding:6px 14px">存</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

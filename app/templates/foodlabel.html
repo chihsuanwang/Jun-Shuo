@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}食品標示 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/shipping">出貨作業</a> / 食品標示</div><h1 class="serif">食品標示</h1></div>
+  {% if data %}<button class="print-hide" onclick="window.print()">列印</button>{% endif %}
+</div>
+<hr class="rule">
+
+<form method="get" action="/shipping/foodlabel" class="print-hide"
+      style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:16px">
+  <div><label>商品</label><select name="product_id" style="min-width:200px">
+    {% for p in products %}<option value="{{ p.product_id }}" {{ 'selected' if pid == p.product_id|string }}>{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
+  </select></div>
+  <div><label>批次</label><select name="batch_id">
+    <option value="">—</option>
+    {% for b in batches %}<option value="{{ b.batch_id }}" {{ 'selected' if bid == b.batch_id|string }}>{{ b.batch_code }}</option>{% endfor %}
+  </select></div>
+  <div><label>份數</label><input name="copies" type="number" value="{{ copies }}" min="1" max="60" style="width:80px"></div>
+  <button type="submit">產生</button>
+</form>
+
+{% if not data %}
+<p class="muted">選商品(和批次)後按「產生」。</p>
+{% else %}
+{% set p = data.p %}
+<div class="lbl-grid" style="grid-template-columns:repeat(3,1fr)">
+  {% for _ in range(copies) %}
+  <div class="foodlbl">
+    <div class="t">{{ p.name }}</div>
+    <div>內容量:{{ p.net_weight_g ~ ' 克' if p.net_weight_g else '（秤重 / 依包裝）' }}</div>
+    <div>成分:{{ p.ingredients or '龍眼' }}</div>
+    <div>原產地:{{ p.origin or '臺灣' }}</div>
+    <div>保存方式:{{ p.storage_condition or '常溫' }}、避免陽光直射</div>
+    <div>製造日期:{{ data.mfg or '　　　　　' }}</div>
+    <div>有效日期:{{ data.exp or '　　　　　' }}{% if p.shelf_life_days %}(保存 {{ p.shelf_life_days }} 天){% endif %}</div>
+    {% if data.b and data.b.batch_code %}<div>批號:{{ data.b.batch_code }}</div>{% endif %}
+    <div style="margin-top:4px">製造商:{{ sender.name }}</div>
+    <div>地址:{{ sender.place }} {{ sender.addr }}　電話:{{ sender.phone }}</div>
+  </div>
+  {% endfor %}
+</div>
+<p class="muted print-hide" style="font-size:11px;margin-top:12px">
+內容量 / 成分 / 產地 / 保存方式在「商品目錄」編輯;製造商地址電話在 <code>SENDER</code>(main.py)。
+法規細項(食品業者登錄字號、營養標示等)請自行確認補上。</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ '編輯批次' if b else '新增批次' }} · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup"><a href="/batches">焙製批次</a> / {{ '編輯' if b else '新增' }}</div>
+  <h1 class="serif">{{ b.batch_code if b else '新增批次' }}</h1>
+</div></div>
+<hr class="rule">
+
+<form method="post" action="/batches">
+{% if b %}<input type="hidden" name="batch_id" value="{{ b.batch_id }}">{% endif %}
+<div class="card" style="max-width:760px">
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div><label>批次代碼</label><input name="batch_code" value="{{ b.batch_code if b else '' }}" required placeholder="例:2025-A"></div>
+    <div><label>產季(年)</label><input name="season" type="number" value="{{ b.season if b else default_season }}"></div>
+    <div><label>對應商品(可留空=多品)</label><select name="product_id"><option value="">—</option>
+      {% for p in products %}<option value="{{ p.product_id }}" {{ 'selected' if b and b.product_id==p.product_id }}>{{ p.name }}</option>{% endfor %}</select></div>
+    <div><label>鮮果來源</label><input name="raw_source" value="{{ b.raw_source if b else '' }}"></div>
+    <div><label>焙製起日</label><input type="date" name="roast_start" value="{{ b.roast_start if b else '' }}"></div>
+    <div><label>焙製迄日</label><input type="date" name="roast_end" value="{{ b.roast_end if b else '' }}"></div>
+    <div><label>投入鮮果(kg)</label><input name="raw_input_kg" type="number" step="0.1" value="{{ b.raw_input_kg if b and b.raw_input_kg is not none else '' }}"></div>
+    <div><label>產出數量</label><input name="output_qty" type="number" step="0.1" value="{{ b.output_qty if b and b.output_qty is not none else '' }}"></div>
+    <div><label>產出單位</label><input name="output_uom" value="{{ b.output_uom if b else '份' }}"></div>
+    <div><label>製造日(效期基準)</label><input type="date" name="mfg_date" value="{{ b.mfg_date if b else '' }}"></div>
+    <div><label>單位製造成本</label><input name="unit_cost" type="number" step="0.01" value="{{ b.unit_cost if b and b.unit_cost is not none else '' }}"></div>
+  </div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ b.note if b else '' }}"></div>
+  <div style="margin-top:16px"><button type="submit">儲存</button>
+    <a href="/batches" style="margin-left:12px">取消</a></div>
+</div>
+</form>
+{% endblock %}

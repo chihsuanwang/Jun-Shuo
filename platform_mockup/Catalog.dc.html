@@ -1,0 +1,103 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+  <style>
+    :root{
+      --paper:#F5EDDE; --paper-2:#FBF6EA; --card:#FFFDF6;
+      --ink:#2E2115; --ink-2:#6B5A44; --ink-3:#9C8A70;
+      --rule:#D9C7A6; --rule-2:#E7DBC2; --seal:#A8321E; --leaf:#5B6B3A; --gold:#C08A2B;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:"Noto Sans TC",system-ui,sans-serif;color:var(--ink);background:var(--paper)}
+    a{color:var(--seal)} a:hover{color:#7f2415}
+    .serif{font-family:"Noto Serif TC","Noto Sans TC",serif}
+    .lbl{font-size:12px;color:var(--ink-3);letter-spacing:1px;margin-bottom:6px;display:block}
+    .fld{width:100%;background:var(--paper-2);border:1px solid var(--rule);border-radius:7px;padding:9px 11px;font-size:13px;color:var(--ink);font-family:inherit}
+    td,th{padding:12px 14px;text-align:left;font-size:13px}
+    th{font-size:11px;color:var(--ink-3);letter-spacing:1px;font-weight:500}
+    tbody tr{border-top:1px solid var(--rule-2)}
+  </style>
+</helmet>
+
+<div style="min-height:1024px;background:var(--paper);padding:30px 40px 48px">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+    <div>
+      <div style="font-size:12px;color:var(--ink-3);margin-bottom:4px">桂圓帳房 / 商品目錄</div>
+      <h1 class="serif" style="margin:0;font-size:26px;font-weight:900;letter-spacing:1px">商品目錄</h1>
+    </div>
+    <button style="background:var(--seal);color:#FBF6EA;border:none;border-radius:8px;padding:11px 20px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer">＋ 新增商品</button>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 372px;gap:22px;align-items:start">
+
+    <!-- table -->
+    <div style="background:var(--card);border:1px solid var(--rule);border-radius:10px;overflow:hidden">
+      <div style="display:flex;gap:10px;padding:14px 16px;border-bottom:1px solid var(--rule-2)">
+        <input class="fld" style="max-width:240px" placeholder="搜尋品名 / SKU">
+        <span class="fld" style="max-width:120px;color:var(--ink-3)">品項 ▾</span>
+        <span class="fld" style="max-width:120px;color:var(--ink-3)">狀態 ▾</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--paper-2)">
+          <th>SKU</th><th>品名</th><th>產品類型</th><th>內容量</th><th>單位</th><th>保存</th><th style="text-align:right">建議零售價</th><th>狀態</th>
+        </tr></thead>
+        <tbody>
+          <tr style="background:var(--paper-2);box-shadow:inset 3px 0 0 var(--seal)">
+            <td>GY-DRY-BULK</td><td>桂圓乾（裸裝）</td><td>單品 · #24</td><td>—（秤重）</td><td>斤</td><td>180 天</td><td style="text-align:right">NT$ 220</td><td><span style="color:var(--leaf)">在售</span></td>
+          </tr>
+          <tr><td>GY-DRY-300</td><td>桂圓乾 300g</td><td>單品 · #26</td><td>300 g</td><td>包</td><td>180 天</td><td style="text-align:right">NT$ 175</td><td><span style="color:var(--leaf)">在售</span></td></tr>
+          <tr><td>GY-DRY-GIFT</td><td>桂圓乾 禮盒（300g×2）</td><td>禮盒 · #27</td><td>600 g</td><td>盒</td><td>180 天</td><td style="text-align:right">NT$ 350</td><td><span style="color:var(--leaf)">在售</span></td></tr>
+          <tr><td>LG-MEAT-600</td><td>龍眼肉 600g 罐</td><td>單品</td><td>600 g</td><td>罐</td><td>365 天</td><td style="text-align:right">NT$ 600</td><td><span style="color:var(--leaf)">在售</span></td></tr>
+          <tr><td>LG-MEAT-1000</td><td>龍眼肉 1000g（裸裝）</td><td>單品</td><td>1000 g</td><td>罐</td><td>365 天</td><td style="text-align:right">NT$ 1,000</td><td><span style="color:var(--leaf)">在售</span></td></tr>
+          <tr><td>GX-STICK</td><td>桂圓棒</td><td>加購 / 贈品</td><td>—</td><td>支</td><td>150 天</td><td style="text-align:right;color:var(--ink-3)">僅供贈品</td><td><span style="color:var(--ink-3)">贈品</span></td></tr>
+          <tr><td>GY-DRY-500</td><td>桂圓乾 500g</td><td>單品 · #28</td><td>500 g</td><td>包</td><td>180 天</td><td style="text-align:right">NT$ 300</td><td><span style="color:var(--ink-3)">停售</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- edit drawer -->
+    <div style="background:var(--card);border:1px solid var(--rule);border-radius:10px;border-top:3px solid var(--seal);padding:22px 24px;position:sticky;top:20px">
+      <h3 class="serif" style="margin:0 0 4px;font-size:16px;font-weight:700">編輯商品</h3>
+      <div style="font-size:11px;color:var(--ink-3);margin-bottom:18px">由對方一次建齊 · 對應資料表 product</div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div><span class="lbl">SKU</span><input class="fld" value="GY-DRY-BULK"></div>
+        <div><span class="lbl">品名</span><input class="fld" value="桂圓乾（裸裝）"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div><span class="lbl">產品類型</span><input class="fld" value="單品"></div>
+          <div><span class="lbl">原代號</span><input class="fld" value="#24"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div><span class="lbl">內容量 (g)</span><input class="fld" placeholder="秤重留空"></div>
+          <div><span class="lbl">1 單位 = ? g</span><input class="fld" value="600"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div><span class="lbl">計價單位</span><input class="fld" value="斤"></div>
+          <div><span class="lbl">包裝型態</span><input class="fld" value="裸裝"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div><span class="lbl">保存天數</span><input class="fld" value="180"></div>
+          <div><span class="lbl">保存條件</span><input class="fld" value="常溫"></div>
+        </div>
+        <div><span class="lbl">原料成分</span><input class="fld" value="龍眼（南投中寮）"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div><span class="lbl">建議零售價</span><input class="fld" value="220"></div>
+          <div><span class="lbl">建議批發價</span><input class="fld" value="140"></div>
+        </div>
+        <button style="width:100%;margin-top:6px;background:var(--seal);color:#FBF6EA;border:none;border-radius:8px;padding:12px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer">儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:26px;text-align:center;font-size:11px;color:var(--ink-3);letter-spacing:2px">示意圖 · 數據為假資料</div>
+</div>
+</x-dc>
+</body>
+</html>

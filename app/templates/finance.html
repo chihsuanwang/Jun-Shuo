@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+{% block title %}財務健康 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 財務健康</div><h1 class="serif">月損益</h1></div>
+  <a href="/finance/expenses"><button class="ghost">維護營運費用</button></a>
+</div>
+<hr class="rule">
+
+<!-- 1. 趨勢圖(最上方,可拖拉) -->
+<div class="card" style="margin-bottom:18px">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px 16px">
+    <h3 class="serif" style="margin:0">月稅前利潤趨勢</h3>
+    <div style="display:flex;align-items:center;gap:16px;font-size:12px;color:var(--ink-3);flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:6px;margin:0">
+        一次看 <input type="range" id="mspan" style="width:130px"> <span id="mspanVal" style="font-weight:700;color:var(--ink)"></span> 個月
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;margin:0;cursor:pointer">
+        <input type="checkbox" id="multiMode" style="width:auto"> 多選(加多個月看合計)
+      </label>
+    </div>
+  </div>
+  <div id="trendWrap" style="overflow-x:auto;margin-top:10px;cursor:grab"></div>
+  <div id="ftip" class="chart-tip" hidden></div>
+  <div class="muted" style="font-size:11px;margin-top:6px">
+    綠 = 有賺、紅 = 虧損 · 點某月看該月損益 · 左右拖 / 滑動看其他月份 ·
+    <b>要比較多個月</b>:勾「多選」再點(電腦也可按住 Ctrl 點)
+  </div>
+</div>
+
+<!-- 2. 選取月份的損益(由點選驅動) -->
+<div class="card" style="margin-bottom:18px">
+  <div style="display:flex;justify-content:space-between;align-items:baseline">
+    <h3 class="serif" id="selTitle" style="margin:0">損益明細</h3>
+    <a href="#" id="selClear" style="font-size:12px">清除選取</a>
+  </div>
+  <div id="selBody" style="margin-top:12px"></div>
+</div>
+
+<!-- 3. 各產季合計 -->
+{% if seasons_fin %}
+<div class="card">
+  <h3 class="serif">各產季合計(含淡月固定成本)</h3>
+  <table>
+    <thead><tr><th>產季</th><th>期間</th><th>營收</th><th>毛利</th><th>通路抽成</th><th>運費賺賠</th><th>營運費用(12 月)</th><th>稅前利潤</th></tr></thead>
+    <tbody>{% for s in seasons_fin %}
+      <tr>
+        <td>{{ s.season }}</td>
+        <td class="muted" style="font-size:12px">{{ s.window }}</td>
+        <td>{{ s.revenue|money }}</td>
+        <td>{{ s.gross_profit|money }}</td>
+        <td>− {{ s.platform_fee|money }}</td>
+        <td class="{{ 'neg' if s.ship_pnl < 0 }}">{{ s.ship_pnl|money }}</td>
+        <td>− {{ s.opex|money }} <span class="muted" style="font-size:11px">({{ s.opex_months }} 月)</span></td>
+        <td class="{{ 'neg' if s.pretax < 0 else 'pos' }}" style="font-weight:700">{{ s.pretax|money }}</td>
+      </tr>
+    {% endfor %}</tbody>
+  </table>
+  <div class="muted" style="font-size:11px;margin-top:6px">
+    一個產季從 4 月開花養果算起,到隔年 3 月這批桂圓乾賣完,共 12 個月;
+    其中 9 月~隔年 3 月才有銷售,4–8 月沒收入卻每月都在付固定成本。
+    整季收入減整年開銷,才是「這批貨到底賺不賺」。
+  </div>
+</div>
+{% endif %}
+
+<p class="muted" style="font-size:12px;margin-top:16px">
+營收 / 銷貨成本 / 毛利 / 通路抽成 / 運費 由系統的實際訂單算出;
+<b>營運費用需由郡碩農創逐月填入</b>(「維護營運費用」,淡月也要填)。目前為示範假資料。</p>
+
+<script>
+(function () {
+  var FIN = {{ fin_json | safe }};                 // 依時間排序
+  var CATS = {{ cats | tojson }};
+  if (!FIN.length) return;
+
+  var span = Math.min(12, FIN.length);            // 一次看幾個月(縮放),其餘靠拖曳
+  var sel = new Set([FIN[FIN.length - 1].ym]);
+
+  var wrap = document.getElementById('trendWrap');
+  var tip = document.getElementById('ftip');
+  var rng = document.getElementById('mspan');
+  var rngVal = document.getElementById('mspanVal');
+  rng.min = 4; rng.max = Math.min(FIN.length, 24); rng.value = span;
+
+  var fmt = function (v) { return 'NT$ ' + Math.round(v).toLocaleString('en-US'); };
+  var k = function (v) { return (v / 1000).toFixed(0) + 'k'; };
+  var tipT;
+  function showTip(rec, x, y) {
+    tip.innerHTML = '<b>' + rec.ym + '</b><br>稅前利潤 ' + fmt(rec.pretax) +
+      '<br><span style="opacity:.75">營收 ' + fmt(rec.revenue) + ' · 營運費用 ' + fmt(rec.opex_total) + '</span>';
+    tip.hidden = false;
+    tip.style.left = Math.min((x || 0) + 14, window.innerWidth - 240) + 'px';
+    tip.style.top = ((y || 0) + 14) + 'px';
+  }
+  var YNICE = (function () {
+    var m = Math.max(1, Math.max.apply(null, FIN.map(function (t) { return Math.abs(t.pretax); })));
+    return Math.ceil(m / 10000) * 10000;               // 全期固定刻度,拖曳時不跳動
+  })();
+
+  function drawChart() {
+    var ynice = YNICE;
+    var padL = 50, padR = 10;
+    var cw = wrap.clientWidth || 900;
+    var slot = Math.max((cw - padL - padR) / span, 24);   // 每月寬度:讓 span 個月剛好塞滿畫面
+    var W = padL + padR + slot * FIN.length;              // 整段(所有月)的總寬 → 多的靠捲動
+    var barW = Math.min(slot - 14, 46);
+    var top = 20, bot = 176, zero = (top + bot) / 2, half = zero - top;
+    var g = ['<svg viewBox="0 0 ' + W + ' 200" style="display:block;height:200px;width:' + W + 'px">'];
+    [ynice, ynice / 2, 0, -ynice / 2, -ynice].forEach(function (gy) {
+      var py = (zero - (gy / ynice) * half).toFixed(1);
+      g.push('<line x1="' + padL + '" y1="' + py + '" x2="' + (W - padR) + '" y2="' + py + '" stroke="' + (gy === 0 ? 'var(--rule)' : 'var(--rule-2)') + '"/>');
+      g.push('<text x="' + (padL - 6) + '" y="' + (+py + 3) + '" font-size="9" fill="var(--ink-3)" text-anchor="end">' + (gy === 0 ? '0' : k(gy)) + '</text>');
+    });
+    var anySel = sel.size > 0;
+    FIN.forEach(function (t, i) {
+      var cx = padL + i * slot + slot / 2;
+      var hh = (t.pretax / ynice) * half;
+      var bh = Math.max(Math.abs(hh), 1.5);
+      var y = t.pretax >= 0 ? zero - hh : zero;
+      var on = sel.has(t.ym);
+      g.push('<rect x="' + (cx - barW / 2) + '" y="' + y + '" width="' + barW + '" height="' + bh + '" rx="2" class="fbar"' +
+        ' data-ym="' + t.ym + '" fill="' + (t.pretax >= 0 ? 'var(--good)' : 'var(--seal)') + '"' +
+        ' opacity="' + (anySel && !on ? 0.28 : 1) + '"' +
+        (on ? ' stroke="var(--ink)" stroke-width="2.5"' : '') + '></rect>');
+      if (on)
+        g.push('<circle cx="' + cx + '" cy="' + (Math.min(y, zero) - 6) + '" r="3.5" fill="var(--ink)"></circle>');
+      g.push('<text x="' + cx + '" y="192" font-size="9" fill="' + (on ? 'var(--ink)' : 'var(--ink-2)') + '"' +
+        (on ? ' font-weight="700"' : '') + ' text-anchor="middle">' + t.ym.slice(5) + '</text>');
+      if (i === 0 || FIN[i - 1].ym.slice(0, 4) !== t.ym.slice(0, 4))
+        g.push('<text x="' + (cx - slot / 2 + 4) + '" y="13" font-size="8" fill="var(--ink-3)" text-anchor="start">' + t.ym.slice(0, 4) + '</text>');
+    });
+    g.push('</svg>');
+    wrap.innerHTML = g.join('');
+    wrap.querySelectorAll('.fbar').forEach(function (b) {
+      var rec = FIN.find(function (x) { return x.ym === b.dataset.ym; });
+      b.addEventListener('mousemove', function (e) { showTip(rec, e.clientX, e.clientY); });
+      b.addEventListener('mouseleave', function () { tip.hidden = true; });
+      b.addEventListener('touchstart', function () {
+        var r = b.getBoundingClientRect();
+        showTip(rec, r.left + r.width / 2, r.top);
+        clearTimeout(tipT); tipT = setTimeout(function () { tip.hidden = true; }, 2200);
+      }, { passive: true });
+      b.addEventListener('click', function (e) {
+        if (dragMoved) return;                 // 拖拉捲動時不算點選
+        var multi = document.getElementById('multiMode').checked || e.ctrlKey || e.metaKey;
+        if (multi) {                           // 多選:切換該月
+          if (sel.has(rec.ym)) sel.delete(rec.ym); else sel.add(rec.ym);
+          if (!sel.size) sel.add(rec.ym);
+        } else {                               // 單選:只看這個月
+          sel = new Set([rec.ym]);
+        }
+        drawChart(); drawSel();
+      });
+    });
+  }
+
+  function drawSel() {
+    var yms = FIN.filter(function (t) { return sel.has(t.ym); });
+    yms.sort(function (a, b) { return a.ym < b.ym ? -1 : 1; });
+    var S = { revenue: 0, cogs: 0, gross_profit: 0, platform_fee: 0, ship_pnl: 0, opex_total: 0, pretax: 0, opex: {} };
+    CATS.forEach(function (c) { S.opex[c] = 0; });
+    yms.forEach(function (t) {
+      ['revenue', 'cogs', 'gross_profit', 'platform_fee', 'ship_pnl', 'opex_total', 'pretax'].forEach(function (f) { S[f] += t[f] || 0; });
+      Object.keys(t.opex || {}).forEach(function (c) { S.opex[c] = (S.opex[c] || 0) + t.opex[c]; });
+    });
+    var margin = S.revenue ? S.gross_profit / S.revenue : 0;
+    var breakeven = margin ? S.opex_total / margin : null;
+
+    document.getElementById('selTitle').textContent =
+      yms.length === 1 ? yms[0].ym + ' 損益' : yms.map(function (t) { return t.ym.slice(2); }).join(' + ') + '(' + yms.length + ' 個月合計)';
+
+    var row = function (label, val, cls, bold) {
+      return '<tr style="border-bottom:1px solid var(--rule-2)"><td class="' + (cls || 'muted') + '"' + (bold ? ' style="font-weight:700"' : '') +
+        '>' + label + '</td><td style="text-align:right' + (bold ? ';font-weight:700' : '') + '">' + val + '</td></tr>';
+    };
+    var opexRows = CATS.filter(function (c) { return S.opex[c]; })
+      .map(function (c) { return row('− ' + c, '− ' + fmt(S.opex[c])); }).join('');
+
+    var h = '<table><tbody>' +
+      row('營收', fmt(S.revenue), '', true) +
+      row('− 銷貨成本', '− ' + fmt(S.cogs)) +
+      row('= 毛利(毛利率 ' + (margin * 100).toFixed(0) + '%)', fmt(S.gross_profit), '', true) +
+      row('− 通路抽成', '− ' + fmt(S.platform_fee)) +
+      row('± 運費賺賠', fmt(S.ship_pnl)) +
+      (opexRows || row('尚未填營運費用', '− 0')) +
+      '<tr><td class="serif" style="font-size:16px;font-weight:900">= 稅前利潤</td><td style="text-align:right"><span class="serif" style="font-size:18px;font-weight:900;color:' +
+      (S.pretax >= 0 ? 'var(--good)' : 'var(--seal)') + '">' + fmt(S.pretax) + '</span></td></tr>' +
+      '</tbody></table>';
+    if (breakeven != null)
+      h += '<div class="muted" style="font-size:12px;margin-top:10px">損益兩平:固定成本 ' + fmt(S.opex_total) +
+        ' ÷ 毛利率 ' + (margin * 100).toFixed(0) + '% → 需營收 ≈ ' + fmt(breakeven) +
+        (yms.length > 1 ? '(這 ' + yms.length + ' 個月合計)' : '') +
+        ' · 實際 ' + fmt(S.revenue) + (S.revenue >= breakeven ? ' ✓ 達標' : ' ✗ 未達') + '</div>';
+    document.getElementById('selBody').innerHTML = h;
+  }
+
+  rng.addEventListener('input', function () {
+    // 縮放前記住畫面中心位置,縮放後盡量停在同一段時間
+    var mid = (wrap.scrollLeft + wrap.clientWidth / 2) / Math.max(wrap.scrollWidth, 1);
+    span = +rng.value; rngVal.textContent = span;
+    drawChart();
+    wrap.scrollLeft = Math.max(0, mid * wrap.scrollWidth - wrap.clientWidth / 2);
+  });
+  document.getElementById('selClear').addEventListener('click', function (e) {
+    e.preventDefault(); sel = new Set([FIN[FIN.length - 1].ym]); drawChart(); drawSel();
+  });
+
+  // 拖拉捲動
+  var down = false, sx = 0, sl = 0, dragMoved = false;
+  wrap.addEventListener('mousedown', function (e) { down = true; dragMoved = false; sx = e.pageX; sl = wrap.scrollLeft; wrap.style.cursor = 'grabbing'; });
+  window.addEventListener('mouseup', function () { down = false; wrap.style.cursor = 'grab'; setTimeout(function () { dragMoved = false; }, 0); });
+  wrap.addEventListener('mousemove', function (e) {
+    if (!down) return;
+    if (Math.abs(e.pageX - sx) > 4) dragMoved = true;
+    wrap.scrollLeft = sl - (e.pageX - sx);
+  });
+
+  var rt;
+  window.addEventListener('resize', function () {
+    clearTimeout(rt); rt = setTimeout(drawChart, 150);
+  });
+
+  rngVal.textContent = span;
+  drawChart(); drawSel();
+  wrap.scrollLeft = wrap.scrollWidth;   // 預設捲到最新
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,22 @@
+# ── 絕不上傳:資料庫與備份(含客戶個資)──────────────
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+app/備份/
+
+# ── 絕不上傳:含真實資料的檔案 ──────────────────────
+*.xlsx
+*.csv
+_all.json
+*.docx
+
+# ── 虛擬環境 / 快取 / 產生物 ────────────────────────
+app/.venv/
+.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+Thumbs.db

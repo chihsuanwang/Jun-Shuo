@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}合併客戶 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup"><a href="/customers">客戶資料庫</a> / <a href="/customers/{{ src.customer_id }}">{{ src.display_name }}</a> / 合併</div>
+  <h1 class="serif">合併客戶</h1>
+</div></div>
+<hr class="rule">
+{% if request.query_params.get('err') %}<div class="ok" style="background:var(--warn-bg);border-color:#E4B79C;color:var(--seal)">請選一位「不同的」目標客戶。</div>{% endif %}
+
+<div class="card" style="max-width:640px;margin-bottom:16px">
+  <h3 class="serif">來源(這位會被刪除)</h3>
+  <p style="font-size:13px;margin:0">
+    <b>{{ src.display_name }}</b>（{{ src.segment or '未分級' }}）· {{ src.phone or '無電話' }}<br>
+    訂單 {{ src.n_orders }} 筆 · 地址 {{ src.n_addr }} 筆
+    {% if src.aliases %}<br>舊稱呼:{{ src.aliases | join('、') }}{% endif %}
+  </p>
+</div>
+
+<form method="post" action="/customers/{{ src.customer_id }}/merge">
+<div class="card" style="max-width:640px;margin-bottom:16px;position:relative">
+  <h3 class="serif">併入到(保留這位)</h3>
+  <input type="hidden" name="target_id" id="tgtId">
+  <input id="tgtSearch" autocomplete="off" placeholder="打名字或電話搜尋要保留的那位…">
+  <div id="tgtResults" class="ac" hidden></div>
+  <div id="tgtCard" hidden style="margin-top:12px;background:var(--paper-2);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.7"></div>
+</div>
+
+<p class="muted" style="font-size:12px;max-width:640px">
+合併後:來源客戶的<b>所有訂單、收件地址、舊稱呼</b>都會移到保留的那位,來源客戶本身會被刪除。此動作無法復原,請確認清楚。</p>
+
+<button type="submit">確認合併</button>
+<a href="/customers/{{ src.customer_id }}" style="margin-left:12px">取消</a>
+</form>
+
+<script>
+(function () {
+  var SRC = {{ src.customer_id }};
+  var search = document.getElementById('tgtSearch'),
+      results = document.getElementById('tgtResults'),
+      card = document.getElementById('tgtCard'),
+      hid = document.getElementById('tgtId'), t;
+  function render(rows) {
+    rows = rows.filter(function (r) { return r.id !== SRC; });
+    if (!rows.length) { results.innerHTML = '<div class="ac-empty">找不到</div>'; results.hidden = false; return; }
+    results.innerHTML = rows.map(function (r) {
+      var meta = [r.segment || '未分級', r.phone || '無電話',
+                  r.last_order ? '最近 ' + r.last_order : '尚無訂單', r.n_orders + ' 筆'].join(' · ');
+      return '<div class="ac-item" data-id="' + r.id + '" data-name="' + r.name.replace(/"/g, '&quot;') +
+             '"><b>' + r.name + '</b><small>' + meta + '</small></div>';
+    }).join('');
+    results.hidden = false;
+  }
+  function query(v) {
+    fetch('/api/customers?q=' + encodeURIComponent(v)).then(function (r) { return r.json(); }).then(render).catch(function () {});
+  }
+  search.addEventListener('focus', function () { if (!hid.value) query(''); });
+  search.addEventListener('input', function () {
+    hid.value = ''; card.hidden = true;
+    clearTimeout(t); t = setTimeout(function () { query(search.value.trim()); }, 200);
+  });
+  results.addEventListener('click', function (e) {
+    var it = e.target.closest('.ac-item'); if (!it) return;
+    hid.value = it.dataset.id; search.value = it.dataset.name; results.hidden = true;
+    fetch('/api/customers/' + it.dataset.id).then(function (r) { return r.json(); }).then(function (c) {
+      var a = c.address || {};
+      card.innerHTML = '<b>' + c.name + '</b>（' + (c.segment || '未分級') + '）　' + (c.phone || '無電話') +
+        '<br>地址:' + (a.address_full || '未填') + '<br>累計消費:NT$ ' + Math.round(c.total || 0);
+      card.hidden = false;
+    }).catch(function () {});
+  });
+  document.addEventListener('click', function (e) {
+    if (!results.contains(e.target) && e.target !== search) results.hidden = true;
+  });
+  search.form.addEventListener('submit', function (e) {
+    if (!hid.value) { e.preventDefault(); alert('請先選擇要保留的客戶。'); }
+    else if (!confirm('確定要把「{{ src.display_name }}」併入所選客戶並刪除來源?')) e.preventDefault();
+  });
+})();
+</script>
+{% endblock %}

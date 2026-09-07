@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}待確認 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div><div class="sup">桂圓帳房 / 待確認</div><h1 class="serif">待確認</h1></div></div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin-bottom:14px">系統或輸入時發現、需要人工補完的資料。處理完後按「標記已處理」。</p>
+
+<div class="card">
+  <table>
+    <thead><tr><th>類型</th><th>說明</th><th>狀態</th><th>動作</th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr>
+        <td>{{ r.issue_type or '' }}</td>
+        <td style="text-align:left">{{ r.note or '' }}</td>
+        <td class="{{ 'neg' if r.status=='待處理' }}">{{ r.status }}</td>
+        <td style="white-space:nowrap">
+          {% if r.status == '待處理' %}
+          <a href="/customers">去客戶資料庫</a>
+          <form method="post" action="/review/{{ r.review_id }}" style="display:inline">
+            <input type="hidden" name="status" value="已修">
+            <button type="submit" class="ghost" style="padding:5px 10px">標記已處理</button></form>
+          <form method="post" action="/review/{{ r.review_id }}" style="display:inline">
+            <input type="hidden" name="status" value="已忽略">
+            <button type="submit" class="ghost" style="padding:5px 10px">忽略</button></form>
+          {% else %}
+          <form method="post" action="/review/{{ r.review_id }}" style="display:inline">
+            <input type="hidden" name="status" value="待處理">
+            <button type="submit" class="ghost" style="padding:5px 10px">重新開啟</button></form>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}<tr><td colspan="4" class="muted" style="text-align:left">目前沒有待確認項目。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}營運費用 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/finance">財務健康</a> / 營運費用</div><h1 class="serif">營運費用(逐月)</h1></div>
+  <a href="/finance?ym={{ ym_default }}"><button class="ghost">回月損益</button></a>
+</div>
+<hr class="rule">
+
+<div class="card" style="margin-bottom:18px;max-width:640px">
+  <h3 class="serif">新增一筆</h3>
+  <form method="post" action="/finance/expenses">
+    <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
+      <div><label>月份 (YYYY-MM)</label><input name="ym" value="{{ ym_default }}" required></div>
+      <div><label>項目</label><select name="category">
+        {% for c in cats %}<option>{{ c }}</option>{% endfor %}
+      </select></div>
+      <div><label>金額</label><input name="amount" type="number" step="1" required></div>
+    </div>
+    <div style="margin-top:12px"><label>備註</label><input name="note"></div>
+    <div style="margin-top:14px"><button type="submit">新增</button></div>
+  </form>
+</div>
+
+<div class="card">
+  <h3 class="serif">已登錄(可直接改後按「存」)</h3>
+  <div style="display:flex;gap:10px;font-size:11px;color:var(--ink-3);padding:0 2px 6px">
+    <span style="width:100px">月份</span><span style="width:120px">項目</span>
+    <span style="width:110px">金額</span><span style="flex:1">備註</span><span style="width:90px"></span>
+  </div>
+  {% for r in rows %}
+  <div style="display:flex;gap:10px;align-items:center;padding:5px 2px;border-top:1px solid var(--rule-2)">
+    <form method="post" action="/finance/expenses" style="display:flex;gap:10px;align-items:center;flex:1">
+      <input type="hidden" name="expense_id" value="{{ r.expense_id }}">
+      <input name="ym" value="{{ r.ym }}" style="width:100px">
+      <select name="category" style="width:120px">
+        {% for c in cats %}<option {{ 'selected' if c == r.category }}>{{ c }}</option>{% endfor %}
+      </select>
+      <input name="amount" type="number" value="{{ r.amount|round(0) }}" style="width:110px">
+      <input name="note" value="{{ r.note or '' }}" style="flex:1">
+      <button type="submit" class="ghost" style="padding:6px 12px">存</button>
+    </form>
+    <form method="post" action="/finance/expenses" onsubmit="return confirm('刪除這筆?')">
+      <input type="hidden" name="expense_id" value="{{ r.expense_id }}">
+      <input type="hidden" name="_delete" value="1">
+      <button type="submit" class="ghost" style="padding:6px 12px">刪</button>
+    </form>
+  </div>
+  {% else %}
+  <p class="muted" style="font-size:13px">尚無資料。</p>
+  {% endfor %}
+</div>
+{% endblock %}

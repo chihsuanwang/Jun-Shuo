@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ c.display_name }} · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/customers">客戶資料庫</a> / 明細</div>
+    <h1 class="serif">{{ c.display_name }}</h1></div>
+  <div style="display:flex;gap:8px">
+    <a href="/customers/{{ c.customer_id }}/edit"><button>編輯</button></a>
+    <a href="/customers/{{ c.customer_id }}/merge"><button class="ghost">合併到其他客戶</button></a>
+  </div>
+</div>
+<hr class="rule">
+{% if request.query_params.get('merged') %}<div class="ok">已把另一位客戶併入這位:訂單、地址、舊稱呼都搬過來了。</div>{% endif %}
+
+<div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:18px">
+  <div class="card">
+    <h3 class="serif">基本資料</h3>
+    <table>
+      <tbody>
+      <tr><td class="muted">分級</td><td style="text-align:left" class="{{ 'neg' if not c.segment }}">{{ c.segment or '未分級' }}</td></tr>
+      <tr><td class="muted">類型</td><td style="text-align:left">{{ c.customer_type or '—' }}</td></tr>
+      <tr><td class="muted">電話 / Email</td><td style="text-align:left">{{ c.phone or '—' }} / {{ c.email or '—' }}</td></tr>
+      <tr><td class="muted">聯絡人</td><td style="text-align:left">{{ c.contact_person or '—' }}</td></tr>
+      <tr><td class="muted">發票抬頭 / 統編</td><td style="text-align:left">{{ c.invoice_title or '—' }} / {{ c.tax_id or '—' }}</td></tr>
+      <tr><td class="muted">單據需求</td><td style="text-align:left">{{ c.tax_doc_pref or '—' }}</td></tr>
+      <tr><td class="muted">標籤</td><td style="text-align:left">{{ c.tags or '—' }}</td></tr>
+      <tr><td class="muted">備註</td><td style="text-align:left">{{ c.note or '—' }}</td></tr>
+      {% if aliases %}<tr><td class="muted">別名</td><td style="text-align:left">{{ aliases | map(attribute='alias_text') | join('、') }}</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h3 class="serif">收件地址</h3>
+    {% for a in addrs %}
+      <div style="font-size:13px;margin-bottom:10px">
+        <strong>{{ a.label or '地址' }}{{ ' · 預設' if a.is_default }}</strong><br>
+        {{ a.recipient_name or '' }} {{ a.recipient_phone or '' }}<br>
+        {{ a.zipcode or '' }} {{ a.address_full or '' }}
+      </div>
+    {% else %}
+      <p class="muted" style="font-size:13px">尚未建立收件地址。</p>
+    {% endfor %}
+    <div class="card kpi" style="margin-top:8px;border:0;background:var(--paper-2)">
+      <div class="lab">累計消費(銷售)</div><div class="val">{{ total|money }}</div>
+      <div class="sub">共 {{ orders | selectattr('order_kind','equalto','銷售') | list | length }} 張銷售訂單</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3 class="serif">往來紀錄</h3>
+  <table>
+    <thead><tr><th>單號</th><th>日期</th><th>種類</th><th>管道</th><th>金額</th><th>收款</th><th>出貨</th></tr></thead>
+    <tbody>{% for o in orders %}
+      <tr>
+        <td><a href="/orders/{{ o.order_id }}">{{ o.order_no }}</a></td><td>{{ o.order_date }}</td><td>{{ o.order_kind }}</td>
+        <td>{{ o.chan or '' }}</td><td>{{ o.order_total|money }}</td>
+        <td>{{ o.payment_status }}</td><td>{{ o.ship_status }}</td>
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">尚無訂單。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endblock %}

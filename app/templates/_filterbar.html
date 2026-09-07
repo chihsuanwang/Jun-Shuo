@@ -1,0 +1,12 @@
+<form method="get" class="filterbar">
+  {% if tab %}<input type="hidden" name="tab" value="{{ tab }}">{% endif %}
+  <span>產季</span>
+  <select name="season" onchange="this.form.submit()">
+    <option value="all" {{ 'selected' if season_sel == 'all' }}>全部</option>
+    {% for s in seasons %}<option value="{{ s }}" {{ 'selected' if season_sel == s|string }}>{{ s }}</option>{% endfor %}
+  </select>
+  <span>結算日</span>
+  <select name="asof" onchange="this.form.submit()">
+    {% for k, v in asof_opts.items() %}<option value="{{ k }}" {{ 'selected' if asof_sel == k }}>{{ v }}</option>{% endfor %}
+  </select>
+</form>

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}焙製批次 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 焙製批次</div><h1 class="serif">焙製批次</h1></div>
+  <a href="/batches/new"><button>＋ 新增批次</button></a>
+</div>
+<hr class="rule">
+<div class="card">
+  <table>
+    <thead><tr><th>批次</th><th>產季</th><th>對應商品</th><th>製造日</th><th>產出</th><th>已出</th><th>剩餘</th><th>賣出比例</th><th>單位成本</th><th></th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr>
+        <td>{{ r.batch_code }}</td><td>{{ r.season }}</td><td>{{ r.pname or '(多品)' }}</td>
+        <td>{{ r.mfg_date or '—' }}</td>
+        <td>{{ r.output_qty|money }} {{ r.output_uom or '' }}</td>
+        <td>{{ r.sold|money }}</td>
+        <td class="{{ 'neg' if r.remain < 0 }}">{{ r.remain|money }}</td>
+        <td>{{ (r.rate*100)|round(0) }}%</td>
+        <td>{{ r.unit_cost|money }}</td>
+        <td><a href="/batches/{{ r.batch_id }}/edit">編輯</a></td>
+      </tr>
+    {% else %}<tr><td colspan="10" class="muted" style="text-align:left">尚無批次。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endblock %}
