@@ -6,8 +6,9 @@
 </div>
 <hr class="rule">
 
-<p class="muted" style="font-size:13px;max-width:700px;margin-bottom:16px">
-  三層結構:<b>事業別</b>(龍眼 / 蜂蜜)→ <b>產品群組</b>(龍眼鮮果 / 龍眼乾 / 龍眼肉 / 蜂蜜)→ <b>SKU</b>(實際品項)。
+<p class="muted" style="font-size:13px;max-width:720px;margin-bottom:16px">
+  分三層:<b>事業別</b>(龍眼 / 蜂蜜)→ <b>產品線</b>(龍眼鮮果 / 龍眼乾 / 龍眼肉 / 蜂蜜)→
+  <b>商品</b>(實際在賣的品項,例如「桂圓乾 300g」「龍眼蜂蜜 420g」)。
   之後算「哪條產品線賺不賺」、報稅的「應稅 / 免稅」都掛在這個結構上。稅別預設「待確認」,等跟國稅局確認後再改。
 </p>
 
@@ -35,7 +36,7 @@
     <div style="margin:8px 0 8px 22px;padding:10px 12px;border:1px solid var(--rule-2);border-radius:8px">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <strong>{{ g.name }}</strong>
-        <span class="muted" style="font-size:12px">SKU {{ g.n_sku }}</span>
+        <span class="muted" style="font-size:12px">{{ g.n_sku }} 項商品</span>
         <span class="muted" style="font-size:12px">· 稅別 {{ g.tax_class }}</span>
         <form method="post" action="/product-lines/group"
               style="display:flex;gap:6px;align-items:center;margin-left:auto">
@@ -49,12 +50,12 @@
       </div>
       {% if g.skus %}
       <div class="muted" style="font-size:12px;margin-top:6px">
-        {% for s in g.skus %}<span style="display:inline-block;margin:2px 10px 2px 0">{{ s.sku }} · {{ s.name }}{{ '(停售)' if s.status == '停售' }}</span>{% endfor %}
+        {% for s in g.skus %}<span style="display:inline-block;margin:2px 10px 2px 0">{{ s.name }}{{ '(停售)' if s.status == '停售' }}</span>{% endfor %}
       </div>
       {% else %}
-      <div class="muted" style="font-size:12px;margin-top:6px">(還沒有品項)
+      <div class="muted" style="font-size:12px;margin-top:6px">(還沒有商品)
         <form method="post" action="/product-lines/group" style="display:inline"
-              onsubmit="return confirm('刪除產品群組「{{ g.name }}」?')">
+              onsubmit="return confirm('刪除產品線「{{ g.name }}」?')">
           <input type="hidden" name="pg_id" value="{{ g.pg_id }}">
           <input type="hidden" name="_delete" value="1">
           <button class="ghost" style="padding:2px 8px;font-size:11px">刪除</button>
@@ -76,13 +77,13 @@
     </form>
   </div>
   <div class="card">
-    <h3 class="serif">新增產品群組</h3>
+    <h3 class="serif">新增產品線</h3>
     <form method="post" action="/product-lines/group">
       <div class="grid" style="grid-template-columns:1fr 1fr">
-        <div><label>屬於</label>
+        <div><label>屬於哪個事業別</label>
           <select name="bu_id" required>{% for b in bus %}<option value="{{ b.bu_id }}">{{ b.name }}</option>{% endfor %}</select>
         </div>
-        <div><label>群組名稱</label><input name="name" placeholder="例:桂圓茶包" required></div>
+        <div><label>產品線名稱</label><input name="name" placeholder="例:桂圓茶包" required></div>
       </div>
       <div style="margin-top:10px"><label>稅別</label>
         <select name="tax_class">{% for t in tax_classes %}<option>{{ t }}</option>{% endfor %}</select>
@@ -93,10 +94,10 @@
 </div>
 
 <div class="card">
-  <h3 class="serif">SKU 歸類{% if unassigned %} <span class="neg" style="font-size:12px">· {{ unassigned|length }} 個尚未歸類</span>{% endif %}</h3>
+  <h3 class="serif">把商品分到產品線{% if unassigned %} <span class="neg" style="font-size:12px">· 還有 {{ unassigned|length }} 項沒分</span>{% endif %}</h3>
   <form method="post" action="/product-lines/assign">
     <table>
-      <thead><tr><th>SKU</th><th>品名</th><th>狀態</th><th>產品群組</th></tr></thead>
+      <thead><tr><th>商品編號</th><th>品名</th><th>狀態</th><th>產品線</th></tr></thead>
       <tbody>
       {% for s in skus %}
       <tr>
@@ -104,7 +105,7 @@
         <td class="muted">{{ s.status }}</td>
         <td>
           <select name="g_{{ s.product_id }}" style="min-width:150px">
-            <option value="" {{ 'selected' if not s.product_group_id }}>— 尚未歸類 —</option>
+            <option value="" {{ 'selected' if not s.product_group_id }}>— 還沒分 —</option>
             {% for g in groups %}
             <option value="{{ g.pg_id }}" {{ 'selected' if g.pg_id == s.product_group_id }}>{{ g.name }}</option>
             {% endfor %}
@@ -114,7 +115,7 @@
       {% endfor %}
       </tbody>
     </table>
-    <div style="margin-top:14px"><button type="submit">儲存歸類</button></div>
+    <div style="margin-top:14px"><button type="submit">儲存</button></div>
   </form>
 </div>
 {% endblock %}
