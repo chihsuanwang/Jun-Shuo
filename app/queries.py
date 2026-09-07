@@ -285,63 +285,6 @@ def profit_by_product(season=None):
                  GROUP BY p.name ORDER BY rev DESC""", sp)
 
 
-# ---------- 報表:客戶分析(RFM-lite) ---------------------------
-def customer_analysis(season=None, asof=None):
-    a = as_of(asof)
-    sc, sp = _S(season)
-    rows = q(f"""SELECT cu.customer_id, cu.display_name, cu.segment,
-                        COUNT(*) freq,
-                        SUM(o.order_total) monetary,
-                        MAX(o.order_date) last_order,
-                        MIN(o.order_date) first_order,
-                        CAST(julianday(?)-julianday(MAX(o.order_date)) AS INT) recency
-                 FROM "order" o JOIN customer cu ON cu.customer_id=o.customer_id
-                 WHERE {sc} AND o.order_kind='銷售'
-                 GROUP BY cu.customer_id ORDER BY monetary DESC""", [a] + sp)
-    for r in rows:
-        r["repeat"] = r["freq"] > 1
-        if r["recency"] is not None and r["recency"] > 120:
-            r["state"] = "久未回購"
-        elif r["freq"] >= 3:
-            r["state"] = "主力回購"
-        elif r["freq"] == 2:
-            r["state"] = "回購"
-        else:
-            r["state"] = "單次"
-    summary = dict(
-        total=len(rows),
-        repeat=sum(1 for r in rows if r["repeat"]),
-        repeat_rev=sum(r["monetary"] for r in rows if r["repeat"]),
-        new_rev=sum(r["monetary"] for r in rows if not r["repeat"]),
-        dormant=sum(1 for r in rows if r["state"] == "久未回購"),
-    )
-    return rows, summary
-
-
-# ---------- 報表:物流與運費 -----------------------------------
-def logistics_report(season=None):
-    sc, sp = _S(season)
-    by_method = q(f"""SELECT COALESCE(o.ship_method,'(未填)') k,
-                             COUNT(*) n,
-                             COALESCE(SUM(o.shipping_fee_charged),0) charged,
-                             COALESCE(SUM(o.shipping_cost_actual),0) cost
-                      FROM "order" o WHERE {sc}
-                      GROUP BY o.ship_method ORDER BY n DESC""", sp)
-    for r in by_method:
-        r["pnl"] = r["charged"] - r["cost"]
-    by_carrier = q(f"""SELECT o.carrier k, COUNT(DISTINCT o.order_id) n,
-                              COALESCE(SUM(o.shipping_cost_actual),0) cost,
-                              (SELECT COUNT(*) FROM shipment_issue si JOIN "order" o2 ON o2.order_id=si.order_id
-                               WHERE o2.carrier=o.carrier) issues,
-                              (SELECT COALESCE(SUM(cost_impact),0) FROM shipment_issue si JOIN "order" o2 ON o2.order_id=si.order_id
-                               WHERE o2.carrier=o.carrier) loss
-                       FROM "order" o WHERE {sc} AND o.carrier IS NOT NULL
-                       GROUP BY o.carrier ORDER BY issues DESC, n DESC""", sp)
-    for r in by_carrier:
-        r["rate"] = (r["issues"] / r["n"]) if r["n"] else 0
-    return by_method, by_carrier
-
-
 # ---------- 報表:批次與效期 -----------------------------------
 def batch_report(season=None, asof=None):
     a = as_of(asof)

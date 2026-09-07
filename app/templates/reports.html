@@ -45,53 +45,6 @@
   </table>
 </div>
 
-{# ---------- 客戶分析 ---------- #}
-{% elif tab == 'customer' %}
-<div class="grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:18px">
-  <div class="card kpi"><div class="lab">有下單客戶</div><div class="val">{{ summary.total }}</div></div>
-  <div class="card kpi" style="border-top-color:var(--leaf)"><div class="lab">回頭客</div><div class="val">{{ summary.repeat }}</div><div class="sub">佔 {{ (summary.repeat / summary.total if summary.total else 0)|pct }}</div></div>
-  <div class="card kpi" style="border-top-color:var(--s-mgn)"><div class="lab">回頭客營收</div><div class="val">{{ summary.repeat_rev|money }}</div><div class="sub">新客 {{ summary.new_rev|money }}</div></div>
-  <div class="card kpi" style="border-top-color:var(--seal)"><div class="lab">久未回購(>120天)</div><div class="val">{{ summary.dormant }}</div></div>
-</div>
-<div class="card">
-  <h3 class="serif">客戶明細(RFM)</h3>
-  <table>
-    <thead><tr><th>客戶</th><th>分級</th><th>狀態</th><th>訂單數</th><th>消費金額</th><th>首購</th><th>最近購買</th><th>距今(天)</th></tr></thead>
-    <tbody>{% for r in rows %}
-      <tr><td>{{ r.display_name }}</td><td>{{ r.segment or '未分級' }}</td>
-          <td class="{{ 'neg' if r.state=='久未回購' }}">{{ r.state }}</td>
-          <td>{{ r.freq }}</td><td>{{ r.monetary|money }}</td>
-          <td>{{ r.first_order }}</td><td>{{ r.last_order }}</td>
-          <td class="{{ 'neg' if r.recency and r.recency > 120 }}">{{ r.recency }}</td></tr>
-    {% endfor %}</tbody>
-  </table>
-</div>
-
-{# ---------- 物流與運費 ---------- #}
-{% elif tab == 'logistics' %}
-<div class="card" style="margin-bottom:20px">
-  <h3 class="serif">依出貨方式</h3>
-  <table>
-    <thead><tr><th>方式</th><th>筆數</th><th>跟客人收</th><th>我方付出</th><th>賺賠</th></tr></thead>
-    <tbody>{% for r in by_method %}
-      <tr><td>{{ r.k }}</td><td>{{ r.n }}</td><td>{{ r.charged|money }}</td><td>{{ r.cost|money }}</td>
-          <td class="{{ 'neg' if r.pnl < 0 }}">{{ r.pnl|money }}</td></tr>
-    {% endfor %}</tbody>
-  </table>
-</div>
-<div class="card">
-  <h3 class="serif">依物流商</h3>
-  <table>
-    <thead><tr><th>物流商</th><th>出貨筆數</th><th>我方運費</th><th>異常件數</th><th>異常率</th><th>損失</th></tr></thead>
-    <tbody>{% for r in by_carrier %}
-      <tr><td>{{ r.k }}</td><td>{{ r.n }}</td><td>{{ r.cost|money }}</td>
-          <td class="{{ 'neg' if r.rate > 0.05 }}">{{ r.issues }}</td>
-          <td class="{{ 'neg' if r.rate > 0.05 }}">{{ r.rate|pct }}</td>
-          <td>{{ r.loss|money }}</td></tr>
-    {% endfor %}</tbody>
-  </table>
-</div>
-
 {# ---------- 收款帳齡 ---------- #}
 {% elif tab == 'aging' %}
 <div class="grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:18px">

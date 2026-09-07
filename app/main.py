@@ -119,19 +119,6 @@ def export_report(request: Request):
     season = _season_arg(request)
     asof = request.query_params.get("asof", "latest") or "latest"
     tab = request.query_params.get("tab", "profit")
-    if tab == "customer":
-        rows, _ = Q.customer_analysis(season, asof)
-        return csv_response("客戶分析.csv",
-            ["客戶","分級","狀態","訂單數","消費金額","首購","最近購買","距今天數"],
-            [[r["display_name"], r["segment"] or "未分級", r["state"], r["freq"],
-              round(r["monetary"]), r["first_order"], r["last_order"], r["recency"]] for r in rows])
-    if tab == "logistics":
-        bm, bc = Q.logistics_report(season)
-        out = [["【依出貨方式】"], ["方式","筆數","跟客人收","我方付出","賺賠"]]
-        out += [[r["k"], r["n"], round(r["charged"]), round(r["cost"]), round(r["pnl"])] for r in bm]
-        out += [[], ["【依物流商】"], ["物流商","出貨筆數","我方運費","異常件數","異常率","損失"]]
-        out += [[r["k"], r["n"], round(r["cost"]), r["issues"], f"{r['rate']*100:.0f}%", round(r["loss"])] for r in bc]
-        return csv_response("物流與運費.csv", [], out)
     if tab == "aging":
         _, rows = Q.ar_aging(season, asof)
         return csv_response("收款帳齡.csv",
@@ -208,9 +195,8 @@ def dashboard(request: Request):
 
 
 # ---------- 報表 -----------------------------------------------
-REPORT_TABS = {"profit": "獲利分析", "customer": "客戶分析",
-               "logistics": "物流與運費", "aging": "收款帳齡", "batch": "批次與效期",
-               "compare": "跨產季比較"}
+REPORT_TABS = {"profit": "獲利分析", "aging": "收款帳齡",
+               "batch": "批次與效期", "compare": "跨產季比較"}
 
 @app.get("/reports", response_class=HTMLResponse)
 def reports(request: Request):
@@ -221,12 +207,6 @@ def reports(request: Request):
     data = dict(request=request, active="report", tab=tab, tabs=REPORT_TABS, **ctx)
     if tab == "profit":
         data.update(prod=Q.profit_by_product(season), ch=Q.by_channel(season))
-    elif tab == "customer":
-        rows, summary = Q.customer_analysis(season, asof)
-        data.update(rows=rows, summary=summary)
-    elif tab == "logistics":
-        bm, bc = Q.logistics_report(season)
-        data.update(by_method=bm, by_carrier=bc)
     elif tab == "aging":
         buckets, rows = Q.ar_aging(season, asof)
         data.update(buckets=buckets, rows=rows,
