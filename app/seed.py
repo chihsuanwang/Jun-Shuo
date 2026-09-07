@@ -20,6 +20,26 @@ cx = sqlite3.connect(DB)
 cx.executescript(open(SQL, encoding="utf-8").read())
 c = cx.cursor()
 
+# ---- 產品線:事業別 → 產品群組 -----------------------------------
+bu = {}
+for name, srt in [("龍眼", 1), ("蜂蜜", 2)]:
+    c.execute("INSERT INTO business_unit(name,sort) VALUES(?,?)", (name, srt))
+    bu[name] = c.lastrowid
+pg = {}
+for i, (gname, buname) in enumerate(
+        [("龍眼鮮果", "龍眼"), ("龍眼乾", "龍眼"), ("龍眼肉", "龍眼"), ("蜂蜜", "蜂蜜")]):
+    c.execute("INSERT INTO product_group(bu_id,name,sort) VALUES(?,?,?)", (bu[buname], gname, i))
+    pg[gname] = c.lastrowid
+
+# 每個 SKU 歸到哪個產品群組(稅別預設「待確認」,等家易確認)
+SKU_GROUP = {
+    "GY-DRY-300": "龍眼乾", "GY-DRY-500": "龍眼乾", "GY-DRY-BULK": "龍眼乾",
+    "GY-GIFT": "龍眼乾", "GX-STICK": "龍眼乾",
+    "LG-MEAT-600": "龍眼肉", "LG-MEAT-1000": "龍眼肉",
+    "HNY-LONGAN-420": "蜂蜜", "HNY-LYCHEE-420": "蜂蜜",
+    "GY-FRESH-TCHIN": "龍眼鮮果",
+}
+
 # ---- 通路 ----------------------------------------------------------
 channels = [
     ("WEB",   "官網",       "官網",       0.0,  0),
@@ -42,15 +62,21 @@ products = [
     ("LG-MEAT-600", "龍眼肉 600g 罐",     "單品", None,        600,  700, "罐",     "罐", 600, 365, 0, 600, 500, 340),
     ("LG-MEAT-1000","龍眼肉 1000g 裸裝",  "單品", None,       1000, 1100, "真空袋", "罐",1000, 365, 0,1000, 900, 560),
     ("GX-STICK",    "桂圓棒",             "加購贈品", None,     40,   50, "夾鏈袋", "支",  40, 150, 1,   0,   0,  18),
+    ("HNY-LONGAN-420","龍眼蜂蜜 420g",    "單品", None,        420,  620, "玻璃罐", "罐", 420, 730, 0, 420, 360, 150),
+    ("HNY-LYCHEE-420","荔枝蜂蜜 420g",    "單品", None,        420,  620, "玻璃罐", "罐", 420, 730, 0, 420, 360, 160),
+    ("GY-FRESH-TCHIN","龍眼鮮果 台斤",    "裸裝", None,       None, None, "裸裝",   "斤", 600,  10, 0,  80,  60,  35),
 ]
 prod = {}
 for p in products:
     low = {"GY-DRY-300": 60, "GY-GIFT": 60, "LG-MEAT-600": 60}.get(p[0])
+    ingredients = "蜂蜜(南投中寮)" if p[0].startswith("HNY") else "龍眼(南投中寮)"
+    pgid = pg.get(SKU_GROUP.get(p[0]))
     c.execute("""INSERT INTO product(sku,name,product_type,type_code_raw,net_weight_g,gross_weight_g,
-                 package_form,uom,grams_per_uom,shelf_life_days,gift_only,ingredients,origin,status,low_stock)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 package_form,uom,grams_per_uom,shelf_life_days,gift_only,ingredients,origin,status,low_stock,
+                 product_group_id)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7],p[8],p[9],p[10],
-               "龍眼(南投中寮)","南投中寮","在售" if p[0]!="GY-DRY-500" else "停售", low))
+               ingredients,"南投中寮","在售" if p[0]!="GY-DRY-500" else "停售", low, pgid))
     pid = c.lastrowid
     prod[p[0]] = dict(id=pid, retail=p[11], wholesale=p[12], unit_cost=p[13], uom=p[7])
     # 定價表:零售 / 批發 / 團購(零售95折) / 機構(零售) / 內部(0)

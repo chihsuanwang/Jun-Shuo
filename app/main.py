@@ -240,6 +240,92 @@ def reports(request: Request):
     return tpl.TemplateResponse("reports.html", data)
 
 
+# ---------- 產品線:事業別 → 產品群組 → SKU ------------------
+TAX_CLASSES = ['待確認', '應稅', '免稅', '零稅率']
+
+@app.get("/product-lines", response_class=HTMLResponse)
+def product_lines(request: Request):
+    bus = q("SELECT bu_id, name, sort FROM business_unit ORDER BY sort, bu_id")
+    groups = q("""SELECT g.pg_id, g.bu_id, g.name, g.tax_class, g.sort,
+                    (SELECT COUNT(*) FROM product p WHERE p.product_group_id=g.pg_id) n_sku
+                  FROM product_group g ORDER BY g.sort, g.pg_id""")
+    skus = q("""SELECT product_id, sku, name, status, product_group_id
+                FROM product ORDER BY status, sku""")
+    by_bu = {}
+    for g in groups:
+        g["skus"] = [s for s in skus if s["product_group_id"] == g["pg_id"]]
+        by_bu.setdefault(g["bu_id"], []).append(g)
+    for b in bus:
+        b["groups"] = by_bu.get(b["bu_id"], [])
+    unassigned = [s for s in skus if s["product_group_id"] is None]
+    return tpl.TemplateResponse("product_lines.html", dict(
+        request=request, active="prodline",
+        bus=bus, groups=groups, skus=skus, unassigned=unassigned, tax_classes=TAX_CLASSES))
+
+@app.post("/product-lines/bu")
+async def product_line_bu_save(request: Request):
+    f = await request.form()
+    name = (f.get("name") or "").strip()
+    bid = f.get("bu_id")
+    if f.get("_delete") and bid:
+        if not q("SELECT 1 FROM product_group WHERE bu_id=?", (int(bid),)):
+            execute("DELETE FROM business_unit WHERE bu_id=?", (int(bid),))
+        return RedirectResponse("/product-lines", status_code=303)
+    if not name:
+        return RedirectResponse("/product-lines", status_code=303)
+    dup = q("SELECT bu_id FROM business_unit WHERE name=?", (name,))
+    if bid:
+        if not dup or dup[0]["bu_id"] == int(bid):
+            execute("UPDATE business_unit SET name=? WHERE bu_id=?", (name, int(bid)))
+    elif not dup:
+        n = q("SELECT COALESCE(MAX(sort),0)+1 s FROM business_unit")[0]["s"]
+        execute("INSERT INTO business_unit(name,sort) VALUES(?,?)", (name, n))
+    return RedirectResponse("/product-lines", status_code=303)
+
+@app.post("/product-lines/group")
+async def product_line_group_save(request: Request):
+    f = await request.form()
+    gid = f.get("pg_id")
+    if f.get("_delete") and gid:
+        if not q("SELECT 1 FROM product WHERE product_group_id=?", (int(gid),)):
+            execute("DELETE FROM product_group WHERE pg_id=?", (int(gid),))
+        return RedirectResponse("/product-lines", status_code=303)
+    name = (f.get("name") or "").strip()
+    tc = (f.get("tax_class") or "待確認").strip()
+    if tc not in TAX_CLASSES:
+        tc = "待確認"
+    if gid:
+        row = q("SELECT bu_id FROM product_group WHERE pg_id=?", (int(gid),))
+        if not row:
+            return RedirectResponse("/product-lines", status_code=303)
+        dup = q("SELECT pg_id FROM product_group WHERE bu_id=? AND name=?", (row[0]["bu_id"], name))
+        if name and (not dup or dup[0]["pg_id"] == int(gid)):
+            execute("UPDATE product_group SET name=?, tax_class=? WHERE pg_id=?", (name, tc, int(gid)))
+        else:
+            execute("UPDATE product_group SET tax_class=? WHERE pg_id=?", (tc, int(gid)))
+    else:
+        bu_id = f.get("bu_id")
+        if not (name and bu_id):
+            return RedirectResponse("/product-lines", status_code=303)
+        if not q("SELECT 1 FROM product_group WHERE bu_id=? AND name=?", (int(bu_id), name)):
+            n = q("SELECT COALESCE(MAX(sort),0)+1 s FROM product_group")[0]["s"]
+            execute("INSERT INTO product_group(bu_id,name,tax_class,sort) VALUES(?,?,?,?)",
+                    (int(bu_id), name, tc, n))
+    return RedirectResponse("/product-lines", status_code=303)
+
+@app.post("/product-lines/assign")
+async def product_line_assign(request: Request):
+    f = await request.form()
+    for k in f.keys():
+        if not k.startswith("g_"):
+            continue
+        pid = int(k[2:])
+        v = (f.get(k) or "").strip()
+        execute("UPDATE product SET product_group_id=? WHERE product_id=?",
+                (int(v) if v else None, pid))
+    return RedirectResponse("/product-lines", status_code=303)
+
+
 # ---------- 商品目錄 + 定價 -----------------------------------
 PRICE_SEGS = ['零售', '批發', '團購', '機構', '內部']   # price_list.customer_segment
 PROD_TYPES = ['單品', '組合', '禮盒', '裸裝', '試吃包', '加購贈品']

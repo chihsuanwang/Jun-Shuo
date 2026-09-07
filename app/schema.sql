@@ -1,8 +1,29 @@
--- 桂圓帳房 · 資料庫結構 v1  (SQLite)
--- 產季 = 一次秋季採收/焙製的批次年;一列原則上 = 一張訂單(不合併)
+-- 桂圓帳房 · 資料庫結構 v2  (SQLite)
+-- 產季 = 當年 4 月初 ~ 隔年 3 月底,以起始年命名;一列原則上 = 一張訂單(不合併)
 PRAGMA foreign_keys = ON;
 
--- 1. 商品目錄 ------------------------------------------------------------
+-- 0. 產品線:事業別 → 產品群組 → SKU(product) -------------------------
+--    龍眼(自有果園)底下有 龍眼鮮果 / 龍眼乾 / 龍眼肉;蜂蜜(自養蜂)底下有 蜂蜜。
+--    成本大多歸在「產品群組」這一層;稅別(應稅/免稅)也放這層。
+CREATE TABLE business_unit (
+  bu_id   INTEGER PRIMARY KEY,
+  name    TEXT    NOT NULL UNIQUE,        -- 龍眼 / 蜂蜜
+  sort    INTEGER NOT NULL DEFAULT 0,
+  note    TEXT
+);
+
+CREATE TABLE product_group (
+  pg_id     INTEGER PRIMARY KEY,
+  bu_id     INTEGER NOT NULL REFERENCES business_unit(bu_id),
+  name      TEXT    NOT NULL,             -- 龍眼鮮果 / 龍眼乾 / 龍眼肉 / 蜂蜜
+  tax_class TEXT    NOT NULL DEFAULT '待確認'
+            CHECK (tax_class IN ('待確認','應稅','免稅','零稅率')),
+  sort      INTEGER NOT NULL DEFAULT 0,
+  note      TEXT,
+  UNIQUE (bu_id, name)
+);
+
+-- 1. 商品目錄(= SKU / 品項) ------------------------------------------
 CREATE TABLE product (
   product_id      INTEGER PRIMARY KEY,
   sku             TEXT    NOT NULL UNIQUE,
@@ -23,6 +44,7 @@ CREATE TABLE product (
   gift_only       INTEGER NOT NULL DEFAULT 0 CHECK (gift_only IN (0,1)),
   status          TEXT    NOT NULL DEFAULT '在售' CHECK (status IN ('在售','停售')),
   low_stock       INTEGER,              -- 低庫存警戒量;NULL = 不設
+  product_group_id INTEGER REFERENCES product_group(pg_id),   -- 歸屬產品群組;NULL = 尚未歸類
   note            TEXT
 );
 
