@@ -317,11 +317,30 @@ purchases = [
     ("2025-11-10", "名晟印刷設計",   "包材", None,        12000,   600, 1, "三聯式發票", 0, "共同 · 品牌貼紙 / 提袋"),
     ("2026-01-08", "中寮果農合作社", "原料", "龍眼肉",    41000,     0, 0, "農民收據", 0, "鮮果加購 · 補龍眼肉產量"),
 ]
+buy_id = {}
 for d, sname, cat, pgname, amt, tax, ded, doc, fa, note in purchases:
     c.execute("""INSERT INTO purchase(purchase_date,supplier_id,category,product_group_id,
                  amount,tax_amount,tax_deductible,doc_type,is_fixed_asset,note)
                  VALUES(?,?,?,?,?,?,?,?,?,?)""",
               (d, sup[sname], cat, pg.get(pgname), amt, tax, ded, doc, fa, note))
+    buy_id[note] = c.lastrowid
+
+# ---- 固定資產卡(v2 回合 3 示範) -------------------------
+# (名稱, 類別, 產品線, 取得日, 成本, 補助, 殘值 None=自動, 年數, 來源進貨 note)
+assets = [
+    ("智慧柴焙灶(含溫控監測)", "機器設備", "龍眼乾", "2024-08-05", 480000, 200000, None, 5, None),
+    ("龍眼剝殼去核機",         "機器設備", "龍眼肉", "2024-09-10",  85000,      0, None, 5, None),
+    ("搖蜜機",                 "機器設備", "蜂蜜",   "2025-07-15",  46000,      0, None, 5, "搖蜜機(固定資產,待建卡)"),
+    ("冷藏庫(成品倉)",        "機器設備", None,     "2024-07-20", 120000,  40000, None, 5, None),
+    ("貨車(二手)",            "運輸設備", None,     "2024-06-01", 260000,      0, None, 5, None),
+]
+for name, cat, pgname, adate, cost, grant, sv, life, src_note in assets:
+    salvage = sv if sv is not None else round(max(0, cost - grant) / (life + 1))
+    c.execute("""INSERT INTO fixed_asset(name,category,product_group_id,acquire_date,cost,
+                 grant_amount,salvage,life_years,method,source_purchase_id,note)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+              (name, cat, pg.get(pgname), adate, cost, grant, salvage, life, "平均法",
+               buy_id.get(src_note), None))
 
 # ---- 庫存異動:每產季各分裝一批(A 批),再依訂單出庫 ----
 import math

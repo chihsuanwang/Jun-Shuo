@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}固定資產 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 固定資產</div><h1 class="serif">固定資產</h1></div>
+  <a href="/assets/new"><button>＋ 新增一台</button></a>
+</div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">
+  焙灶、剝殼機、搖蜜機、冷藏、貨車… 這些不是一次性費用,要逐年提折舊。
+  建卡後,系統每月自動把折舊算進「財務健康」的營運費用(不用手動記)。平均法:每年 =(成本 − 補助 − 殘值)÷ 耐用年數。
+</p>
+
+<div class="grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+  <div class="card kpi"><div class="lab">在用資產成本</div><div class="val">{{ summary.cost|money }}</div><div class="sub">補助 {{ summary.grant|money }}</div></div>
+  <div class="card kpi" style="border-top-color:var(--ink-2)"><div class="lab">累計折舊</div><div class="val">{{ summary.accum|money }}</div></div>
+  <div class="card kpi" style="border-top-color:var(--leaf)"><div class="lab">帳面淨值</div><div class="val">{{ summary.book|money }}</div></div>
+  <div class="card kpi" style="border-top-color:var(--seal)"><div class="lab">每月折舊費用</div><div class="val">{{ summary.monthly|money }}</div><div class="sub">全部在用資產合計</div></div>
+</div>
+
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead><tr><th>名稱</th><th>類別</th><th>產品線</th><th>取得日</th><th>成本</th><th>補助</th><th>殘值</th><th>年數</th><th>每月折舊</th><th>累計折舊</th><th>帳面淨值</th><th>狀態</th><th></th></tr></thead>
+    <tbody>{% for a in rows %}
+      <tr style="{{ 'opacity:.5' if not a.in_use }}">
+        <td>{{ a.name }}{% if a.from_buy %} <span class="muted" style="font-size:11px">(來自進貨)</span>{% endif %}</td>
+        <td>{{ a.category or '' }}</td>
+        <td>{{ a.pg_name or '共同' }}</td>
+        <td>{{ a.acquire_date }}</td>
+        <td>{{ a.cost|money }}</td>
+        <td>{{ a.grant_amount|money if a.grant_amount else '—' }}</td>
+        <td>{{ a.salvage|money }}</td>
+        <td>{{ a.life_years }}</td>
+        <td>{{ a.monthly|money }}</td>
+        <td>{{ a.accum_dep|money }}</td>
+        <td>{{ a.book_value|money }}</td>
+        <td>{{ '在用' if a.in_use else ('處分 ' ~ a.disposed_date) }}</td>
+        <td><a href="/assets/{{ a.asset_id }}/edit">編輯</a></td>
+      </tr>
+    {% else %}<tr><td colspan="13" class="muted" style="text-align:left">還沒有固定資產。設備類的進貨可從「進貨」頁點「建卡」帶入。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+<div class="muted" style="font-size:11px;margin-top:8px">
+  累計折舊算到最新訂單日所在的月份為止。折舊金額已自動計入財務健康的月損益,不會重複記在「營運費用」。
+</div>
+{% endblock %}

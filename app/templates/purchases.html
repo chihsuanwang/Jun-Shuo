@@ -45,7 +45,7 @@
         <td>{{ r.tax_amount|money }}</td>
         <td>{{ '是' if r.tax_deductible else '否' }}</td>
         <td>{{ r.doc_type or '—' }}</td>
-        <td>{{ '✔' if r.is_fixed_asset else '' }}</td>
+        <td>{% if r.is_fixed_asset %}{% if r.has_card %}<span class="muted">已建卡</span>{% else %}<a href="/assets/new?purchase={{ r.purchase_id }}">建卡 →</a>{% endif %}{% endif %}</td>
         <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
         <td><a href="/purchases/{{ r.purchase_id }}/edit">編輯</a></td>
       </tr>

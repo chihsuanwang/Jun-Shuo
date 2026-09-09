@@ -276,3 +276,23 @@ CREATE TABLE purchase (
   created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX ix_purchase_date ON purchase(purchase_date);
+
+-- 16. 固定資產卡(v2 回合 3) --------------------------------
+--     平均法折舊:每年 = (成本 − 補助 − 殘值) ÷ 耐用年數;每月 = 年 ÷ 12。
+--     折舊費用由 queries.opex_rows() 動態算入「折舊」類別,不存成 op_expense 列。
+CREATE TABLE fixed_asset (
+  asset_id     INTEGER PRIMARY KEY,
+  name         TEXT NOT NULL,                    -- 柴焙灶 / 剝殼機 / 搖蜜機 …
+  category     TEXT CHECK (category IN ('機器設備','生財器具','運輸設備','電腦設備','房屋建築','其他')),
+  product_group_id INTEGER REFERENCES product_group(pg_id),   -- 歸哪條產品線;NULL = 共同
+  acquire_date TEXT NOT NULL,                    -- 取得日 YYYY-MM-DD
+  cost         REAL NOT NULL DEFAULT 0,          -- 取得成本
+  grant_amount REAL NOT NULL DEFAULT 0,          -- 政府補助款(補助部分不提折舊)
+  salvage      REAL NOT NULL DEFAULT 0,          -- 殘值(平均法稅法建議 = 成本 ÷ (年數+1))
+  life_years   INTEGER NOT NULL DEFAULT 5,       -- 耐用年數
+  method       TEXT NOT NULL DEFAULT '平均法',
+  source_purchase_id INTEGER REFERENCES purchase(purchase_id),  -- 從哪筆進貨建卡(可空)
+  disposed_date TEXT,                            -- 處分日;NULL = 在用
+  note         TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);

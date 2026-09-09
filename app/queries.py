@@ -333,8 +333,31 @@ def _add_months(ym, k):
     m = (m - 1) % 12 + 1
     return f"{y}-{m:02d}"
 
+def asset_dep_base(a):
+    """可提折舊基礎 = 成本 − 補助 − 殘值(不小於 0)。"""
+    return max(0.0, (a["cost"] or 0) - (a["grant_amount"] or 0) - (a["salvage"] or 0))
+
+def _asset_dep_rows(lo=None, hi=None):
+    """每個固定資產的逐月折舊(平均法),攤在耐用年數內;處分後停止。"""
+    out = []
+    for a in q("SELECT * FROM fixed_asset"):
+        base = asset_dep_base(a)
+        life = a["life_years"] or 0
+        if base <= 0 or life <= 0 or not a["acquire_date"]:
+            continue
+        monthly = base / life / 12
+        start = a["acquire_date"][:7]
+        for i in range(life * 12):
+            ym = _add_months(start, i)
+            if a["disposed_date"] and ym > a["disposed_date"][:7]:
+                break
+            if (lo is None or ym >= lo) and (hi is None or ym <= hi):
+                out.append(dict(ym=ym, category="折舊",
+                                product_group_id=a["product_group_id"], amt=monthly))
+    return out
+
 def opex_rows(lo=None, hi=None):
-    """把每筆營運費用依『攤提月數』攤開成逐月列(管理視角)。
+    """營運費用逐月列(管理視角):op_expense 依『攤提月數』攤開 + 固定資產逐月折舊。
     amortize_months 空或 <=1 → 當月全額;N → 從 ym 起每月 amount/N,共 N 個月。
     給 lo/hi(YYYY-MM)時只回落在區間內的月份。"""
     out = []
@@ -346,6 +369,7 @@ def opex_rows(lo=None, hi=None):
             if (lo is None or ym >= lo) and (hi is None or ym <= hi):
                 out.append(dict(ym=ym, category=r["category"],
                                 product_group_id=r["product_group_id"], amt=per))
+    out += _asset_dep_rows(lo, hi)
     return out
 
 def months_with_data():
@@ -389,6 +413,36 @@ def finance_trend():
         out.append(dict(ym=ym, pretax=d["pretax"], revenue=d["revenue"],
                         opex_total=d["opex_total"]))
     return out
+
+
+# ---------- 固定資產(v2 回合 3) -----------------------------
+def _months_between(a, b):
+    ay, am = map(int, a.split("-")); by, bm = map(int, b.split("-"))
+    return (by - ay) * 12 + (bm - am)
+
+def asset_list(as_of_ym=None):
+    """固定資產卡 + 到 as_of_ym 為止的累計折舊、帳面淨值。"""
+    if not as_of_ym:
+        as_of_ym = as_of()[:7]
+    rows = q("""SELECT a.*, g.name pg_name,
+                       (SELECT COUNT(*) FROM purchase p WHERE p.purchase_id=a.source_purchase_id) from_buy
+                FROM fixed_asset a LEFT JOIN product_group g ON g.pg_id=a.product_group_id
+                ORDER BY a.acquire_date DESC, a.asset_id DESC""")
+    for a in rows:
+        base = asset_dep_base(a)
+        life = a["life_years"] or 0
+        a["dep_base"] = base
+        a["monthly"] = (base / life / 12) if (base > 0 and life) else 0
+        n = 0
+        if a["acquire_date"] and a["monthly"]:
+            end = as_of_ym
+            if a["disposed_date"] and a["disposed_date"][:7] < end:
+                end = a["disposed_date"][:7]
+            n = min(life * 12, max(0, _months_between(a["acquire_date"][:7], end) + 1))
+        a["accum_dep"] = min(base, a["monthly"] * n)
+        a["book_value"] = (a["cost"] or 0) - a["accum_dep"]
+        a["in_use"] = not a["disposed_date"]
+    return rows
 
 def season_finance(season):
     """整個產季合計:銷售月的營收 − 產季 12 個月(4 月初~隔年 3 月底)的營運費用。"""

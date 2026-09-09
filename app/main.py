@@ -348,7 +348,8 @@ def purchases_page(request: Request):
         where.append("p.product_group_id=?"); args.append(int(pgv))
     if ym:
         where.append("substr(p.purchase_date,1,7)=?"); args.append(ym)
-    rows = q(f"""SELECT p.*, s.name sup_name, g.name pg_name
+    rows = q(f"""SELECT p.*, s.name sup_name, g.name pg_name,
+                        (SELECT COUNT(*) FROM fixed_asset fa WHERE fa.source_purchase_id=p.purchase_id) has_card
                  FROM purchase p LEFT JOIN supplier s ON s.supplier_id=p.supplier_id
                  LEFT JOIN product_group g ON g.pg_id=p.product_group_id
                  WHERE {' AND '.join(where)}
@@ -402,6 +403,84 @@ async def purchase_save(request: Request):
         keys = ",".join(cols)
         execute(f"INSERT INTO purchase({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
     return RedirectResponse("/purchases", status_code=303)
+
+
+# ---------- 固定資產卡 + 折舊(v2 回合 3) -------------------
+ASSET_CATS = {"機器設備": 5, "生財器具": 5, "運輸設備": 5,
+              "電腦設備": 3, "房屋建築": 30, "其他": 5}
+
+@app.get("/assets", response_class=HTMLResponse)
+def assets_page(request: Request):
+    rows = Q.asset_list()
+    in_use = [a for a in rows if a["in_use"]]
+    summary = dict(
+        cost=sum(a["cost"] or 0 for a in in_use),
+        grant=sum(a["grant_amount"] or 0 for a in in_use),
+        accum=sum(a["accum_dep"] for a in in_use),
+        book=sum(a["book_value"] for a in in_use),
+        monthly=sum(a["monthly"] for a in in_use))
+    return tpl.TemplateResponse("assets.html", dict(
+        request=request, active="asset", rows=rows, summary=summary))
+
+def _asset_form_ctx(request, a, prefill=None):
+    return dict(request=request, active="asset", a=a, prefill=prefill,
+               cats=ASSET_CATS, groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
+               today=dt.date.today().isoformat())
+
+@app.get("/assets/new", response_class=HTMLResponse)
+def asset_new(request: Request):
+    prefill = None
+    pv = request.query_params.get("purchase")
+    if pv and pv.isdigit():
+        r = q("SELECT * FROM purchase WHERE purchase_id=?", (int(pv),))
+        if r:
+            p = r[0]
+            prefill = dict(source_purchase_id=p["purchase_id"], name=(p["note"] or "設備"),
+                           acquire_date=p["purchase_date"], cost=p["amount"],
+                           product_group_id=p["product_group_id"])
+    return tpl.TemplateResponse("asset_form.html", _asset_form_ctx(request, None, prefill))
+
+@app.get("/assets/{aid}/edit", response_class=HTMLResponse)
+def asset_edit(request: Request, aid: int):
+    a = q("SELECT * FROM fixed_asset WHERE asset_id=?", (aid,))
+    if not a:
+        return RedirectResponse("/assets", status_code=303)
+    return tpl.TemplateResponse("asset_form.html", _asset_form_ctx(request, a[0]))
+
+@app.post("/assets")
+async def asset_save(request: Request):
+    f = await request.form()
+    g = lambda k: (f.get(k) or "").strip() or None
+    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
+    aid = f.get("asset_id")
+    if f.get("_delete") and aid:
+        execute("DELETE FROM fixed_asset WHERE asset_id=?", (int(aid),))
+        return RedirectResponse("/assets", status_code=303)
+    name = (f.get("name") or "").strip()
+    date = (f.get("acquire_date") or "").strip()
+    if not (name and date):
+        return RedirectResponse("/assets", status_code=303)
+    life = int(f.get("life_years") or 5) or 5
+    cost = fl("cost")
+    grant = fl("grant_amount")
+    sv = (f.get("salvage") or "").strip()
+    salvage = float(sv) if sv else round(max(0.0, cost - grant) / (life + 1))
+    pgv = f.get("product_group_id") or ""
+    spv = f.get("source_purchase_id") or ""
+    cols = dict(
+        name=name, category=g("category"),
+        product_group_id=(int(pgv) if pgv.isdigit() else None),
+        acquire_date=date, cost=cost, grant_amount=grant, salvage=salvage,
+        life_years=life, method="平均法",
+        source_purchase_id=(int(spv) if spv.isdigit() else None),
+        disposed_date=g("disposed_date"), note=g("note"))
+    if aid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE fixed_asset SET {sets} WHERE asset_id=:id", {**cols, "id": int(aid)})
+    else:
+        keys = ",".join(cols)
+        execute(f"INSERT INTO fixed_asset({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+    return RedirectResponse("/assets", status_code=303)
 
 
 # ---------- 商品目錄 + 定價 -----------------------------------

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{{ '編輯固定資產' if a else '新增固定資產' }} · 桂圓帳房{% endblock %}
+{% block body %}
+{% set d = a or prefill or {} %}
+<div class="head"><div>
+  <div class="sup"><a href="/assets">固定資產</a> / {{ '編輯' if a else '新增' }}</div>
+  <h1 class="serif">{{ a.name if a else '新增一台' }}</h1>
+</div></div>
+<hr class="rule">
+
+<form method="post" action="/assets">
+{% if a %}<input type="hidden" name="asset_id" value="{{ a.asset_id }}">{% endif %}
+{% if d.source_purchase_id %}<input type="hidden" name="source_purchase_id" value="{{ d.source_purchase_id }}">
+<p class="muted" style="font-size:12px">從進貨帶入,金額 / 日期已預填,確認一下耐用年數再存。</p>{% endif %}
+<div class="card" style="max-width:680px">
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div><label>名稱</label><input name="name" value="{{ d.name or '' }}" required placeholder="例:柴焙灶"></div>
+    <div><label>類別(選了會帶預設年數)</label>
+      <select name="category" id="cat">
+        <option value="">—</option>
+        {% for c, yrs in cats.items() %}<option value="{{ c }}" data-life="{{ yrs }}" {{ 'selected' if d.category == c }}>{{ c }}({{ yrs }} 年)</option>{% endfor %}
+      </select></div>
+    <div><label>歸哪條產品線</label>
+      <select name="product_group_id">
+        <option value="">共同(不特定一條線)</option>
+        {% for g in groups %}<option value="{{ g.pg_id }}" {{ 'selected' if d.product_group_id == g.pg_id }}>{{ g.name }}</option>{% endfor %}
+      </select></div>
+    <div><label>取得日</label><input name="acquire_date" type="date" value="{{ d.acquire_date or today }}" required></div>
+    <div><label>取得成本</label><input name="cost" id="cost" type="number" step="1" value="{{ d.cost|round(0) if d.cost else '' }}" required></div>
+    <div><label>政府補助款(沒有填 0)</label><input name="grant_amount" id="grant" type="number" step="1" value="{{ d.grant_amount|round(0) if d.grant_amount else 0 }}"></div>
+    <div><label>耐用年數</label><input name="life_years" id="life" type="number" min="1" step="1" value="{{ a.life_years if a else (d.life_years or 5) }}" required></div>
+    <div><label>殘值(留白 = 自動算)</label>
+      <input name="salvage" id="salvage" type="number" step="1" value="{{ a.salvage|round(0) if a else '' }}" placeholder="自動 =(成本−補助)÷(年數+1)">
+    </div>
+  </div>
+  <div class="muted" style="font-size:12px;margin-top:10px" id="hint"></div>
+  {% if a %}
+  <div style="margin-top:12px"><label>處分日(賣掉 / 報廢才填,之後停止折舊)</label>
+    <input name="disposed_date" type="date" value="{{ a.disposed_date or '' }}"></div>
+  {% endif %}
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ d.note or '' }}"></div>
+  <div style="margin-top:16px">
+    <button type="submit">儲存</button>
+    <a href="/assets" style="margin-left:12px">取消</a>
+    {% if a %}
+    <button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
+            onclick="return confirm('刪除這張固定資產卡?')">刪除</button>
+    {% endif %}
+  </div>
+</div>
+</form>
+<script>
+(function () {
+  var cat = document.getElementById('cat'), life = document.getElementById('life');
+  var cost = document.getElementById('cost'), grant = document.getElementById('grant');
+  var salv = document.getElementById('salvage'), hint = document.getElementById('hint');
+  cat.addEventListener('change', function () {
+    var o = cat.selectedOptions[0];
+    if (o && o.dataset.life) life.value = o.dataset.life;
+    calc();
+  });
+  function calc() {
+    var c = +cost.value || 0, gr = +grant.value || 0, ly = +life.value || 0;
+    var sv = salv.value ? (+salv.value || 0) : Math.round(Math.max(0, c - gr) / (ly + 1));
+    var base = Math.max(0, c - gr - sv);
+    var yr = ly ? base / ly : 0;
+    hint.textContent = ly && c
+      ? '可提折舊基礎 ' + Math.round(base).toLocaleString() + ' · 每年折舊約 ' + Math.round(yr).toLocaleString()
+        + ' · 每月約 ' + Math.round(yr / 12).toLocaleString() + (salv.value ? '' : '(殘值自動抓 ' + Math.round(sv).toLocaleString() + ')')
+      : '';
+  }
+  [cost, grant, life, salv].forEach(function (el) { el.addEventListener('input', calc); });
+  calc();
+})();
+</script>
+{% endblock %}
