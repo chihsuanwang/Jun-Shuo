@@ -7,14 +7,15 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import os, io, csv, json, glob, shutil, datetime as dt
 
+import paths
 import queries as Q
 import db as _db
 from db import q, execute
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = paths.RES_DIR
 app = FastAPI(title="桂圓帳房")
-app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
-tpl = Jinja2Templates(directory=os.path.join(HERE, "templates"))
+app.mount("/static", StaticFiles(directory=paths.STATIC), name="static")
+tpl = Jinja2Templates(directory=paths.TEMPLATES)
 
 def money(v):
     try: return f"{v:,.0f}"
@@ -29,7 +30,7 @@ def backup_db():
         src = _db.DB
         if not os.path.exists(src):
             return
-        bdir = os.path.join(HERE, "備份")
+        bdir = paths.BACKUP_DIR
         os.makedirs(bdir, exist_ok=True)
         stamp = dt.date.today().isoformat().replace("-", "")
         dest = os.path.join(bdir, f"guiyuan_ledger_{stamp}.db")

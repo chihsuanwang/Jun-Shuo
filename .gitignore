@@ -20,3 +20,8 @@ app/.venv/
 *.pyo
 .DS_Store
 Thumbs.db
+
+# ── PyInstaller 打包產生物(由 app/打包.bat 產生,不進版控)──
+app/build/
+app/dist/
+app/*.spec

@@ -1,6 +1,5 @@
 import sqlite3, os
-
-DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guiyuan_ledger.db")
+from paths import DB_PATH as DB
 
 def conn():
     cx = sqlite3.connect(DB)

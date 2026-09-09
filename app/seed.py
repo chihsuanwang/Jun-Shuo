@@ -4,9 +4,13 @@
 """
 import sqlite3, os, sys, random, datetime as dt
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-DB   = os.path.join(HERE, "guiyuan_ledger.db")
-SQL  = os.path.join(HERE, "schema.sql")
+try:
+    import paths
+    DB, SQL = paths.DB_PATH, paths.SCHEMA_PATH
+except Exception:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+    DB   = os.path.join(HERE, "guiyuan_ledger.db")
+    SQL  = os.path.join(HERE, "schema.sql")
 random.seed(20260904)
 
 if os.path.exists(DB):
