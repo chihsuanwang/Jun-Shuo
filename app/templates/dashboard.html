@@ -86,6 +86,29 @@
   </div>
 </div>
 
+<div class="card" style="margin-bottom:18px">
+  <div style="display:flex;justify-content:space-between;align-items:baseline">
+    <h3 class="serif">各產品線賺不賺</h3>
+    <a href="/lines" style="font-size:12px">看完整損益表 →</a>
+  </div>
+  <table class="pnl">
+    <thead><tr><th>產品線</th><th class="r">營收</th><th class="r">線利潤</th><th class="r">利潤率</th></tr></thead>
+    <tbody>
+    {% for g in pl.lines %}
+      <tr><td>{{ g.name }}</td>
+          <td class="r">{{ g.revenue|money }}</td>
+          <td class="r {{ 'neg' if g.profit < 0 }}">{{ g.profit|money }}</td>
+          <td class="r {{ 'neg' if g.profit < 0 }}">{{ g.margin|pct if g.revenue else '—' }}</td></tr>
+    {% endfor %}
+      <tr class="sum"><td>合計</td>
+          <td class="r">{{ pl.total.revenue|money }}</td>
+          <td class="r {{ 'neg' if pl.total.profit < 0 }}"><strong>{{ pl.total.profit|money }}</strong></td>
+          <td class="r {{ 'neg' if pl.total.profit < 0 }}">{{ pl.total.margin|pct }}</td></tr>
+    </tbody>
+  </table>
+  <div class="muted" style="font-size:11px;margin-top:6px">線利潤 = 營收 − 直接材料 − 通路/運費 − 直接人工/田間/折舊等 − 分攤共同費用(依營收)</div>
+</div>
+
 <div class="card">
   <div style="display:flex;justify-content:space-between;align-items:baseline">
     <h3 class="serif">月營收 / 毛利趨勢</h3>

@@ -468,6 +468,117 @@ def season_finance(season):
                 margin=(gp / rev if rev else 0))
 
 
+# ---------- 各產品線損益(v2 回合 6) -------------------------
+def _season_window(season):
+    if season in (None, "all", "", 0):
+        ss = seasons()
+        return (f"{ss[0]}-04", f"{ss[-1] + 1}-03") if ss else (None, None)
+    return f"{int(season)}-04", f"{int(season) + 1}-03"
+
+def product_line_pnl(season=None, basis="rev"):
+    """各產品線損益(管理視角:含攤提 / 折舊,共同費用依 basis 分攤)。
+    basis: rev 依營收 / qty 依銷量 / dm 依直接成本。
+    直接材料:有批次成本用批次,否則用歸該線的進貨(原料 / 包材 / 委外)。"""
+    sc, sp = _S(season)                       # alias o
+    lo, hi = _season_window(season)
+
+    groups = q("""SELECT g.pg_id, g.name, b.name bu_name
+                  FROM product_group g JOIN business_unit b ON b.bu_id=g.bu_id
+                  ORDER BY b.sort, g.sort, g.pg_id""")
+    L = {g["pg_id"]: dict(pg_id=g["pg_id"], name=g["name"], bu_name=g["bu_name"],
+                          revenue=0.0, qty=0.0, dm_batch=0.0, dm_purchase=0.0,
+                          platform_fee=0.0, ship_pnl=0.0,
+                          direct_labor=0.0, field=0.0, cert=0.0, rnd=0.0,
+                          dep=0.0, other_line=0.0) for g in groups}
+
+    # 營收 / 銷量 / 批次直接材料
+    for r in q(f"""SELECT p.product_group_id pg, ol.qty,
+                          ol.line_subtotal sub,
+                          ol.qty * COALESCE(bt.unit_cost,0) bcost
+                   FROM order_line ol
+                   JOIN "order" o ON o.order_id=ol.order_id
+                   JOIN product p ON p.product_id=ol.product_id
+                   LEFT JOIN batch bt ON bt.batch_id=ol.batch_id
+                   WHERE {sc} AND o.order_kind='銷售'""", sp):
+        g = L.get(r["pg"])
+        if not g:
+            continue
+        g["revenue"] += r["sub"] or 0
+        g["qty"] += r["qty"] or 0
+        g["dm_batch"] += r["bcost"] or 0
+
+    # 每張訂單的通路抽成 / 運費賺賠 依該單各線營收佔比分攤
+    seg = {}
+    for r in q(f"""SELECT ol.order_id oid, p.product_group_id pg, ol.line_subtotal sub
+                   FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
+                   JOIN product p ON p.product_id=ol.product_id
+                   WHERE {sc} AND o.order_kind='銷售'""", sp):
+        seg.setdefault(r["oid"], []).append((r["pg"], r["sub"] or 0))
+    for o in q(f"""SELECT order_id oid, platform_fee,
+                          (shipping_fee_charged - shipping_cost_actual) ship
+                   FROM "order" o WHERE {sc} AND order_kind='銷售'""", sp):
+        parts = seg.get(o["oid"], [])
+        tot = sum(s for _, s in parts) or 1
+        for pg, s in parts:
+            g = L.get(pg)
+            if not g:
+                continue
+            g["platform_fee"] += (o["platform_fee"] or 0) * s / tot
+            g["ship_pnl"] += (o["ship"] or 0) * s / tot
+
+    # 無批次成本的線 → 用歸該線的進貨(原料 / 包材 / 委外,非固定資產)
+    for r in q("""SELECT product_group_id pg, COALESCE(SUM(amount),0) v
+                  FROM purchase
+                  WHERE is_fixed_asset=0 AND category IN ('原料','包材','委外加工')
+                    AND product_group_id IS NOT NULL
+                    AND (? IS NULL OR substr(purchase_date,1,7) >= ?)
+                    AND (? IS NULL OR substr(purchase_date,1,7) <= ?)
+                  GROUP BY product_group_id""", (lo, lo, hi, hi)):
+        if r["pg"] in L:
+            L[r["pg"]]["dm_purchase"] += r["v"]
+
+    # 歸線 / 共同的營運費用 + 折舊(opex_rows 已含攤提 + 折舊)
+    shared = 0.0
+    cat_key = {"直接人工": "direct_labor", "田間管理": "field", "驗證費": "cert",
+               "研發": "rnd", "折舊": "dep"}
+    for r in opex_rows(lo, hi):
+        if r["product_group_id"] is None:
+            shared += r["amt"]
+        elif r["product_group_id"] in L:
+            g = L[r["product_group_id"]]
+            g[cat_key.get(r["category"], "other_line")] += r["amt"]
+
+    out = list(L.values())
+    for g in out:
+        g["direct_material"] = g["dm_batch"] if g["dm_batch"] > 0 else g["dm_purchase"]
+        g["dm_from"] = "批次成本" if g["dm_batch"] > 0 else ("進貨估算" if g["dm_purchase"] else "—")
+        g["line_opex"] = (g["direct_labor"] + g["field"] + g["cert"] + g["rnd"]
+                          + g["dep"] + g["other_line"])
+        g["contribution"] = (g["revenue"] - g["direct_material"] - g["platform_fee"]
+                             + g["ship_pnl"] - g["line_opex"])
+
+    if basis == "qty":
+        w = {g["pg_id"]: max(g["qty"], 0) for g in out}
+    elif basis == "dm":
+        w = {g["pg_id"]: max(g["direct_material"] + g["direct_labor"], 0) for g in out}
+    else:
+        w = {g["pg_id"]: max(g["revenue"], 0) for g in out}
+    wsum = sum(w.values()) or 1
+    for g in out:
+        g["shared_alloc"] = shared * w[g["pg_id"]] / wsum
+        g["profit"] = g["contribution"] - g["shared_alloc"]
+        g["margin"] = g["profit"] / g["revenue"] if g["revenue"] else 0
+
+    keys = ("revenue", "direct_material", "platform_fee", "ship_pnl", "direct_labor",
+            "field", "cert", "rnd", "dep", "line_opex", "contribution",
+            "shared_alloc", "profit")
+    total = {k: sum(g[k] for g in out) for k in keys}
+    total["name"] = "合計"
+    total["margin"] = total["profit"] / total["revenue"] if total["revenue"] else 0
+    return dict(lines=out, total=total, shared_pool=shared, basis=basis,
+                window=(f"{lo} ~ {hi}" if lo else "全部"))
+
+
 def finance_summary(season=None):
     """儀表板用:單一產季 → season_finance;全部 → 各產季相加。"""
     if season not in (None, "all", "", 0):

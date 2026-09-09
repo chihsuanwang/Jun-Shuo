@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}各產品線賺不賺 · 桂圓帳房{% endblock %}
+{% block body %}
+{% set ls = d.lines %}
+{% macro row(label, key, sumline=False, pct=False, sign='') -%}
+<tr class="{{ 'sum' if sumline }}">
+  <td>{{ label }}</td>
+  {% for g in ls %}
+  <td class="r {{ 'neg' if (g[key] or 0) < 0 }}">
+    {%- if pct %}{{ (g[key] or 0)|pct }}{% else %}{{ sign }}{{ (g[key] or 0)|money }}{% endif -%}
+  </td>
+  {% endfor %}
+  <td class="r {{ 'neg' if (d.total[key] or 0) < 0 }}">
+    {%- if pct %}{{ (d.total[key] or 0)|pct }}{% else %}{{ sign }}{{ (d.total[key] or 0)|money }}{% endif -%}
+  </td>
+</tr>
+{%- endmacro %}
+
+<div class="head">
+  <div><div class="sup">南投中寮 · 郡碩農創</div><h1 class="serif">各產品線賺不賺</h1></div>
+</div>
+<hr class="rule">
+
+<form method="get" class="filterbar" style="margin-bottom:16px">
+  <span>產季</span>
+  <select name="season" onchange="this.form.submit()">
+    <option value="all" {{ 'selected' if season_sel == 'all' }}>全部</option>
+    {% for s in seasons %}<option value="{{ s }}" {{ 'selected' if season_sel == s|string }}>{{ s }}</option>{% endfor %}
+  </select>
+  <span>共同費用分攤</span>
+  <select name="basis" onchange="this.form.submit()">
+    {% for k, v in basis_opts.items() %}<option value="{{ k }}" {{ 'selected' if basis == k }}>{{ v }}</option>{% endfor %}
+  </select>
+</form>
+
+<div class="card" style="overflow-x:auto">
+  <table class="pnl">
+    <thead>
+      <tr><th>項目</th>{% for g in ls %}<th class="r">{{ g.name }}</th>{% endfor %}<th class="r">合計</th></tr>
+    </thead>
+    <tbody>
+      {{ row('營收', 'revenue') }}
+      {{ row('− 直接材料', 'direct_material', sign='−') }}
+      {{ row('− 通路抽成', 'platform_fee', sign='−') }}
+      {{ row('± 運費賺賠', 'ship_pnl') }}
+      {% if d.total.direct_labor %}{{ row('− 直接人工', 'direct_labor', sign='−') }}{% endif %}
+      {% if d.total.field %}{{ row('− 田間管理', 'field', sign='−') }}{% endif %}
+      {% if d.total.cert %}{{ row('− 驗證費', 'cert', sign='−') }}{% endif %}
+      {% if d.total.rnd %}{{ row('− 研發(攤提)', 'rnd', sign='−') }}{% endif %}
+      {% if d.total.dep %}{{ row('− 折舊', 'dep', sign='−') }}{% endif %}
+      {{ row('= 線貢獻', 'contribution', sumline=True) }}
+      {{ row('− 分攤共同費用', 'shared_alloc', sign='−') }}
+      {{ row('= 線利潤', 'profit', sumline=True) }}
+      {{ row('線利潤率', 'margin', pct=True) }}
+    </tbody>
+  </table>
+</div>
+
+<div class="muted" style="font-size:12px;margin-top:10px;line-height:1.8">
+  產季區間 {{ d.window }} · 分攤基準:{{ basis_opts[basis] }} ·
+  未分攤的共同費用池 {{ d.shared_pool|money }}(研發、老闆行政、行銷、共同折舊等)<br>
+  <b>直接材料來源</b>:{% for g in ls %}{{ g.name }}={{ g.dm_from }}{{ '、' if not loop.last }}{% endfor %} ——
+  有焙製批次的用批次單位成本;沒批次的(蜂蜜 / 鮮果)用「歸該線的進貨」估算,口徑不同。<br>
+  此表把通路抽成、運費依訂單各線營收比例分攤;和「財務健康」的稅前利潤口徑略有差異
+  (營收用明細小計、無批次線改用進貨估材料)。
+</div>
+{% endblock %}

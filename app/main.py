@@ -160,8 +160,9 @@ def dashboard(request: Request):
     monmax = max([m["rev"] for m in mon] + [1])
     fin = Q.finance_summary(season)
     prog = Q.season_progress(season)
+    pl = Q.product_line_pnl(season, "rev")
     return tpl.TemplateResponse("dashboard.html", dict(
-        request=request, active="dash", k=k, fin=fin, prog=prog,
+        request=request, active="dash", k=k, fin=fin, prog=prog, pl=pl,
         mon_json=json.dumps(mon), monmax=monmax,
         alerts=Q.alerts(season, asof), **ctx,
     ))
@@ -1097,6 +1098,21 @@ async def issue_update(request: Request, iid: int):
         execute("UPDATE shipment_issue SET linked_reship_order_id=? WHERE issue_id=?", (noid, iid))
         sync_order_stock(noid)
     return RedirectResponse("/issues", status_code=303)
+
+
+# ---------- 各產品線損益(v2 回合 6) ------------------------
+PNL_BASIS = {"rev": "依營收", "qty": "依銷量", "dm": "依直接成本"}
+
+@app.get("/lines", response_class=HTMLResponse)
+def product_lines_pnl(request: Request):
+    season, asof, ctx = _season_ctx(request)
+    basis = request.query_params.get("basis", "rev")
+    if basis not in PNL_BASIS:
+        basis = "rev"
+    data = Q.product_line_pnl(season, basis)
+    return tpl.TemplateResponse("lines.html", dict(
+        request=request, active="lines", basis=basis, basis_opts=PNL_BASIS,
+        d=data, **ctx))
 
 
 # ---------- 財務健康:月損益 ----------------------------------
