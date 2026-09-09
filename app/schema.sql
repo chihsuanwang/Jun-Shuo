@@ -219,12 +219,17 @@ CREATE TABLE review_queue (
   created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
--- 12. 營運費用(月) --------------------------------------
+-- 12. 營運費用(月)(v2 回合 2b:加產品線標記 + 攤提 + 報稅欄) ----
 CREATE TABLE op_expense (
   expense_id  INTEGER PRIMARY KEY,
-  ym          TEXT NOT NULL,          -- YYYY-MM
-  category    TEXT NOT NULL,          -- 人事 / 場地・倉儲 / 行銷 / 金流手續費 / 設備維護 / 培訓 / 其他
-  amount      REAL NOT NULL DEFAULT 0,
+  ym          TEXT NOT NULL,          -- YYYY-MM(攤提時 = 起始月)
+  category    TEXT NOT NULL,          -- 直接人工 / 田間管理 / 驗證費 / 研發 / 人事 / 場地・倉儲 / 行銷 / 金流手續費 / 設備維護 / 培訓 / 其他
+  amount      REAL NOT NULL DEFAULT 0,       -- 帳載值(實際花的錢;B 層報稅看這個)
+  product_group_id INTEGER REFERENCES product_group(pg_id),  -- 歸哪條產品線;NULL = 共同
+  amortize_months  INTEGER,           -- 攤提月數;NULL / 1 = 當月全額;N = 從 ym 起每月 amount/N(管理視角)
+  tax_amount       REAL NOT NULL DEFAULT 0,  -- 進項稅額
+  tax_deductible   INTEGER NOT NULL DEFAULT 0 CHECK (tax_deductible IN (0,1)),
+  doc_type         TEXT CHECK (doc_type IN ('三聯式發票','二聯式發票','收據','農民收據','無憑證')),
   note        TEXT
 );
 CREATE INDEX ix_opexp_ym ON op_expense(ym);

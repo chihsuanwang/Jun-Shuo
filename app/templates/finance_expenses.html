@@ -3,51 +3,32 @@
 {% block body %}
 <div class="head">
   <div><div class="sup"><a href="/finance">財務健康</a> / 營運費用</div><h1 class="serif">營運費用(逐月)</h1></div>
-  <a href="/finance?ym={{ ym_default }}"><button class="ghost">回月損益</button></a>
+  <a href="/finance/expenses/new"><button>＋ 新增一筆</button></a>
 </div>
 <hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">
+  每個月每個項目登一筆(淡月也要填)。可標「歸哪條產品線」或「共同」。
+  一次性的大支出(例:研發、設備)可設「攤提月數」,系統會分月認列。
+</p>
 
-<div class="card" style="margin-bottom:18px;max-width:640px">
-  <h3 class="serif">新增一筆</h3>
-  <form method="post" action="/finance/expenses">
-    <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
-      <div><label>月份 (YYYY-MM)</label><input name="ym" value="{{ ym_default }}" required></div>
-      <div><label>項目</label><select name="category">
-        {% for c in cats %}<option>{{ c }}</option>{% endfor %}
-      </select></div>
-      <div><label>金額</label><input name="amount" type="number" step="1" required></div>
-    </div>
-    <div style="margin-top:12px"><label>備註</label><input name="note"></div>
-    <div style="margin-top:14px"><button type="submit">新增</button></div>
-  </form>
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead><tr><th>月份</th><th>項目</th><th>產品線</th><th>金額</th><th>攤提</th><th>稅額</th><th>備註</th><th></th></tr></thead>
+    <tbody>{% for r in rows %}
+    <tr>
+      <td>{{ r.ym }}</td>
+      <td>{{ r.category }}</td>
+      <td>{{ r.pg_name or '共同' }}</td>
+      <td>{{ r.amount|money }}</td>
+      <td>{{ (r.amortize_months ~ ' 個月') if r.amortize_months else '—' }}</td>
+      <td>{{ r.tax_amount|money if r.tax_amount else '—' }}</td>
+      <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
+      <td><a href="/finance/expenses/{{ r.expense_id }}/edit">編輯</a></td>
+    </tr>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+  </table>
 </div>
-
-<div class="card">
-  <h3 class="serif">已登錄(可直接改後按「存」)</h3>
-  <div style="display:flex;gap:10px;font-size:11px;color:var(--ink-3);padding:0 2px 6px">
-    <span style="width:100px">月份</span><span style="width:120px">項目</span>
-    <span style="width:110px">金額</span><span style="flex:1">備註</span><span style="width:90px"></span>
-  </div>
-  {% for r in rows %}
-  <div style="display:flex;gap:10px;align-items:center;padding:5px 2px;border-top:1px solid var(--rule-2)">
-    <form method="post" action="/finance/expenses" style="display:flex;gap:10px;align-items:center;flex:1">
-      <input type="hidden" name="expense_id" value="{{ r.expense_id }}">
-      <input name="ym" value="{{ r.ym }}" style="width:100px">
-      <select name="category" style="width:120px">
-        {% for c in cats %}<option {{ 'selected' if c == r.category }}>{{ c }}</option>{% endfor %}
-      </select>
-      <input name="amount" type="number" value="{{ r.amount|round(0) }}" style="width:110px">
-      <input name="note" value="{{ r.note or '' }}" style="flex:1">
-      <button type="submit" class="ghost" style="padding:6px 12px">存</button>
-    </form>
-    <form method="post" action="/finance/expenses" onsubmit="return confirm('刪除這筆?')">
-      <input type="hidden" name="expense_id" value="{{ r.expense_id }}">
-      <input type="hidden" name="_delete" value="1">
-      <button type="submit" class="ghost" style="padding:6px 12px">刪</button>
-    </form>
-  </div>
-  {% else %}
-  <p class="muted" style="font-size:13px">尚無資料。</p>
-  {% endfor %}
+<div class="muted" style="font-size:11px;margin-top:8px">
+  「金額」是實際花的錢(報稅看這個);設了「攤提」時,財務健康的月損益會把它分月攤開,整季 / 整年合計不變。
 </div>
 {% endblock %}

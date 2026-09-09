@@ -1037,33 +1037,58 @@ def finance_page(request: Request):
 
 @app.get("/finance/expenses", response_class=HTMLResponse)
 def finance_expenses(request: Request):
-    months = Q.months_with_data()
+    rows = q("""SELECT e.*, g.name pg_name
+                FROM op_expense e LEFT JOIN product_group g ON g.pg_id=e.product_group_id
+                ORDER BY e.ym DESC, e.category""")
     return tpl.TemplateResponse("finance_expenses.html", dict(
-        request=request, active="finance", cats=Q.OPEX_CATS,
-        ym_default=request.query_params.get("ym") or (months[-1] if months else dt.date.today().strftime("%Y-%m")),
-        rows=q("SELECT * FROM op_expense ORDER BY ym DESC, category")))
+        request=request, active="finance", rows=rows))
+
+def _expense_form_ctx(request, e):
+    months = Q.months_with_data()
+    return dict(request=request, active="finance", e=e, cats=Q.OPEX_CATS,
+               groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
+               docs=DOC_TYPES,
+               ym_default=(months[-1] if months else dt.date.today().strftime("%Y-%m")))
+
+@app.get("/finance/expenses/new", response_class=HTMLResponse)
+def finance_expense_new(request: Request):
+    return tpl.TemplateResponse("finance_expense_form.html", _expense_form_ctx(request, None))
+
+@app.get("/finance/expenses/{eid}/edit", response_class=HTMLResponse)
+def finance_expense_edit(request: Request, eid: int):
+    e = q("SELECT * FROM op_expense WHERE expense_id=?", (eid,))
+    if not e:
+        return RedirectResponse("/finance/expenses", status_code=303)
+    return tpl.TemplateResponse("finance_expense_form.html", _expense_form_ctx(request, e[0]))
 
 @app.post("/finance/expenses")
 async def finance_expense_save(request: Request):
     f = await request.form()
+    g = lambda k: (f.get(k) or "").strip() or None
+    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
     eid = f.get("expense_id")
     if f.get("_delete") and eid:
         execute("DELETE FROM op_expense WHERE expense_id=?", (int(eid),))
         return RedirectResponse("/finance/expenses", status_code=303)
     ym = (f.get("ym") or "").strip()
     cat = (f.get("category") or "").strip()
-    try:
-        amt = float(f.get("amount") or 0)
-    except ValueError:
-        amt = 0.0
-    note = (f.get("note") or "").strip() or None
     if not (ym and cat):
         return RedirectResponse("/finance/expenses", status_code=303)
+    pgv = f.get("product_group_id") or ""
+    am = f.get("amortize_months") or ""
+    cols = dict(
+        ym=ym, category=cat, amount=fl("amount"),
+        product_group_id=(int(pgv) if pgv.isdigit() else None),
+        amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
+        tax_amount=fl("tax_amount"),
+        tax_deductible=(1 if f.get("tax_deductible") else 0),
+        doc_type=g("doc_type"), note=g("note"))
     if eid:
-        execute("UPDATE op_expense SET ym=?,category=?,amount=?,note=? WHERE expense_id=?",
-                (ym, cat, amt, note, int(eid)))
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE op_expense SET {sets} WHERE expense_id=:id", {**cols, "id": int(eid)})
     else:
-        execute("INSERT INTO op_expense(ym,category,amount,note) VALUES(?,?,?,?)", (ym, cat, amt, note))
+        keys = ",".join(cols)
+        execute(f"INSERT INTO op_expense({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
     return RedirectResponse("/finance/expenses", status_code=303)
 
 

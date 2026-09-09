@@ -312,7 +312,9 @@ def season_compare():
 
 
 # ---------- 財務健康:月損益 ----------------------------------
-OPEX_CATS = ["人事", "場地・倉儲", "行銷", "金流手續費", "設備維護", "培訓", "其他"]
+#   前 4 類多半可歸到某條產品線;後面幾類通常是共同費用。
+OPEX_CATS = ["直接人工", "田間管理", "驗證費", "研發",
+             "人事", "場地・倉儲", "行銷", "金流手續費", "設備維護", "培訓", "其他"]
 
 def _month_span(a, b):
     y, m = map(int, a.split("-")); y2, m2 = map(int, b.split("-"))
@@ -324,10 +326,32 @@ def _month_span(a, b):
             m = 1; y += 1
     return out
 
+def _add_months(ym, k):
+    y, m = map(int, ym.split("-"))
+    m += k
+    y += (m - 1) // 12
+    m = (m - 1) % 12 + 1
+    return f"{y}-{m:02d}"
+
+def opex_rows(lo=None, hi=None):
+    """把每筆營運費用依『攤提月數』攤開成逐月列(管理視角)。
+    amortize_months 空或 <=1 → 當月全額;N → 從 ym 起每月 amount/N,共 N 個月。
+    給 lo/hi(YYYY-MM)時只回落在區間內的月份。"""
+    out = []
+    for r in q("SELECT ym, category, product_group_id, amount, amortize_months FROM op_expense"):
+        n = int(r["amortize_months"]) if r["amortize_months"] and r["amortize_months"] > 1 else 1
+        per = (r["amount"] or 0) / n
+        for i in range(n):
+            ym = _add_months(r["ym"], i)
+            if (lo is None or ym >= lo) and (hi is None or ym <= hi):
+                out.append(dict(ym=ym, category=r["category"],
+                                product_group_id=r["product_group_id"], amt=per))
+    return out
+
 def months_with_data():
-    """有訂單 或 有登錄營運費用 的月份;並把中間的空月補上(淡月照樣有支出)。"""
+    """有訂單 或 有登錄營運費用(含攤提尾巴)的月份;中間空月補上(淡月照樣有支出)。"""
     oms = [r["ym"] for r in q("SELECT DISTINCT strftime('%Y-%m', order_date) ym FROM \"order\"")]
-    ems = [r["ym"] for r in q("SELECT DISTINCT ym FROM op_expense")]
+    ems = [r["ym"] for r in opex_rows()]
     allm = sorted(set(oms) | set(ems))
     if not allm:
         t = dt.date.today()
@@ -345,9 +369,11 @@ def finance_month(ym):
                  WHERE order_kind='銷售' AND strftime('%Y-%m',order_date)=?""", (ym,))["v"]
     ship = q1("""SELECT COALESCE(SUM(shipping_fee_charged - shipping_cost_actual),0) v
                  FROM "order" WHERE strftime('%Y-%m',order_date)=?""", (ym,))["v"]
-    opex = q("""SELECT category, SUM(amount) amt FROM op_expense
-                WHERE ym=? GROUP BY category ORDER BY amt DESC""", (ym,))
-    opex_total = sum(r["amt"] for r in opex)
+    by_cat = {}
+    for r in opex_rows(ym, ym):
+        by_cat[r["category"]] = by_cat.get(r["category"], 0) + r["amt"]
+    opex = [{"category": k, "amt": v} for k, v in sorted(by_cat.items(), key=lambda x: -x[1])]
+    opex_total = sum(by_cat.values())
     gp = rev - cogs
     margin = gp / rev if rev else 0
     pretax = gp - plat + ship - opex_total
@@ -377,13 +403,14 @@ def season_finance(season):
     ship = q1("""SELECT COALESCE(SUM(shipping_fee_charged - shipping_cost_actual),0) v
                  FROM "order" WHERE season=?""", (season,))["v"]
     lo, hi = f"{season}-04", f"{season + 1}-03"
-    ox = q1("""SELECT COALESCE(SUM(amount),0) v, COUNT(DISTINCT ym) n
-               FROM op_expense WHERE ym >= ? AND ym <= ?""", (lo, hi))
+    ox_rows = opex_rows(lo, hi)
+    opex_v = sum(r["amt"] for r in ox_rows)
+    opex_n = len(set(r["ym"] for r in ox_rows))
     gp = rev - cogs
     return dict(season=season, window=f"{lo} ~ {hi}",
                 revenue=rev, cogs=cogs, gross_profit=gp, platform_fee=plat, ship_pnl=ship,
-                opex=ox["v"], opex_months=ox["n"],
-                pretax=gp - plat + ship - ox["v"],
+                opex=opex_v, opex_months=opex_n,
+                pretax=gp - plat + ship - opex_v,
                 margin=(gp / rev if rev else 0))
 
 

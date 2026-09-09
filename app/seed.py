@@ -267,14 +267,31 @@ while (_y, _m) <= (2026, 8):
     _m += 1
     if _m > 12:
         _m = 1; _y += 1
+def opx(ym, cat, amt, pgname=None, amort=None):
+    c.execute("""INSERT INTO op_expense(ym,category,amount,product_group_id,amortize_months)
+                 VALUES(?,?,?,?,?)""", (ym, cat, amt, pg.get(pgname), amort))
+
 for ym in opex_months:
-    peak = int(ym[5:7]) in (10, 11, 12)        # 旺月行銷 / 人力多一點
-    for cat, amt in [("人事", 32000 if not peak else 40000),
-                     ("場地・倉儲", 5000),
-                     ("行銷", random.choice([5000, 7000, 9000]) + (5000 if peak else 0)),
-                     ("金流手續費", random.randint(2000, 4500)),
-                     ("其他", random.randint(1500, 3500))]:
-        c.execute("INSERT INTO op_expense(ym,category,amount) VALUES(?,?,?)", (ym, cat, amt))
+    mm = int(ym[5:7])
+    peak = mm in (10, 11, 12)                    # 旺月行銷 / 人力多一點
+    harvest = mm in (7, 8, 9)                    # 採收焙製剝肉,直接人工多
+    # 共同費用
+    opx(ym, "人事", 32000 if not peak else 40000)
+    opx(ym, "場地・倉儲", 5000)
+    opx(ym, "行銷", random.choice([5000, 7000, 9000]) + (5000 if peak else 0))
+    opx(ym, "金流手續費", random.randint(2000, 4500))
+    opx(ym, "其他", random.randint(1500, 3500))
+    # 歸產品線的費用
+    opx(ym, "田間管理", random.randint(6000, 11000), "龍眼乾")     # 果園管理(代表龍眼事業)
+    if harvest:
+        opx(ym, "直接人工", random.randint(28000, 44000), "龍眼乾")   # 採收 + 柴焙
+        opx(ym, "直接人工", random.randint(15000, 26000), "龍眼肉")   # 剝肉工
+        opx(ym, "直接人工", random.randint(4000, 8000), "蜂蜜")       # 採蜜搖蜜
+# 一次性 + 攤提:研發費 30 萬,分 36 個月(2025-07 起)
+opx("2025-07", "研發", 300000, None, 36)
+# 年度驗證費(產銷履歷,歸龍眼)
+opx("2025-06", "驗證費", 15000, "龍眼乾")
+opx("2024-06", "驗證費", 15000, "龍眼乾")
 
 # ---- 供應商 + 進貨單(v2 回合 2 示範) ---------------------
 suppliers = [
