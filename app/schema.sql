@@ -243,3 +243,31 @@ CREATE TABLE stock_move (
 );
 CREATE INDEX ix_move_product ON stock_move(product_id);
 CREATE INDEX ix_move_order   ON stock_move(ref_order_id);
+
+-- 14. 供應商主檔(v2 回合 2) ---------------------------
+CREATE TABLE supplier (
+  supplier_id INTEGER PRIMARY KEY,
+  name        TEXT NOT NULL,
+  tax_id      TEXT,                    -- 統一編號
+  category    TEXT CHECK (category IN ('原料','包材','委外加工','設備','服務','其他')),
+  phone       TEXT,
+  note        TEXT
+);
+
+-- 15. 進貨單(買進來的成本:原料 / 包材 / 委外 / 設備)(v2 回合 2) ---
+--     只做「登錄」;真正接進產品線損益是回合 6(避免和批次單位成本重複計算)。
+CREATE TABLE purchase (
+  purchase_id      INTEGER PRIMARY KEY,
+  purchase_date    TEXT NOT NULL,                        -- YYYY-MM-DD
+  supplier_id      INTEGER REFERENCES supplier(supplier_id),
+  category         TEXT CHECK (category IN ('原料','包材','委外加工','設備','服務','其他')),
+  product_group_id INTEGER REFERENCES product_group(pg_id),   -- 歸哪條產品線;NULL = 共同
+  amount           REAL NOT NULL DEFAULT 0,              -- 未稅金額
+  tax_amount       REAL NOT NULL DEFAULT 0,              -- 進項稅額
+  tax_deductible   INTEGER NOT NULL DEFAULT 1 CHECK (tax_deductible IN (0,1)),
+  doc_type         TEXT CHECK (doc_type IN ('三聯式發票','二聯式發票','收據','農民收據','無憑證')),
+  is_fixed_asset   INTEGER NOT NULL DEFAULT 0 CHECK (is_fixed_asset IN (0,1)),  -- 打勾標記;固定資產卡回合 3 才建
+  note             TEXT,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX ix_purchase_date ON purchase(purchase_date);

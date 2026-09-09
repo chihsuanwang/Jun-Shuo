@@ -276,6 +276,36 @@ for ym in opex_months:
                      ("其他", random.randint(1500, 3500))]:
         c.execute("INSERT INTO op_expense(ym,category,amount) VALUES(?,?,?)", (ym, cat, amt))
 
+# ---- 供應商 + 進貨單(v2 回合 2 示範) ---------------------
+suppliers = [
+    ("中寮果農合作社", "53912888", "原料", "049-2601234"),
+    ("永信包裝材料行", "27889011", "包材", "04-23015678"),
+    ("名晟印刷設計",   "16552390", "包材", "04-27100987"),
+    ("大山木炭行",     None,       "原料", "049-2770456"),
+    ("蜂具王養蜂資材", "83019277", "設備", "05-2782311"),
+]
+sup = {}
+for name, tid, cat, phone in suppliers:
+    c.execute("INSERT INTO supplier(name,tax_id,category,phone) VALUES(?,?,?,?)", (name, tid, cat, phone))
+    sup[name] = c.lastrowid
+
+# (日期, 供應商, 類別, 產品線, 未稅額, 稅額, 可扣抵, 憑證, 固定資產, 備註)
+purchases = [
+    ("2025-08-12", "中寮果農合作社", "原料", "龍眼乾",   168000,     0, 0, "農民收據", 0, "鮮果收購 · 2025 產季"),
+    ("2025-08-20", "大山木炭行",     "原料", "龍眼乾",    24000,  1200, 1, "三聯式發票", 0, "柴焙木柴"),
+    ("2025-09-05", "永信包裝材料行", "包材", "龍眼乾",    18500,   925, 1, "三聯式發票", 0, "夾鏈袋 300g / 500g"),
+    ("2025-09-18", "名晟印刷設計",   "包材", "龍眼乾",    32000,  1600, 1, "三聯式發票", 0, "禮盒盒 + 標籤 一批"),
+    ("2025-08-28", "永信包裝材料行", "包材", "蜂蜜",       9600,   480, 1, "三聯式發票", 0, "玻璃罐 420g"),
+    ("2025-07-15", "蜂具王養蜂資材", "設備", "蜂蜜",      46000,  2300, 1, "三聯式發票", 1, "搖蜜機(固定資產,待建卡)"),
+    ("2025-11-10", "名晟印刷設計",   "包材", None,        12000,   600, 1, "三聯式發票", 0, "共同 · 品牌貼紙 / 提袋"),
+    ("2026-01-08", "中寮果農合作社", "原料", "龍眼肉",    41000,     0, 0, "農民收據", 0, "鮮果加購 · 補龍眼肉產量"),
+]
+for d, sname, cat, pgname, amt, tax, ded, doc, fa, note in purchases:
+    c.execute("""INSERT INTO purchase(purchase_date,supplier_id,category,product_group_id,
+                 amount,tax_amount,tax_deductible,doc_type,is_fixed_asset,note)
+                 VALUES(?,?,?,?,?,?,?,?,?,?)""",
+              (d, sup[sname], cat, pg.get(pgname), amt, tax, ded, doc, fa, note))
+
 # ---- 庫存異動:每產季各分裝一批(A 批),再依訂單出庫 ----
 import math
 sku_by_id = {v["id"]: k for k, v in prod.items()}

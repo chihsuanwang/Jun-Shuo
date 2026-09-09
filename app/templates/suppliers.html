@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}供應商 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 供應商</div><h1 class="serif">供應商</h1></div>
+  <a href="/suppliers/new"><button>＋ 新增供應商</button></a>
+</div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">
+  向誰買東西:鮮果收購、包材、木柴、蜂具、委外加工… 建好之後在「進貨」記每一筆時直接挑。
+</p>
+<div class="card">
+  <table>
+    <thead><tr><th>名稱</th><th>統一編號</th><th>類別</th><th>電話</th><th>進貨筆數</th><th>累計含稅金額</th><th></th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr>
+        <td>{{ r.name }}</td><td>{{ r.tax_id or '—' }}</td><td>{{ r.category or '' }}</td>
+        <td>{{ r.phone or '—' }}</td><td>{{ r.n_buy }}</td><td>{{ r.total|money }}</td>
+        <td><a href="/suppliers/{{ r.supplier_id }}/edit">編輯</a></td>
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">還沒有供應商。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endblock %}

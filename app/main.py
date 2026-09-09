@@ -284,6 +284,126 @@ async def product_line_assign(request: Request):
     return RedirectResponse("/product-lines", status_code=303)
 
 
+# ---------- 供應商 + 進貨單(v2 回合 2) ---------------------
+SUP_CATS  = ['原料', '包材', '委外加工', '設備', '服務', '其他']
+DOC_TYPES = ['三聯式發票', '二聯式發票', '收據', '農民收據', '無憑證']
+
+@app.get("/suppliers", response_class=HTMLResponse)
+def suppliers_page(request: Request):
+    rows = q("""SELECT s.*,
+                  (SELECT COUNT(*) FROM purchase p WHERE p.supplier_id=s.supplier_id) n_buy,
+                  (SELECT COALESCE(SUM(p.amount + p.tax_amount),0) FROM purchase p
+                     WHERE p.supplier_id=s.supplier_id) total
+                FROM supplier s ORDER BY s.supplier_id""")
+    return tpl.TemplateResponse("suppliers.html", dict(request=request, active="supplier", rows=rows))
+
+@app.get("/suppliers/new", response_class=HTMLResponse)
+def supplier_new(request: Request):
+    return tpl.TemplateResponse("supplier_form.html", dict(request=request, active="supplier", s=None, cats=SUP_CATS))
+
+@app.get("/suppliers/{sid}/edit", response_class=HTMLResponse)
+def supplier_edit(request: Request, sid: int):
+    s = q("SELECT * FROM supplier WHERE supplier_id=?", (sid,))
+    if not s:
+        return RedirectResponse("/suppliers", status_code=303)
+    return tpl.TemplateResponse("supplier_form.html", dict(request=request, active="supplier", s=s[0], cats=SUP_CATS))
+
+@app.post("/suppliers")
+async def supplier_save(request: Request):
+    f = await request.form()
+    g = lambda k: (f.get(k) or "").strip() or None
+    sid = f.get("supplier_id")
+    if f.get("_delete") and sid:
+        if not q("SELECT 1 FROM purchase WHERE supplier_id=?", (int(sid),)):
+            execute("DELETE FROM supplier WHERE supplier_id=?", (int(sid),))
+        return RedirectResponse("/suppliers", status_code=303)
+    name = (f.get("name") or "").strip()
+    if not name:
+        return RedirectResponse("/suppliers", status_code=303)
+    cols = dict(name=name, tax_id=g("tax_id"), category=g("category"),
+                phone=g("phone"), note=g("note"))
+    if sid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE supplier SET {sets} WHERE supplier_id=:id", {**cols, "id": int(sid)})
+    else:
+        keys = ",".join(cols)
+        execute(f"INSERT INTO supplier({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+    return RedirectResponse("/suppliers", status_code=303)
+
+
+def _purchase_form_ctx(request, p):
+    return dict(request=request, active="purchase", p=p,
+               suppliers=q("SELECT supplier_id, name FROM supplier ORDER BY name"),
+               groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
+               cats=SUP_CATS, docs=DOC_TYPES, today=dt.date.today().isoformat())
+
+@app.get("/purchases", response_class=HTMLResponse)
+def purchases_page(request: Request):
+    pgv = request.query_params.get("pg") or ""
+    ym = request.query_params.get("ym") or ""
+    where, args = ["1=1"], []
+    if pgv == "common":
+        where.append("p.product_group_id IS NULL")
+    elif pgv.isdigit():
+        where.append("p.product_group_id=?"); args.append(int(pgv))
+    if ym:
+        where.append("substr(p.purchase_date,1,7)=?"); args.append(ym)
+    rows = q(f"""SELECT p.*, s.name sup_name, g.name pg_name
+                 FROM purchase p LEFT JOIN supplier s ON s.supplier_id=p.supplier_id
+                 LEFT JOIN product_group g ON g.pg_id=p.product_group_id
+                 WHERE {' AND '.join(where)}
+                 ORDER BY p.purchase_date DESC, p.purchase_id DESC""", args)
+    total = sum(r["amount"] for r in rows)
+    tax_total = sum(r["tax_amount"] for r in rows if r["tax_deductible"])
+    return tpl.TemplateResponse("purchases.html", dict(
+        request=request, active="purchase", rows=rows, total=total, tax_total=tax_total,
+        groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
+        yms=[r["ym"] for r in q("SELECT DISTINCT substr(purchase_date,1,7) ym FROM purchase ORDER BY ym DESC")],
+        pg_sel=pgv, ym_sel=ym))
+
+@app.get("/purchases/new", response_class=HTMLResponse)
+def purchase_new(request: Request):
+    return tpl.TemplateResponse("purchase_form.html", _purchase_form_ctx(request, None))
+
+@app.get("/purchases/{pid}/edit", response_class=HTMLResponse)
+def purchase_edit(request: Request, pid: int):
+    p = q("SELECT * FROM purchase WHERE purchase_id=?", (pid,))
+    if not p:
+        return RedirectResponse("/purchases", status_code=303)
+    return tpl.TemplateResponse("purchase_form.html", _purchase_form_ctx(request, p[0]))
+
+@app.post("/purchases")
+async def purchase_save(request: Request):
+    f = await request.form()
+    g = lambda k: (f.get(k) or "").strip() or None
+    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
+    pid = f.get("purchase_id")
+    if f.get("_delete") and pid:
+        execute("DELETE FROM purchase WHERE purchase_id=?", (int(pid),))
+        return RedirectResponse("/purchases", status_code=303)
+    date = (f.get("purchase_date") or "").strip()
+    if not date:
+        return RedirectResponse("/purchases", status_code=303)
+    pgv = f.get("product_group_id") or ""
+    cols = dict(
+        purchase_date=date,
+        supplier_id=(int(f.get("supplier_id")) if (f.get("supplier_id") or "").isdigit() else None),
+        category=g("category"),
+        product_group_id=(int(pgv) if pgv.isdigit() else None),
+        amount=fl("amount"), tax_amount=fl("tax_amount"),
+        tax_deductible=(1 if f.get("tax_deductible") else 0),
+        doc_type=g("doc_type"),
+        is_fixed_asset=(1 if f.get("is_fixed_asset") else 0),
+        note=g("note"))
+    if pid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE purchase SET {sets} WHERE purchase_id=:id", {**cols, "id": int(pid)})
+    else:
+        keys = ",".join(cols)
+        execute(f"INSERT INTO purchase({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+    return RedirectResponse("/purchases", status_code=303)
+
+
 # ---------- 商品目錄 + 定價 -----------------------------------
 PRICE_SEGS = ['零售', '批發', '團購', '機構', '內部']   # price_list.customer_segment
 PROD_TYPES = ['單品', '組合', '禮盒', '裸裝', '試吃包', '加購贈品']
