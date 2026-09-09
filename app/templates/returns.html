@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}退貨 / 折讓 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 每天做的</div><h1 class="serif">退貨 / 折讓</h1></div>
+</div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">
+  從訂單明細頁登記(訂單 → 點單號 → 最下方「退貨 / 折讓」)。金額在<b>發生日期</b>的月份 / 產季沖減營收。
+</p>
+
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead><tr>
+      <th>發生日</th><th>單號</th><th>客戶</th><th>類型</th><th>退回品項</th><th>進庫</th>
+      <th>沖減金額</th><th>原因</th>
+    </tr></thead>
+    <tbody>{% for r in rows %}
+    <tr>
+      <td>{{ r.return_date }}</td>
+      <td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td>
+      <td style="text-align:left">{{ r.cust or '—' }}</td>
+      <td>{{ r.kind }}</td>
+      <td style="text-align:left">{% if r.pname %}{{ r.pname }} ×{{ r.qty|round(0)|int }}{% if r.batch_code %} <span class="muted">{{ r.batch_code }}批</span>{% endif %}{% else %}—{% endif %}</td>
+      <td>{{ '是' if r.restock else '否' }}</td>
+      <td class="neg">−{{ r.amount|money }}</td>
+      <td class="muted" style="text-align:left">{{ r.reason or '' }}</td>
+    </tr>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">還沒有退貨 / 折讓紀錄。</td></tr>{% endfor %}</tbody>
+    {% if rows %}<tfoot><tr class="sum"><td colspan="6" style="text-align:right">合計沖減</td>
+      <td class="neg">−{{ total|money }}</td><td></td></tr></tfoot>{% endif %}
+  </table>
+</div>
+{% endblock %}

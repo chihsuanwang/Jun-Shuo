@@ -12,8 +12,12 @@
 </p>
 
 <div class="card" style="overflow-x:auto">
-  <table>
-    <thead><tr><th>月份</th><th>項目</th><th>產品線</th><th>金額</th><th>攤提</th><th>稅額</th><th>備註</th><th></th></tr></thead>
+  <table class="sortable">
+    <thead><tr>
+      <th>月份</th><th>項目</th><th>產品線</th>
+      <th data-num>金額</th><th>攤提</th><th data-num>稅額</th>
+      <th>修改日期</th><th>備註</th><th></th>
+    </tr></thead>
     <tbody>{% for r in rows %}
     <tr>
       <td>{{ r.ym }}</td>
@@ -22,13 +26,45 @@
       <td>{{ r.amount|money }}</td>
       <td>{{ (r.amortize_months ~ ' 個月') if r.amortize_months else '—' }}</td>
       <td>{{ r.tax_amount|money if r.tax_amount else '—' }}</td>
+      <td class="muted">{{ (r.updated_at or '')[:16] }}</td>
       <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
       <td><a href="/finance/expenses/{{ r.expense_id }}/edit">編輯</a></td>
     </tr>
-    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="9" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
 <div class="muted" style="font-size:11px;margin-top:8px">
+  點欄位標題可排序(再點一次換升 / 降冪)。
   「金額」是實際花的錢(報稅看這個);設了「攤提」時,財務健康的月損益會把它分月攤開,整季 / 整年合計不變。
 </div>
+
+<script>
+(function () {
+  var tbl = document.querySelector('table.sortable');
+  if (!tbl) return;
+  var tb = tbl.tBodies[0], ths = tbl.tHead.rows[0].cells;
+  var num = function (s) { var n = parseFloat(String(s).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? -Infinity : n; };
+  [].forEach.call(ths, function (th, i) {
+    if (!th.textContent.trim()) return;
+    th.style.cursor = 'pointer';
+    th.addEventListener('click', function () {
+      var isNum = th.hasAttribute('data-num');
+      var dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+      [].forEach.call(ths, function (t) {
+        t.removeAttribute('data-dir');
+        t.textContent = t.textContent.replace(/ [▲▼]$/, '');
+      });
+      th.dataset.dir = dir;
+      th.textContent += dir === 'asc' ? ' ▲' : ' ▼';
+      var rows = [].slice.call(tb.rows).filter(function (r) { return r.cells.length === ths.length; });
+      rows.sort(function (a, b) {
+        var x = a.cells[i].textContent.trim(), y = b.cells[i].textContent.trim();
+        var c = isNum ? num(x) - num(y) : x.localeCompare(y, 'zh-Hant');
+        return dir === 'asc' ? c : -c;
+      });
+      rows.forEach(function (r) { tb.appendChild(r); });
+    });
+  });
+})();
+</script>
 {% endblock %}

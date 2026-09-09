@@ -11,11 +11,13 @@
   <h3 class="serif">基本</h3>
   <div class="grid" style="grid-template-columns:repeat(4,1fr)">
     <div><label>訂單日</label><input type="date" name="order_date" value="{{ today }}" required></div>
-    <div style="position:relative">
+    <div>
       <label>客戶</label>
       <input type="hidden" name="customer_id" id="custId">
-      <input id="custSearch" autocomplete="off" placeholder="打名字或電話搜尋…">
-      <div id="custResults" class="ac" hidden></div>
+      <div style="position:relative">
+        <input id="custSearch" autocomplete="off" placeholder="打名字或電話搜尋…">
+        <div id="custResults" class="ac" hidden></div>
+      </div>
       <div style="font-size:11px;margin-top:4px"><a href="/customers/new?next=/orders/new">找不到?先去新增客戶 →</a></div>
     </div>
     <div><label>銷售管道</label><select name="channel_id" required>
@@ -134,14 +136,39 @@
   var card = document.getElementById('custCard');
   var td;
 
+  // 像原生下拉:用 fixed 浮在畫面上(不佔版面、不撐出頁面捲軸),
+  // 下方空間不夠就往上開,高度限制在可視範圍內。
+  function place() {
+    var r = search.getBoundingClientRect();
+    var below = window.innerHeight - r.bottom - 12;
+    var above = r.top - 12;
+    var dropUp = below < 260 && above > below;
+    results.style.position = 'fixed';
+    results.style.left = r.left + 'px';
+    results.style.width = r.width + 'px';
+    if (dropUp) {
+      results.style.top = 'auto';
+      results.style.bottom = (window.innerHeight - r.top + 4) + 'px';
+      results.style.maxHeight = Math.max(140, above) + 'px';
+    } else {
+      results.style.bottom = 'auto';
+      results.style.top = (r.bottom + 4) + 'px';
+      results.style.maxHeight = Math.max(140, below) + 'px';
+    }
+  }
+
   function render(rows) {
-    if (!rows.length) { results.innerHTML = '<div class="ac-empty">找不到,請確認拼字或去新增客戶</div>'; results.hidden = false; return; }
-    results.innerHTML = rows.map(function (r) {
-      var meta = [r.segment || '未分級', r.phone || '無電話',
-                  r.last_order ? '最近 ' + r.last_order : '尚無訂單', r.n_orders + ' 筆'].join(' · ');
-      return '<div class="ac-item" data-id="' + r.id + '" data-name="' + r.name.replace(/"/g, '&quot;') + '">' +
-             '<b>' + r.name + '</b><small>' + meta + '</small></div>';
-    }).join('');
+    if (!rows.length) {
+      results.innerHTML = '<div class="ac-empty">找不到,請確認拼字或去新增客戶</div>';
+    } else {
+      results.innerHTML = rows.map(function (r) {
+        var meta = [r.segment || '未分級', r.phone || '無電話',
+                    r.last_order ? '最近 ' + r.last_order : '尚無訂單', r.n_orders + ' 筆'].join(' · ');
+        return '<div class="ac-item" data-id="' + r.id + '" data-name="' + r.name.replace(/"/g, '&quot;') + '">' +
+               '<b>' + r.name + '</b><small>' + meta + '</small></div>';
+      }).join('');
+    }
+    place();
     results.hidden = false;
   }
   function query(v) {
@@ -177,6 +204,8 @@
   document.addEventListener('click', function (e) {
     if (!results.contains(e.target) && e.target !== search) results.hidden = true;
   });
+  window.addEventListener('resize', function () { if (!results.hidden) place(); });
+  window.addEventListener('scroll', function () { if (!results.hidden) place(); }, true);
   search.form.addEventListener('submit', function (e) {
     if (!custId.value) { e.preventDefault(); alert('請先從搜尋結果選一位客戶。'); search.focus(); }
   });

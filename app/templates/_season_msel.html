@@ -1,0 +1,49 @@
+{# 產季多選下拉。放在某個 <form method="get"> 裡;需要 context:seasons、seasons_sel #}
+<span>產季</span>
+<div class="msel" id="seasonMsel">
+  <button type="button" class="msel-btn" id="seasonBtn" aria-haspopup="true" aria-expanded="false">
+    <span id="seasonLabel">全部產季</span><span class="msel-caret">▾</span>
+  </button>
+  <div class="msel-panel" id="seasonPanel" hidden>
+    <label><input type="checkbox" name="season" value="all" {{ 'checked' if not seasons_sel }}> 全部</label>
+    {% for s in seasons %}
+    <label><input type="checkbox" name="season" value="{{ s }}" {{ 'checked' if s in seasons_sel }}> {{ s }}</label>
+    {% endfor %}
+    <div class="msel-foot"><button type="submit" class="ghost msel-apply">套用</button></div>
+  </div>
+</div>
+<script>
+(function () {
+  var wrap = document.getElementById('seasonMsel');
+  if (!wrap || wrap.dataset.wired) return;
+  wrap.dataset.wired = '1';
+  var f = wrap.closest('form');
+  var btn = document.getElementById('seasonBtn');
+  var panel = document.getElementById('seasonPanel');
+  var label = document.getElementById('seasonLabel');
+  var all = panel.querySelector('input[value="all"]');
+  var yrs = [].slice.call(panel.querySelectorAll('input[name=season]')).filter(function (c) { return c !== all; });
+  function sig() { return [].map.call(panel.querySelectorAll('input[name=season]'), function (c) { return c.checked ? c.value : ''; }).join(','); }
+  var startSig = sig();
+  function relabel() {
+    var on = yrs.filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+    label.textContent = (all.checked || on.length === 0) ? '全部產季' : on.join('、') + ' 產季';
+  }
+  function openP() { panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); }
+  function closeP() {
+    panel.hidden = true; btn.setAttribute('aria-expanded', 'false');
+    if (f && sig() !== startSig) f.submit();
+  }
+  relabel();
+  btn.addEventListener('click', function () { panel.hidden ? openP() : closeP(); });
+  panel.addEventListener('change', function (e) {
+    if (e.target === all) { if (all.checked) yrs.forEach(function (c) { c.checked = false; }); }
+    else if (e.target.checked) { all.checked = false; }
+    if (!all.checked && !yrs.some(function (c) { return c.checked; })) all.checked = true;
+    relabel();
+  });
+  document.addEventListener('click', function (e) {
+    if (!wrap.contains(e.target) && !panel.hidden) closeP();
+  });
+})();
+</script>

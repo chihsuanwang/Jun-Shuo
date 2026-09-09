@@ -3,7 +3,10 @@
 {% block body %}
 <div class="head">
   <div><div class="sup">桂圓帳房 / 財務健康</div><h1 class="serif">月損益</h1></div>
-  <a href="/finance/expenses"><button class="ghost">維護營運費用</button></a>
+  <div style="display:flex;align-items:center;gap:12px">
+    <form method="get" class="filterbar">{% include "_season_msel.html" %}</form>
+    <a href="/finance/expenses"><button class="ghost">維護營運費用</button></a>
+  </div>
 </div>
 <hr class="rule">
 
@@ -20,10 +23,14 @@
       </label>
     </div>
   </div>
-  <div id="trendWrap" style="overflow-x:auto;margin-top:10px;cursor:grab"></div>
+  <div id="trendBox" style="position:relative;margin-top:10px">
+    <div id="trendWrap" style="overflow-x:auto;cursor:grab"></div>
+    <div id="trendAxis" style="position:absolute;left:0;top:0;width:50px;pointer-events:none"></div>
+  </div>
   <div id="ftip" class="chart-tip" hidden></div>
   <div class="muted" style="font-size:11px;margin-top:6px">
-    綠 = 有賺、紅 = 虧損 · 點某月看該月損益 · 左右拖 / 滑動看其他月份 ·
+    綠 = 有賺、紅 = 虧損 · 縱軸單位:千元(k)· 縱軸比例會依目前看到的月份自動調整 ·
+    點某月看該月損益 · 左右拖 / 滑動看其他月份 ·
     <b>要比較多個月</b>:勾「多選」再點(電腦也可按住 Ctrl 點)
   </div>
 </div>
@@ -32,7 +39,7 @@
 <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:18px">
   <div class="card">
     <h3 class="serif">累積稅前利潤</h3>
-    <div class="muted" style="font-size:11px;margin-bottom:4px">逐月累加。線在 0 以下 = 前期投入還沒被後面的獲利補回來;爬回 0 以上 = 整體轉正。</div>
+    <div class="muted" style="font-size:11px;margin-bottom:4px">依上方所選產季逐月累加(產季從 4 月算起)。線在 0 以下 = 前期投入還沒被銷售旺季補回來;爬回 0 以上 = 這段期間整體轉正。</div>
     <div id="cumWrap" style="position:relative"></div>
     <div id="cumTip" class="chart-tip" hidden></div>
   </div>
@@ -61,6 +68,10 @@
     var X = function (i) { return padL + i * step; };
     var Y = function (v) { return top + (vmax - v) / span * (bot - top); };
     var k = function (v) { return (Math.abs(v) >= 1000 ? (v / 1000).toFixed(0) + 'k' : v.toFixed(0)); };
+    // 月份多就疏化 X 標籤,跨年就顯示 年-月,避免擠在一起
+    var multiYear = D[0].ym.slice(0, 4) !== D[D.length - 1].ym.slice(0, 4);
+    var labEvery = D.length <= 14 ? 1 : (D.length <= 26 ? 2 : Math.ceil(D.length / 12));
+    var lab = function (ym) { return multiYear ? ym.slice(2) : ym.slice(5); };
     var y0 = Y(0);
     var g = ['<svg viewBox="0 0 ' + W + ' 150" style="width:100%;height:auto;display:block">'];
     [vmax, (vmax + vmin) / 2, vmin].forEach(function (v) {
@@ -74,7 +85,8 @@
     g.push('<polyline points="' + line + '" fill="none" stroke="var(--s-mgn)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>');
     D.forEach(function (d, i) {
       g.push('<circle cx="' + X(i) + '" cy="' + Y(d.cum) + '" r="3" fill="' + (d.cum < 0 ? 'var(--seal)' : 'var(--leaf)') + '"/>');
-      g.push('<text x="' + X(i) + '" y="' + (bot + 14) + '" font-size="8" fill="var(--ink-2)" text-anchor="middle">' + d.ym.slice(5) + '</text>');
+      if (i % labEvery === 0 || i === D.length - 1)
+        g.push('<text x="' + X(i) + '" y="' + (bot + 14) + '" font-size="8" fill="var(--ink-2)" text-anchor="middle">' + lab(d.ym) + '</text>');
       g.push('<rect x="' + (X(i) - step / 2) + '" y="0" width="' + step + '" height="' + bot + '" fill="transparent" class="ch" data-i="' + i + '"/>');
     });
     g.push('</svg>');
@@ -100,6 +112,9 @@
     var step = (W - padL - padR) / Math.max(D.length - 1, 1);
     var X = function (i) { return padL + i * step; };
     var Y = function (p) { return bot - (p / 100) * (bot - top); };
+    var multiYear = D[0].ym.slice(0, 4) !== D[D.length - 1].ym.slice(0, 4);
+    var labEvery = D.length <= 14 ? 1 : (D.length <= 26 ? 2 : Math.ceil(D.length / 12));
+    var lab = function (ym) { return multiYear ? ym.slice(2) : ym.slice(5); };
     var g = ['<svg viewBox="0 0 ' + W + ' 150" style="width:100%;height:auto;display:block">'];
     [100, 50, 0].forEach(function (p) {
       var y = Y(p);
@@ -110,7 +125,8 @@
     g.push('<polyline points="' + line + '" fill="none" stroke="var(--s-mgn)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>');
     D.forEach(function (d, i) {
       g.push('<circle cx="' + X(i) + '" cy="' + Y(d.mgn) + '" r="3" fill="var(--s-mgn)"/>');
-      g.push('<text x="' + X(i) + '" y="' + (bot + 14) + '" font-size="8" fill="var(--ink-2)" text-anchor="middle">' + d.ym.slice(5) + '</text>');
+      if (i % labEvery === 0 || i === D.length - 1)
+        g.push('<text x="' + X(i) + '" y="' + (bot + 14) + '" font-size="8" fill="var(--ink-2)" text-anchor="middle">' + lab(d.ym) + '</text>');
       g.push('<rect x="' + (X(i) - step / 2) + '" y="0" width="' + step + '" height="' + bot + '" fill="transparent" class="mh" data-i="' + i + '"/>');
     });
     g.push('</svg>');
@@ -143,12 +159,13 @@
 <div class="card">
   <h3 class="serif">各產季合計(含淡月固定成本)</h3>
   <table>
-    <thead><tr><th>產季</th><th>期間</th><th>營收</th><th>毛利</th><th>通路抽成</th><th>運費賺賠</th><th>營運費用(12 月)</th><th>稅前利潤</th></tr></thead>
+    <thead><tr><th>產季</th><th>期間</th><th>營收</th><th>退貨/折讓</th><th>毛利</th><th>通路抽成</th><th>運費賺賠</th><th>營運費用(12 月)</th><th>稅前利潤</th></tr></thead>
     <tbody>{% for s in seasons_fin %}
       <tr>
         <td>{{ s.season }}</td>
         <td class="muted" style="font-size:12px">{{ s.window }}</td>
         <td>{{ s.revenue|money }}</td>
+        <td class="{{ 'neg' if s.returns }}">{{ ('− ' ~ s.returns|money) if s.returns else '—' }}</td>
         <td>{{ s.gross_profit|money }}</td>
         <td>− {{ s.platform_fee|money }}</td>
         <td class="{{ 'neg' if s.ship_pnl < 0 }}">{{ s.ship_pnl|money }}</td>
@@ -167,7 +184,8 @@
 
 <p class="muted" style="font-size:12px;margin-top:16px">
 營收 / 銷貨成本 / 毛利 / 通路抽成 / 運費 由系統的實際訂單算出;
-<b>營運費用需由郡碩農創逐月填入</b>(「維護營運費用」,淡月也要填)。目前為示範假資料。</p>
+<b>營運費用需由郡碩農創逐月填入</b>(「維護營運費用」,淡月也要填)。
+<b>銷貨退回 / 折讓</b>認列在「發生的月份」,好貨退回進庫時成本也回沖 —— 所以沒銷售的月份可能出現負的「銷貨成本」(等於退回沖銷)。目前為示範假資料。</p>
 
 <script>
 (function () {
@@ -185,7 +203,7 @@
   rng.min = 4; rng.max = Math.min(FIN.length, 24); rng.value = span;
 
   var fmt = function (v) { return 'NT$ ' + Math.round(v).toLocaleString('en-US'); };
-  var k = function (v) { return (v / 1000).toFixed(0) + 'k'; };
+  var k = function (v) { return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k'; };  // 千元
   var tipT;
   function showTip(rec, x, y) {
     tip.innerHTML = '<b>' + rec.ym + '</b><br>稅前利潤 ' + fmt(rec.pretax) +
@@ -194,24 +212,24 @@
     tip.style.left = Math.min((x || 0) + 14, window.innerWidth - 240) + 'px';
     tip.style.top = ((y || 0) + 14) + 'px';
   }
-  var YNICE = (function () {
-    var m = Math.max(1, Math.max.apply(null, FIN.map(function (t) { return Math.abs(t.pretax); })));
-    return Math.ceil(m / 10000) * 10000;               // 全期固定刻度,拖曳時不跳動
-  })();
-
   function drawChart() {
-    var ynice = YNICE;
+    var keepScroll = wrap.scrollLeft;                     // innerHTML 重寫會歸零,先記著
     var padL = 50, padR = 10;
     var cw = wrap.clientWidth || 900;
     var slot = Math.max((cw - padL - padR) / span, 24);   // 每月寬度:讓 span 個月剛好塞滿畫面
     var W = padL + padR + slot * FIN.length;              // 整段(所有月)的總寬 → 多的靠捲動
     var barW = Math.min(slot - 14, 46);
+    // Y 軸刻度只依「現在看得到的月份」縮放 —— 看到小數字的期間就不會被壓成一條平線
+    var vs = Math.max(0, Math.floor(keepScroll / slot) - 1);
+    var ve = Math.min(FIN.length, Math.ceil((keepScroll + cw) / slot) + 1);
+    var vmax = 1;
+    for (var vi = vs; vi < ve; vi++) vmax = Math.max(vmax, Math.abs(FIN[vi].pretax || 0));
+    var ynice = Math.max(5000, Math.ceil(vmax / 5000) * 5000);
     var top = 20, bot = 176, zero = (top + bot) / 2, half = zero - top;
     var g = ['<svg viewBox="0 0 ' + W + ' 200" style="display:block;height:200px;width:' + W + 'px">'];
     [ynice, ynice / 2, 0, -ynice / 2, -ynice].forEach(function (gy) {
       var py = (zero - (gy / ynice) * half).toFixed(1);
       g.push('<line x1="' + padL + '" y1="' + py + '" x2="' + (W - padR) + '" y2="' + py + '" stroke="' + (gy === 0 ? 'var(--rule)' : 'var(--rule-2)') + '"/>');
-      g.push('<text x="' + (padL - 6) + '" y="' + (+py + 3) + '" font-size="9" fill="var(--ink-3)" text-anchor="end">' + (gy === 0 ? '0' : k(gy)) + '</text>');
     });
     var anySel = sel.size > 0;
     FIN.forEach(function (t, i) {
@@ -233,6 +251,17 @@
     });
     g.push('</svg>');
     wrap.innerHTML = g.join('');
+    wrap.scrollLeft = keepScroll;                         // 還原捲動位置(innerHTML 重寫會歸零)
+
+    // 固定在左緣、不隨捲動跑掉的 Y 軸
+    var ax = ['<svg viewBox="0 0 ' + padL + ' 200" style="width:' + padL + 'px;height:200px;display:block;background:var(--card)">'];
+    [ynice, ynice / 2, 0, -ynice / 2, -ynice].forEach(function (gy) {
+      var py = (zero - (gy / ynice) * half).toFixed(1);
+      ax.push('<text x="' + (padL - 6) + '" y="' + (+py + 3) + '" font-size="10" fill="var(--ink-2)" text-anchor="end">' + (gy === 0 ? '0' : k(gy)) + '</text>');
+    });
+    ax.push('</svg>');
+    document.getElementById('trendAxis').innerHTML = ax.join('');
+
     wrap.querySelectorAll('.fbar').forEach(function (b) {
       var rec = FIN.find(function (x) { return x.ym === b.dataset.ym; });
       b.addEventListener('mousemove', function (e) { showTip(rec, e.clientX, e.clientY); });
@@ -259,13 +288,14 @@
   function drawSel() {
     var yms = FIN.filter(function (t) { return sel.has(t.ym); });
     yms.sort(function (a, b) { return a.ym < b.ym ? -1 : 1; });
-    var S = { revenue: 0, cogs: 0, gross_profit: 0, platform_fee: 0, ship_pnl: 0, opex_total: 0, pretax: 0, opex: {} };
+    var S = { revenue: 0, returns: 0, cogs: 0, gross_profit: 0, platform_fee: 0, ship_pnl: 0, opex_total: 0, pretax: 0, opex: {} };
     CATS.forEach(function (c) { S.opex[c] = 0; });
     yms.forEach(function (t) {
-      ['revenue', 'cogs', 'gross_profit', 'platform_fee', 'ship_pnl', 'opex_total', 'pretax'].forEach(function (f) { S[f] += t[f] || 0; });
+      ['revenue', 'returns', 'cogs', 'gross_profit', 'platform_fee', 'ship_pnl', 'opex_total', 'pretax'].forEach(function (f) { S[f] += t[f] || 0; });
       Object.keys(t.opex || {}).forEach(function (c) { S.opex[c] = (S.opex[c] || 0) + t.opex[c]; });
     });
-    var margin = S.revenue ? S.gross_profit / S.revenue : 0;
+    var netRev = S.revenue - S.returns;
+    var margin = netRev ? S.gross_profit / netRev : 0;
     var breakeven = margin ? S.opex_total / margin : null;
 
     document.getElementById('selTitle').textContent =
@@ -280,6 +310,7 @@
 
     var h = '<table><tbody>' +
       row('營收', fmt(S.revenue), '', true) +
+      (S.returns ? row('− 銷貨退回與折讓', '− ' + fmt(S.returns)) : '') +
       row('− 銷貨成本', '− ' + fmt(S.cogs)) +
       row('= 毛利(毛利率 ' + (margin * 100).toFixed(0) + '%)', fmt(S.gross_profit), '', true) +
       row('− 通路抽成', '− ' + fmt(S.platform_fee)) +
@@ -292,7 +323,7 @@
       h += '<div class="muted" style="font-size:12px;margin-top:10px">損益兩平:固定成本 ' + fmt(S.opex_total) +
         ' ÷ 毛利率 ' + (margin * 100).toFixed(0) + '% → 需營收 ≈ ' + fmt(breakeven) +
         (yms.length > 1 ? '(這 ' + yms.length + ' 個月合計)' : '') +
-        ' · 實際 ' + fmt(S.revenue) + (S.revenue >= breakeven ? ' ✓ 達標' : ' ✗ 未達') + '</div>';
+        ' · 實際 ' + fmt(netRev) + (netRev >= breakeven ? ' ✓ 達標' : ' ✗ 未達') + '</div>';
     document.getElementById('selBody').innerHTML = h;
   }
 
@@ -302,6 +333,13 @@
     span = +rng.value; rngVal.textContent = span;
     drawChart();
     wrap.scrollLeft = Math.max(0, mid * wrap.scrollWidth - wrap.clientWidth / 2);
+    drawChart();                          // 再畫一次:Y 軸依縮放後的可視範圍調整
+  });
+
+  var scrollT;
+  wrap.addEventListener('scroll', function () {
+    clearTimeout(scrollT);
+    scrollT = setTimeout(drawChart, 120);   // 捲動停下後,Y 軸依新的可視範圍重算
   });
   document.getElementById('selClear').addEventListener('click', function (e) {
     e.preventDefault(); sel = new Set([FIN[FIN.length - 1].ym]); drawChart(); drawSel();
@@ -325,6 +363,7 @@
   rngVal.textContent = span;
   drawChart(); drawSel();
   wrap.scrollLeft = wrap.scrollWidth;   // 預設捲到最新
+  drawChart();                          // 依「最新」的可視範圍重算 Y 軸
 })();
 </script>
 {% endblock %}

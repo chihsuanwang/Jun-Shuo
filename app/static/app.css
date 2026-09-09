@@ -78,6 +78,22 @@ button.ghost{background:none;color:var(--ink-2);border:1px solid var(--rule)}
 .filterbar{display:flex;gap:8px;align-items:center;font-size:13px}
 .filterbar span{color:var(--ink-3)}
 .filterbar select{width:auto;display:inline-block;padding:6px 10px}
+/* 多選下拉(產季)—— 儀表板 / 各產品線損益共用 */
+.msel{position:relative;display:inline-block}
+.msel-btn{background:var(--paper-2);border:1px solid var(--rule);border-radius:7px;padding:7px 10px;
+  font-size:13px;color:var(--ink);font-family:inherit;font-weight:400;cursor:pointer;
+  display:inline-flex;align-items:center;gap:7px;line-height:1}
+.msel-btn:hover{border-color:var(--seal)}
+.msel-caret{color:var(--ink-3);font-size:9px;transform:translateY(1px)}
+.msel-panel{position:absolute;right:0;top:calc(100% + 4px);z-index:30;min-width:132px;
+  background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:5px;
+  box-shadow:0 6px 18px rgba(46,33,21,.14)}
+.msel-panel label{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:6px;
+  font-size:13px;color:var(--ink-2);cursor:pointer;white-space:nowrap;text-align:left;letter-spacing:0;line-height:1.2}
+.msel-panel label:hover{background:var(--paper-2)}
+.msel-panel input[type=checkbox]{width:auto;margin:0;accent-color:var(--seal)}
+.msel-foot{border-top:1px solid var(--rule-2);margin-top:4px;padding-top:5px;text-align:right}
+.msel-apply{padding:4px 13px;font-size:12px}
 
 /* --- 平板 / 窄螢幕(iPad 直式等) --- */
 @media (max-width: 900px) {

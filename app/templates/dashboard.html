@@ -4,8 +4,10 @@
 <div class="head">
   <div><div class="sup">南投中寮 · 百年龍眼樹</div><h1 class="serif">儀表板</h1></div>
   <div style="text-align:right">
-    {% include "_filterbar.html" %}
-    <div class="muted" style="font-size:11px;margin-top:4px">實際結算日 {{ k.as_of }}</div>
+    <form method="get" class="filterbar" id="dashfilter" style="justify-content:flex-end;flex-wrap:wrap">
+      {% include "_season_msel.html" %}
+    </form>
+    <div class="muted" style="font-size:12px;margin-top:6px">今天 {{ k.as_of }}</div>
   </div>
 </div>
 <hr class="rule">
@@ -21,7 +23,7 @@
 {% endif %}
 
 <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:20px">
-  <div class="card kpi"><div class="lab">本產季營收</div><div class="val">{{ k.revenue|money }}</div><div class="sub">銷售訂單</div></div>
+  <div class="card kpi"><div class="lab">本產季營收</div><div class="val">{{ k.revenue|money }}</div><div class="sub">{% if k.returns %}扣退貨 {{ k.returns|money }} → 淨 {{ k.net_revenue|money }}{% else %}銷售訂單{% endif %}</div></div>
   <div class="card kpi" style="border-top-color:var(--seal)"><div class="lab">本產季稅前利潤</div><div class="val {{ 'neg' if fin.pretax < 0 }}">{{ fin.pretax|money }}</div><div class="sub">毛利再扣通路抽成 / 運費 / 全產季營運費用</div></div>
   <div class="card kpi" style="border-top-color:var(--s-mgn)"><div class="lab">毛利率</div><div class="val">{{ k.margin|pct }}</div><div class="sub">毛利 {{ k.gross_profit|money }}(營收扣進貨/製造成本)</div></div>
   <div class="card kpi"><div class="lab">還沒收到的貨款</div><div class="val">{{ k.ar_amount|money }}</div><div class="sub">{{ k.ar_count }} 筆 · <a href="/reports?tab=aging">看清單</a></div></div>
@@ -30,11 +32,12 @@
 <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:18px">
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:baseline">
-      <h3 class="serif">本產季損益(濃縮版)</h3>
-      <a href="/finance" style="font-size:12px">看每月完整損益 →</a>
+      <h3 class="serif">本產季損益簡表</h3>
+      <a href="/finance?{{ season_qs }}" style="font-size:12px">看每月完整損益 →</a>
     </div>
     <table class="pnl">
       <tr><td>營收</td><td class="r">{{ fin.revenue|money }}</td></tr>
+      {% if fin.returns %}<tr><td>− 銷貨退回與折讓</td><td class="r neg">−{{ fin.returns|money }}</td></tr>{% endif %}
       <tr><td>− 銷貨成本(進貨/製造)</td><td class="r">−{{ fin.cogs|money }}</td></tr>
       <tr class="sum"><td>= 毛利<span class="muted">（{{ fin.margin|pct }}）</span></td>
           <td class="r {{ 'neg' if fin.gross_profit < 0 }}">{{ fin.gross_profit|money }}</td></tr>

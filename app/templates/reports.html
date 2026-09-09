@@ -5,14 +5,16 @@
   <div><div class="sup">桂圓帳房 / 報表</div><h1 class="serif">{{ tabs[tab] }}</h1></div>
   <div style="text-align:right">
     {% include "_filterbar.html" %}
-    <a href="/export/report.csv?tab={{ tab }}&season={{ season_sel }}&asof={{ asof_sel }}"
-       style="font-size:12px;display:inline-block;margin-top:6px">匯出這頁 CSV ↓</a>
+    <div style="margin-top:6px;font-size:12px;display:flex;gap:14px;justify-content:flex-end">
+      <a href="/export/report.csv?tab={{ tab }}&season={{ season_sel }}">匯出這頁 CSV ↓</a>
+      <a href="/export/order_lines.csv?season={{ season_sel }}">訂單品項明細 CSV ↓</a>
+    </div>
   </div>
 </div>
 
 <div class="chips" style="margin:14px 0 20px;font-size:13px">
   {% for key, label in tabs.items() %}
-    <a class="chip" href="/reports?tab={{ key }}&season={{ season_sel }}&asof={{ asof_sel }}"
+    <a class="chip" href="/reports?tab={{ key }}&season={{ season_sel }}"
        style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if tab==key }}">{{ label }}</a>
   {% endfor %}
 </div>

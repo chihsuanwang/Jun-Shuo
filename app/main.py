@@ -45,6 +45,37 @@ def backup_db():
 backup_db()
 
 
+# ---------- 啟動時輕量遷移(補既有資料庫缺的欄位) -----------------
+def migrate_db():
+    try:
+        if not os.path.exists(_db.DB):
+            return
+        cols = [r["name"] for r in q("PRAGMA table_info(op_expense)")]
+        if "updated_at" not in cols:
+            execute("ALTER TABLE op_expense ADD COLUMN updated_at TEXT")
+            execute("UPDATE op_expense SET updated_at=datetime('now','localtime') WHERE updated_at IS NULL")
+            print("[migrate] op_expense.updated_at 已補上")
+        execute("CREATE TABLE IF NOT EXISTS pricing_param (key TEXT PRIMARY KEY, value REAL NOT NULL)")
+        execute("""CREATE TABLE IF NOT EXISTS sales_return (
+          return_id    INTEGER PRIMARY KEY,
+          order_id     INTEGER NOT NULL REFERENCES "order"(order_id) ON DELETE CASCADE,
+          return_date  TEXT NOT NULL,
+          season       INTEGER NOT NULL,
+          kind         TEXT NOT NULL DEFAULT '退貨' CHECK (kind IN ('退貨','折讓')),
+          amount       REAL NOT NULL DEFAULT 0,
+          product_id   INTEGER REFERENCES product(product_id),
+          qty          REAL,
+          batch_id     INTEGER REFERENCES batch(batch_id),
+          restock      INTEGER NOT NULL DEFAULT 0 CHECK (restock IN (0,1)),
+          reason       TEXT,
+          created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )""")
+    except Exception as e:
+        print("[migrate] 略過:", e)
+
+migrate_db()
+
+
 # ---------- CSV 匯出 ------------------------------------------
 def csv_response(filename, header, rows):
     from urllib.parse import quote
@@ -63,29 +94,58 @@ def _season_arg(request):
     sv = request.query_params.get("season", "")
     return None if sv in ("", "all") else int(sv)
 
+def _orders_filter_arg(request):
+    return (request.query_params.get("filter", "all"),
+            (request.query_params.get("q") or "").strip())
+
 @app.get("/export/order_lines.csv")
 def export_order_lines(request: Request):
-    season = _season_arg(request)
-    sc, sp = Q._S(season)
-    rows = q(f"""SELECT o.order_no, o.order_date, o.season, o.order_kind,
-                        cu.display_name, ch.name, p.sku, p.name,
-                        ol.qty, ol.unit_price, ol.list_price, ol.line_subtotal,
-                        CASE ol.is_gift WHEN 1 THEN '是' ELSE '' END, b.batch_code
+    sc, sp = Q._S(_season_arg(request))
+    fc, fp = Q.orders_filter(*_orders_filter_arg(request))
+    rows = q(f"""SELECT o.order_no    AS c_no,
+                        o.order_date  AS c_date,
+                        o.season      AS c_season,
+                        o.order_kind  AS c_kind,
+                        cu.display_name AS c_cust,
+                        ch.name       AS c_channel,
+                        p.sku         AS c_sku,
+                        p.name        AS c_product,
+                        ol.qty        AS c_qty,
+                        ol.unit_price AS c_price,
+                        ol.list_price AS c_list,
+                        ol.line_subtotal AS c_subtotal,
+                        CASE ol.is_gift WHEN 1 THEN '是' ELSE '' END AS c_gift,
+                        b.batch_code  AS c_batch,
+                        o.discount_total AS c_odisc,
+                        o.shipping_fee_charged AS c_oship,
+                        o.order_total AS c_ototal
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
                  LEFT JOIN customer cu ON cu.customer_id=o.customer_id
                  LEFT JOIN channel ch ON ch.channel_id=o.channel_id
                  LEFT JOIN batch b ON b.batch_id=ol.batch_id
-                 WHERE {sc} ORDER BY o.order_date, o.order_no, ol.line_id""", sp)
+                 WHERE {sc} AND {fc}
+                 ORDER BY o.order_date, o.order_no, ol.line_id""", sp + fp)
+    # 訂單層欄位(折扣 / 運費 / 應收合計)只放在每張單的第一列,避免加總時重複計
+    seen, out = set(), []
+    for r in rows:
+        first = r["c_no"] not in seen
+        seen.add(r["c_no"])
+        out.append([r["c_no"], r["c_date"], r["c_season"], r["c_kind"], r["c_cust"],
+                    r["c_channel"], r["c_sku"], r["c_product"], r["c_qty"], r["c_price"],
+                    r["c_list"], r["c_subtotal"], r["c_gift"], r["c_batch"],
+                    r["c_odisc"] if first else "", r["c_oship"] if first else "",
+                    r["c_ototal"] if first else ""])
     return csv_response("訂單明細.csv",
         ["單號","日期","產季","種類","客戶","管道","商品編號","品名",
-         "數量","成交單價","定價","小計","贈品","批次"],
-        [list(r.values()) for r in rows])
+         "數量","成交單價","定價","小計","贈品","批次",
+         "訂單折扣","訂單運費","訂單應收合計"],
+        out)
 
 @app.get("/export/orders.csv")
 def export_orders(request: Request):
-    season = _season_arg(request)
-    sc, sp = Q._S(season)
+    sc, sp = Q._S(_season_arg(request))
+    fc, fp = Q.orders_filter(*_orders_filter_arg(request))
     rows = q(f"""SELECT o.order_no, o.order_date, o.season, o.order_kind,
                         cu.display_name, ch.name,
                         o.discount_total, o.shipping_fee_charged, o.platform_fee, o.order_total,
@@ -95,7 +155,7 @@ def export_orders(request: Request):
                  FROM "order" o
                  LEFT JOIN customer cu ON cu.customer_id=o.customer_id
                  LEFT JOIN channel ch ON ch.channel_id=o.channel_id
-                 WHERE {sc} ORDER BY o.order_date, o.order_no""", sp)
+                 WHERE {sc} AND {fc} ORDER BY o.order_date, o.order_no""", sp + fp)
     return csv_response("訂單.csv",
         ["單號","日期","產季","種類","客戶","管道","折扣","向客收運費","通路抽成","應收合計",
          "付款方式","收款狀態","收款日","出貨方式","物流商","物流單號","出貨日","出貨狀態",
@@ -153,9 +213,30 @@ def _season_ctx(request: Request):
         seasons=Q.seasons(), season_sel=sv or "all", asof_sel=asof, asof_opts=ASOF_OPTS)
 
 
+def _seasons_ctx(request: Request):
+    """產季可複選(?season=2025&season=2026)—— 儀表板 / 各產品線損益共用。
+    沒帶 season → 預設只看最新產季;明確帶 season=all → 全部。"""
+    all_seasons = Q.seasons()
+    default_sel = all_seasons[-1:]                    # 預設:最新產季
+    raw = request.query_params.getlist("season")
+    if not raw:
+        sel = default_sel
+    elif "all" in raw:
+        sel = []                                     # 明確選「全部」
+    else:
+        sel = sorted({int(v) for v in raw if v.strip().isdigit() and int(v) in all_seasons})
+        if not sel:
+            sel = default_sel
+    asof = request.query_params.get("asof", "latest") or "latest"
+    season_qs = "&".join(f"season={s}" for s in sel) if sel else "season=all"
+    return (sel or None), asof, dict(
+        seasons=all_seasons, seasons_sel=sel, season_qs=season_qs,
+        asof_sel=asof, asof_opts=ASOF_OPTS)
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    season, asof, ctx = _season_ctx(request)
+    season, asof, ctx = _seasons_ctx(request)
     k = Q.kpi(season, asof)
     mon = Q.monthly(season)
     monmax = max([m["rev"] for m in mon] + [1])
@@ -953,7 +1034,64 @@ def order_detail(request: Request, oid: int):
         products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
         batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code"),
         pay_methods=PAY_METHODS, pay_status=PAY_STATUS,
-        ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, kinds=ORDER_KINDS))
+        ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, kinds=ORDER_KINDS,
+        returns=Q.returns_list(oid), return_kinds=RETURN_KINDS,
+        today=dt.date.today().isoformat()))
+
+
+# ---------- 銷貨退回 / 折讓(v2 回合 8) ----------------------
+RETURN_KINDS = ['退貨', '折讓']
+
+@app.get("/returns", response_class=HTMLResponse)
+def returns_page(request: Request):
+    rows = Q.returns_list()
+    total = sum(r["amount"] for r in rows)
+    return tpl.TemplateResponse("returns.html", dict(
+        request=request, active="returns", rows=rows, total=total))
+
+@app.post("/orders/{oid}/return")
+async def order_return_create(request: Request, oid: int):
+    f = await request.form()
+    o, _ = Q.order_get(oid)
+    if not o:
+        return RedirectResponse("/orders", status_code=303)
+    g = lambda k: (f.get(k) or "").strip() or None
+    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
+    date = (f.get("return_date") or "").strip() or dt.date.today().isoformat()
+    kind = (f.get("kind") or "退貨").strip()
+    if kind not in RETURN_KINDS:
+        kind = "退貨"
+    amount = fl("amount")
+    if amount <= 0:
+        return RedirectResponse(f"/orders/{oid}?rerr=1", status_code=303)
+    pid = f.get("product_id") or ""
+    bid = f.get("batch_id") or ""
+    qty = fl("qty")
+    restock = 1 if f.get("restock") else 0
+    cols = dict(
+        order_id=oid, return_date=date, season=Q.season_of(date), kind=kind, amount=amount,
+        product_id=(int(pid) if pid.isdigit() else None),
+        qty=(qty or None),
+        batch_id=(int(bid) if bid.isdigit() else None),
+        restock=restock, reason=g("reason"))
+    keys = ",".join(cols)
+    rid = execute(f"INSERT INTO sales_return({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+    # 好貨退回可再賣 → 產生一筆「退貨入庫」
+    if restock and cols["product_id"] and qty > 0:
+        execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,ref_order_id,note)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (date, cols["product_id"], cols["batch_id"], abs(qty), "退貨入庫", oid,
+                 f"退貨單#{rid}"))
+    return RedirectResponse(f"/orders/{oid}?rok=1", status_code=303)
+
+@app.post("/returns/{rid}/delete")
+async def order_return_delete(request: Request, rid: int):
+    r = q("SELECT order_id FROM sales_return WHERE return_id=?", (rid,))
+    execute("DELETE FROM stock_move WHERE move_type='退貨入庫' AND note=?", (f"退貨單#{rid}",))
+    execute("DELETE FROM sales_return WHERE return_id=?", (rid,))
+    back = f"/orders/{r[0]['order_id']}" if r else "/returns"
+    f = await request.form()
+    return RedirectResponse(f.get("next") or back, status_code=303)
 
 @app.post("/orders/{oid}")
 async def order_update(request: Request, oid: int):
@@ -1106,7 +1244,7 @@ PNL_BASIS = {"rev": "依營收", "qty": "依銷量", "dm": "依直接成本"}
 
 @app.get("/lines", response_class=HTMLResponse)
 def product_lines_pnl(request: Request):
-    season, asof, ctx = _season_ctx(request)
+    season, asof, ctx = _seasons_ctx(request)
     basis = request.query_params.get("basis", "rev")
     if basis not in PNL_BASIS:
         basis = "rev"
@@ -1119,17 +1257,18 @@ def product_lines_pnl(request: Request):
 # ---------- 財務健康:月損益 ----------------------------------
 @app.get("/finance", response_class=HTMLResponse)
 def finance_page(request: Request):
+    season, asof, ctx = _seasons_ctx(request)
     fin = []
-    for ym in Q.months_with_data():
+    for ym in Q.finance_months(season):
         d = Q.finance_month(ym)
-        fin.append(dict(ym=ym, revenue=d["revenue"], cogs=d["cogs"],
+        fin.append(dict(ym=ym, revenue=d["revenue"], returns=d["returns"], cogs=d["cogs"],
                         gross_profit=d["gross_profit"], platform_fee=d["platform_fee"],
                         ship_pnl=d["ship_pnl"], opex_total=d["opex_total"], pretax=d["pretax"],
                         opex={r["category"]: r["amt"] for r in d["opex"]}))
     return tpl.TemplateResponse("finance.html", dict(
         request=request, active="finance",
         fin_json=json.dumps(fin), cats=Q.OPEX_CATS,
-        seasons_fin=[Q.season_finance(s) for s in Q.seasons()]))
+        seasons_fin=[Q.season_finance(s) for s in Q.seasons()], **ctx))
 
 @app.get("/finance/expenses", response_class=HTMLResponse)
 def finance_expenses(request: Request):
@@ -1181,11 +1320,47 @@ async def finance_expense_save(request: Request):
         doc_type=g("doc_type"), note=g("note"))
     if eid:
         sets = ",".join(f"{k}=:{k}" for k in cols)
-        execute(f"UPDATE op_expense SET {sets} WHERE expense_id=:id", {**cols, "id": int(eid)})
+        execute(f"UPDATE op_expense SET {sets}, updated_at=datetime('now','localtime') WHERE expense_id=:id",
+                {**cols, "id": int(eid)})
     else:
         keys = ",".join(cols)
-        execute(f"INSERT INTO op_expense({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+        execute(f"INSERT INTO op_expense({keys}, updated_at) "
+                f"VALUES({','.join(':' + k for k in cols)}, datetime('now','localtime'))", cols)
     return RedirectResponse("/finance/expenses", status_code=303)
+
+
+# ---------- 定價試算(管理估算,不進帳本) --------------------
+PRICING_KEYS = {k for k, *_ in Q.PRICING_FIELDS}
+
+@app.get("/pricing", response_class=HTMLResponse)
+def pricing_page(request: Request):
+    p = Q.pricing_params()
+    grouped = []
+    for grp in Q.PRICING_GROUPS:
+        items = [dict(key=k, label=lab, unit=u, hint=h, value=p[k])
+                 for k, g, lab, u, d, h in Q.PRICING_FIELDS if g == grp]
+        grouped.append((grp, items))
+    return tpl.TemplateResponse("pricing.html", dict(
+        request=request, active="pricing", grouped=grouped,
+        params_json=json.dumps(p)))
+
+@app.post("/pricing")
+async def pricing_save(request: Request):
+    f = await request.form()
+    if f.get("_reset"):
+        execute("DELETE FROM pricing_param")
+        return RedirectResponse("/pricing", status_code=303)
+    for k in PRICING_KEYS:
+        v = (f.get(f"p_{k}") or "").strip()
+        if v == "":
+            continue
+        try:
+            val = float(v)
+        except ValueError:
+            continue
+        execute("INSERT INTO pricing_param(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, val))
+    return RedirectResponse("/pricing", status_code=303)
 
 
 # ---------- 產季目標 ------------------------------------------

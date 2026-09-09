@@ -22,11 +22,7 @@
 <hr class="rule">
 
 <form method="get" class="filterbar" style="margin-bottom:16px">
-  <span>產季</span>
-  <select name="season" onchange="this.form.submit()">
-    <option value="all" {{ 'selected' if season_sel == 'all' }}>全部</option>
-    {% for s in seasons %}<option value="{{ s }}" {{ 'selected' if season_sel == s|string }}>{{ s }}</option>{% endfor %}
-  </select>
+  {% include "_season_msel.html" %}
   <span>共同費用分攤</span>
   <select name="basis" onchange="this.form.submit()">
     {% for k, v in basis_opts.items() %}<option value="{{ k }}" {{ 'selected' if basis == k }}>{{ v }}</option>{% endfor %}
@@ -40,6 +36,7 @@
     </thead>
     <tbody>
       {{ row('營收', 'revenue') }}
+      {% if d.total.returns %}{{ row('− 銷貨退回與折讓', 'returns', sign='−') }}{% endif %}
       {{ row('− 直接材料', 'direct_material', sign='−') }}
       {{ row('− 通路抽成', 'platform_fee', sign='−') }}
       {{ row('± 運費賺賠', 'ship_pnl') }}

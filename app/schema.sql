@@ -230,7 +230,8 @@ CREATE TABLE op_expense (
   tax_amount       REAL NOT NULL DEFAULT 0,  -- 進項稅額
   tax_deductible   INTEGER NOT NULL DEFAULT 0 CHECK (tax_deductible IN (0,1)),
   doc_type         TEXT CHECK (doc_type IN ('三聯式發票','二聯式發票','收據','農民收據','無憑證')),
-  note        TEXT
+  note        TEXT,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))   -- 最後新增 / 修改時間
 );
 CREATE INDEX ix_opexp_ym ON op_expense(ym);
 
@@ -296,3 +297,32 @@ CREATE TABLE fixed_asset (
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+
+-- 17. 定價試算參數(單一 key-value;預設值定義在 queries.PRICING_FIELDS) --
+--     這是「管理估算」用,不進帳本;見 docs/定價分析.md。
+CREATE TABLE pricing_param (
+  key   TEXT PRIMARY KEY,
+  value REAL NOT NULL
+);
+
+-- 18. 銷貨退回 / 折讓(v2 回合 8) -----------------------------
+--     針對某張「銷售」單,在退貨 / 折讓「發生的期間」沖減營收。
+--     restock=1:好貨退回可再賣 → 產生一筆「退貨入庫」;成本也回沖。
+--     restock=0:折讓或壞貨報廢 → 只沖營收,成本已沉沒。
+CREATE TABLE sales_return (
+  return_id    INTEGER PRIMARY KEY,
+  order_id     INTEGER NOT NULL REFERENCES "order"(order_id) ON DELETE CASCADE,
+  return_date  TEXT NOT NULL,                    -- 退貨 / 折讓發生日(認列期間看這個)
+  season       INTEGER NOT NULL,                 -- 由 return_date 推
+  kind         TEXT NOT NULL DEFAULT '退貨' CHECK (kind IN ('退貨','折讓')),
+  amount       REAL NOT NULL DEFAULT 0,          -- 沖減的營收金額(正數)
+  product_id   INTEGER REFERENCES product(product_id),   -- 有退實體貨才填
+  qty          REAL,                             -- 退回數量
+  batch_id     INTEGER REFERENCES batch(batch_id),
+  restock      INTEGER NOT NULL DEFAULT 0 CHECK (restock IN (0,1)),  -- 1=進庫可再賣;0=報廢 / 純折讓
+  reason       TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX ix_sret_order ON sales_return(order_id);
+CREATE INDEX ix_sret_date  ON sales_return(return_date);
+CREATE INDEX ix_sret_season ON sales_return(season);

@@ -4,7 +4,7 @@
 <div class="head">
   <div><div class="sup">桂圓帳房 / 訂單</div><h1 class="serif">訂單</h1></div>
   <div style="display:flex;gap:8px">
-    <a href="/export/order_lines.csv"><button class="ghost">匯出明細 CSV</button></a>
+    <a href="/export/orders.csv?{{ request.url.query }}"><button class="ghost">匯出 CSV</button></a>
     <a href="/orders/new"><button>＋ 新增訂單</button></a>
   </div>
 </div>
