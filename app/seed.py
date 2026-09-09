@@ -189,16 +189,17 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, season=2025):
                ship_method, carrier, ship_cost,
                "已送達" if pay_status=="已收款" else random.choice(["已出貨","待出貨","已送達"])))
     oid = c.lastrowid
-    bcode = f"{season}-A"   # 示範:整季都出自 A 批,庫存與批次帳才一致
+    bcode = f"{season}-A"   # 龍眼:整季都出自 A 批;蜂蜜 / 鮮果沒有批次
     for sku, qty, gift in lines:
         tier = 0 if (gift or kind != "銷售") else price_of(sku, seg)   # 該分級標準價
         up = tier
         if not gift and kind == "銷售" and random.random() < .15:      # 偶發:賣得比標準價低
             up = round(tier * 0.9)
         sub = 0 if gift else round(qty * up)
+        bid = None if sku.startswith(("HNY", "GY-FRESH")) else bat[bcode]
         c.execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,
                      line_discount,line_subtotal,is_gift) VALUES(?,?,?,?,?,?,?,?,?)""",
-                  (oid, prod[sku]["id"], bat[bcode], qty, up, tier, 0, sub, 1 if gift else 0))
+                  (oid, prod[sku]["id"], bid, qty, up, tier, 0, sub, 1 if gift else 0))
     return oid
 
 SKUS_SELL = ["GY-DRY-300","GY-DRY-BULK","GY-GIFT","LG-MEAT-600","LG-MEAT-1000"]
@@ -218,6 +219,11 @@ for season, months in SEASON_MONTHS.items():
                 sku = random.choice(SKUS_SELL)
                 qty = random.choice([2,3,4,5,6,8,10,12,20]) if "BULK" not in sku else random.choice([15,20,30,40,50])
                 lines.append((sku, qty, False))
+            if random.random() < .38:        # 蜂蜜:少一點,4 條線都有活動
+                lines.append((random.choice(["HNY-LONGAN-420","HNY-LYCHEE-420"]),
+                              random.choice([1,2,3,4,6]), False))
+            if mm in (9, 10) and random.random() < .25:      # 產季初賣一點龍眼鮮果
+                lines.append(("GY-FRESH-TCHIN", random.choice([3,5,8,10]), False))
             if random.random() < .3:
                 lines.append(("GX-STICK", random.choice([1,2]), True))
             sm = random.choice(["宅配","宅配","自行配送","客戶自取","超商店到店"])
@@ -275,20 +281,20 @@ for ym in opex_months:
     mm = int(ym[5:7])
     peak = mm in (10, 11, 12)                    # 旺月行銷 / 人力多一點
     harvest = mm in (7, 8, 9)                    # 採收焙製剝肉,直接人工多
-    # 共同費用
-    opx(ym, "人事", 32000 if not peak else 40000)
-    opx(ym, "場地・倉儲", 5000)
-    opx(ym, "行銷", random.choice([5000, 7000, 9000]) + (5000 if peak else 0))
-    opx(ym, "金流手續費", random.randint(2000, 4500))
-    opx(ym, "其他", random.randint(1500, 3500))
+    # 共同費用(老闆的工大多沒領薪,人事偏低)
+    opx(ym, "人事", 10000 if not peak else 14000)
+    opx(ym, "場地・倉儲", 2500)
+    opx(ym, "行銷", random.randint(2000, 4000) + (2500 if peak else 0))
+    opx(ym, "金流手續費", random.randint(900, 2200))
+    opx(ym, "其他", random.randint(900, 2200))
     # 歸產品線的費用
-    opx(ym, "田間管理", random.randint(6000, 11000), "龍眼乾")     # 果園管理(代表龍眼事業)
+    opx(ym, "田間管理", random.randint(3000, 6000), "龍眼乾")     # 果園管理(代表龍眼事業)
     if harvest:
-        opx(ym, "直接人工", random.randint(28000, 44000), "龍眼乾")   # 採收 + 柴焙
-        opx(ym, "直接人工", random.randint(15000, 26000), "龍眼肉")   # 剝肉工
-        opx(ym, "直接人工", random.randint(4000, 8000), "蜂蜜")       # 採蜜搖蜜
-# 一次性 + 攤提:研發費 30 萬,分 36 個月(2025-07 起)
-opx("2025-07", "研發", 300000, None, 36)
+        opx(ym, "直接人工", random.randint(12000, 20000), "龍眼乾")   # 採收 + 柴焙
+        opx(ym, "直接人工", random.randint(7000, 13000), "龍眼肉")    # 剝肉工
+        opx(ym, "直接人工", random.randint(3000, 6000), "蜂蜜")       # 採蜜搖蜜
+# 一次性 + 攤提:研發費 12 萬,分 24 個月(2025-07 起)
+opx("2025-07", "研發", 120000, None, 24)
 # 年度驗證費(產銷履歷,歸龍眼)
 opx("2025-06", "驗證費", 15000, "龍眼乾")
 opx("2024-06", "驗證費", 15000, "龍眼乾")
@@ -328,11 +334,11 @@ for d, sname, cat, pgname, amt, tax, ded, doc, fa, note in purchases:
 # ---- 固定資產卡(v2 回合 3 示範) -------------------------
 # (名稱, 類別, 產品線, 取得日, 成本, 補助, 殘值 None=自動, 年數, 來源進貨 note)
 assets = [
-    ("智慧柴焙灶(含溫控監測)", "機器設備", "龍眼乾", "2024-08-05", 480000, 200000, None, 5, None),
+    ("智慧柴焙灶(含溫控監測)", "機器設備", "龍眼乾", "2024-08-05", 260000, 100000, None, 5, None),
     ("龍眼剝殼去核機",         "機器設備", "龍眼肉", "2024-09-10",  85000,      0, None, 5, None),
     ("搖蜜機",                 "機器設備", "蜂蜜",   "2025-07-15",  46000,      0, None, 5, "搖蜜機(固定資產,待建卡)"),
-    ("冷藏庫(成品倉)",        "機器設備", None,     "2024-07-20", 120000,  40000, None, 5, None),
-    ("貨車(二手)",            "運輸設備", None,     "2024-06-01", 260000,      0, None, 5, None),
+    ("冷藏庫(成品倉)",        "機器設備", None,     "2024-07-20",  90000,  30000, None, 5, None),
+    ("貨車(二手)",            "運輸設備", None,     "2024-06-01", 150000,      0, None, 5, None),
 ]
 for name, cat, pgname, adate, cost, grant, sv, life, src_note in assets:
     salvage = sv if sv is not None else round(max(0, cost - grant) / (life + 1))
@@ -355,12 +361,15 @@ for (pid, season), q_sold in sold_by_season.items():
                         (f"{season}-A",)).fetchone()
     if not a_batch:
         continue
+    sk = sku_by_id.get(pid, "")
+    is_nonbatch = sk.startswith(("HNY", "GY-FRESH"))
     # GY-DRY-300 故意備得不夠 → 觸發「超賣」警示;其餘備約 12% 餘量
-    factor = 0.9 if sku_by_id.get(pid) == "GY-DRY-300" else 1.12
+    factor = 0.9 if sk == "GY-DRY-300" else 1.12
     c.execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,note)
                  VALUES(?,?,?,?,?,?)""",
-              (a_batch[1], pid, a_batch[0], math.ceil(q_sold * factor),
-               "分裝入庫", f"示範:{season} 產季分裝"))
+              (a_batch[1], pid, (None if is_nonbatch else a_batch[0]), math.ceil(q_sold * factor),
+               ("分裝入庫" if not is_nonbatch else "期初庫存"),
+               f"示範:{season} 產季{'分裝' if not is_nonbatch else '進貨入庫'}"))
 for oid, kind, odate in c.execute(
         'SELECT order_id, order_kind, order_date FROM "order"').fetchall():
     mtype = "銷售出庫" if kind == "銷售" else "贈送出庫"
