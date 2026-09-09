@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import os, io, csv, json, glob, shutil, datetime as dt
+import os, io, csv, json, glob, shutil, sys, runpy, base64, datetime as dt
 
 import paths
 import queries as Q
@@ -17,11 +17,50 @@ app = FastAPI(title="桂圓帳房")
 app.mount("/static", StaticFiles(directory=paths.STATIC), name="static")
 tpl = Jinja2Templates(directory=paths.TEMPLATES)
 
+# ---------- 選用:整站共用密碼(設 GY_PASSWORD 環境變數才啟用)----------
+# 本機 / exe 不設 → 無登入,行為不變。雲端主機設一組 → 全站 Basic Auth(帳號隨便打)。
+_GY_PASSWORD = os.environ.get("GY_PASSWORD")
+if _GY_PASSWORD:
+    @app.middleware("http")
+    async def _shared_password(request: Request, call_next):
+        if request.url.path.startswith("/static"):
+            return await call_next(request)
+        hdr = request.headers.get("authorization", "")
+        ok = False
+        if hdr.startswith("Basic "):
+            try:
+                ok = base64.b64decode(hdr[6:]).decode().split(":", 1)[1] == _GY_PASSWORD
+            except Exception:
+                ok = False
+        if not ok:
+            return Response("需要密碼", status_code=401,
+                            headers={"WWW-Authenticate": 'Basic realm="Guiyuan"'})
+        return await call_next(request)
+
 def money(v):
     try: return f"{v:,.0f}"
     except Exception: return v
 tpl.env.filters["money"] = money
 tpl.env.filters["pct"] = lambda v: f"{v*100:.0f}%"
+
+
+# ---------- 啟動時:資料庫不存在就用示範資料建一個 --------------
+#   雲端首次部署 / 新機器忘了先 seed 時的保險(啟動.bat / launch.py 也各有一層)
+def ensure_db():
+    try:
+        if os.path.exists(_db.DB):
+            return
+        print("[init] 找不到資料庫,建立示範資料 ...")
+        old = sys.argv
+        sys.argv = ["seed", "--force"]
+        try:
+            runpy.run_module("seed", run_name="__main__")
+        finally:
+            sys.argv = old
+    except Exception as e:
+        print("[init] 建立示範資料失敗:", e)
+
+ensure_db()
 
 
 # ---------- 啟動時自動備份資料庫(保留最近 30 份) --------------
