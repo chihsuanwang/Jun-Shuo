@@ -9,6 +9,7 @@
   </div>
 </div>
 <hr class="rule">
+{% if request.query_params.get('deleted') %}<div class="ok">訂單已刪除。</div>{% endif %}
 
 <div class="chips" style="margin-bottom:12px;font-size:13px">
   {% for key, label in filters.items() %}

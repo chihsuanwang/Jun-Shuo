@@ -952,6 +952,13 @@ async def customer_merge(request: Request, cid: int):
     return RedirectResponse(f"/customers/{tgt}?merged=1", status_code=303)
 
 
+def next_order_no():
+    """依現有單號最大編號 +1(不是用筆數算,避免刪過訂單後編號撞號)。"""
+    row = q("SELECT MAX(CAST(SUBSTR(order_no,2) AS INTEGER)) m FROM \"order\" WHERE order_no LIKE 'S%'")
+    m = (row[0]["m"] or 0) + 1
+    return f"S{m:04d}"
+
+
 # ---------- 新增訂單 -------------------------------------------
 @app.get("/orders/new", response_class=HTMLResponse)
 def order_new(request: Request):
@@ -1024,12 +1031,11 @@ async def order_create(request: Request):
     # 應收金額不含運費(運費只是家易花多少錢的紀錄,不跟客人收的部分另外拆帳)。
     total = subtotal - discount_total
     invoiced = 1 if one("invoiced") else 0
-    n = q("SELECT COUNT(*) c FROM \"order\"")[0]["c"] + 1
     oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
                      discount_total,order_total,payment_method,payment_status,
                      shipping_cost_actual,ship_payer,ship_method,ship_status,invoiced,tax_doc_no)
                      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
-                  (f"S{n:04d}", order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
+                  (next_order_no(), order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
                    discount_total, total,
                    one("payment_method") or None, one("payment_status", "待收款"),
                    flt("shipping_cost_actual"), one("ship_payer", "店家吸收"), one("ship_method") or None,
@@ -1231,11 +1237,10 @@ def order_copy(oid: int):
     o, lines = Q.order_get(oid)
     if not o:
         return RedirectResponse("/orders", status_code=303)
-    n = q("SELECT COUNT(*) c FROM \"order\"")[0]["c"] + 1
     noid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
                       order_total,payment_method,payment_status,ship_method,ship_status,note)
                       VALUES(?,?,?,?,?,?,?,?, '待收款', ?, '待出貨', ?)""",
-                   (f"S{n:04d}", dt.date.today().isoformat(), o["season"], o["customer_id"],
+                   (next_order_no(), dt.date.today().isoformat(), o["season"], o["customer_id"],
                     o["channel_id"], o["order_kind"], 0, o["payment_method"],
                     o["ship_method"], f"複製自 {o['order_no']}"))
     subtotal = 0
@@ -1248,6 +1253,18 @@ def order_copy(oid: int):
     execute('UPDATE "order" SET order_total=? WHERE order_id=?', (subtotal, noid))
     sync_order_stock(noid)
     return RedirectResponse(f"/orders/{noid}?ok=1", status_code=303)
+
+@app.post("/orders/{oid}/delete")
+def order_delete(oid: int):
+    o = q('SELECT order_id FROM "order" WHERE order_id=?', (oid,))
+    if not o:
+        return RedirectResponse("/orders", status_code=303)
+    execute("DELETE FROM stock_move WHERE ref_order_id=?", (oid,))
+    execute("DELETE FROM shipment_issue WHERE order_id=?", (oid,))
+    execute("UPDATE shipment_issue SET linked_reship_order_id=NULL WHERE linked_reship_order_id=?", (oid,))
+    execute("UPDATE review_queue SET resolved_order_id=NULL WHERE resolved_order_id=?", (oid,))
+    execute('DELETE FROM "order" WHERE order_id=?', (oid,))  # order_line / sales_return 靠 ON DELETE CASCADE 一起清掉
+    return RedirectResponse("/orders?deleted=1", status_code=303)
 
 @app.post("/orders/{oid}/paid")
 async def order_mark_paid(request: Request, oid: int):
@@ -1308,13 +1325,12 @@ async def issue_update(request: Request, iid: int):
             (resolution, (f.get("reason_note") or "").strip() or si["reason_note"], iid))
     if f.get("make_reship") == "1" and not si["linked_reship_order_id"]:
         o, lines = Q.order_get(si["order_id"])
-        n = q("SELECT COUNT(*) c FROM \"order\"")[0]["c"] + 1
         noid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,
                           order_kind,order_total,payment_method,payment_status,
                           ship_method,ship_status,note)
                           VALUES(?,?,?,?,?, '理賠重寄', 0, '未收款', '免收款',
                                  '自行配送', '待出貨', ?)""",
-                       (f"S{n:04d}", dt.date.today().isoformat(), o["season"], o["customer_id"],
+                       (next_order_no(), dt.date.today().isoformat(), o["season"], o["customer_id"],
                         o["channel_id"], f"由 {o['order_no']} 的{si['issue_type']}理賠重寄"))
         for l in lines:
             execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift)
