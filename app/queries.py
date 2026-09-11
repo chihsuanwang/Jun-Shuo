@@ -270,7 +270,8 @@ def orders_list(flt="all", kw=""):
     a = as_of()
     fc, fp = orders_filter(flt, kw)
     sql = f"""SELECT o.order_id, o.order_no, o.order_date, o.order_kind, o.order_total,
-                     o.payment_status, o.ship_status, o.invoiced, cu.display_name cust,
+                     o.payment_status, o.ship_status, o.invoiced, o.paid_amount,
+                     o.shipping_cost_actual, o.ship_payer, cu.display_name cust,
                      (SELECT c.name FROM channel c WHERE c.channel_id=o.channel_id) chan,
                      CAST(julianday(?)-julianday(o.order_date) AS INT) age
               FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id

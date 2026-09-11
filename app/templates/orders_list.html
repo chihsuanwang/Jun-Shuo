@@ -25,7 +25,7 @@
 
 <div class="card">
   <table>
-    <thead><tr><th>單號</th><th>日期</th><th>客戶</th><th>管道</th><th>種類</th><th>金額</th><th>收款</th><th>出貨</th><th>發票</th><th>成立天數</th></tr></thead>
+    <thead><tr><th>單號</th><th>日期</th><th>客戶</th><th>管道</th><th>種類</th><th>金額</th><th>收款</th><th>實收</th><th>出貨</th><th>運費</th><th>運費誰付</th><th>發票</th></tr></thead>
     <tbody>{% for r in rows %}
       <tr>
         <td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td>
@@ -35,11 +35,13 @@
         <td>{{ r.order_kind }}</td>
         <td>{{ r.order_total|money }}</td>
         <td class="{{ 'neg' if r.payment_status in ('待收款','部分收款') }}">{{ r.payment_status }}</td>
+        <td>{{ r.paid_amount|money if r.paid_amount is not none else '—' }}</td>
         <td class="{{ 'neg' if r.ship_status in ('待出貨','退回','遺失','破損') }}">{{ r.ship_status }}</td>
+        <td>{{ r.shipping_cost_actual|money }}</td>
+        <td>{{ r.ship_payer }}</td>
         <td class="{{ 'muted' if not r.invoiced }}">{{ '已開' if r.invoiced else '未開' }}</td>
-        <td class="{{ 'neg' if r.age > 30 and r.payment_status=='待收款' }}">{{ r.age }}</td>
       </tr>
-    {% else %}<tr><td colspan="10" class="muted" style="text-align:left">沒有符合的訂單。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="12" class="muted" style="text-align:left">沒有符合的訂單。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
 {% endblock %}
