@@ -82,7 +82,7 @@
     <tfoot><tr><td colspan="4" class="r"><b>應收合計(不含贈品)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="2"></td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
-  <p class="muted" style="font-size:11px;margin-top:6px">改完按下方「儲存」,應收合計會重算。</p>
+  <p class="muted" style="font-size:11px;margin-top:6px">改完按上方「儲存」,應收合計會重算。</p>
 </div>
 
 <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
@@ -124,8 +124,6 @@
   </div>
 </div>
 <div class="card" style="margin-bottom:16px"><label>備註</label><input name="note" value="{{ o.note or '' }}"></div>
-<button type="submit">儲存</button>
-<a href="/orders" style="margin-left:12px">回列表</a>
 </form>
 
 <div class="card" style="margin:18px 0 16px">
