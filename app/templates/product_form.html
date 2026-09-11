@@ -6,6 +6,7 @@
   <h1 class="serif">{{ p.name if p else '新增商品' }}</h1>
 </div></div>
 <hr class="rule">
+{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這個商品已經有訂單或進出貨紀錄,沒辦法刪除,可以改成「停售」。</div>{% endif %}
 
 <form method="post" action="/products">
 {% if p %}<input type="hidden" name="product_id" value="{{ p.product_id }}">{% endif %}
@@ -49,5 +50,9 @@
 
 <button type="submit">儲存</button>
 <a href="/products" style="margin-left:12px">取消</a>
+{% if p %}
+<button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
+        onclick="return confirm('刪除商品「{{ p.name }}」?已經有訂單、進出貨紀錄的商品沒辦法刪除,只能改「停售」。')">刪除</button>
+{% endif %}
 </form>
 {% endblock %}

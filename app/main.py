@@ -629,6 +629,22 @@ def product_edit(request: Request, pid: int):
 @app.post("/products")
 async def product_save(request: Request):
     f = await request.form()
+    if f.get("_delete"):
+        pid = f.get("product_id")
+        if pid:
+            pid = int(pid)
+            used = (
+                q("SELECT 1 FROM order_line WHERE product_id=? LIMIT 1", (pid,)) or
+                q("SELECT 1 FROM stock_move WHERE product_id=? LIMIT 1", (pid,)) or
+                q("SELECT 1 FROM sales_return WHERE product_id=? LIMIT 1", (pid,)) or
+                q("SELECT 1 FROM batch WHERE product_id=? LIMIT 1", (pid,)) or
+                q("SELECT 1 FROM sales_target WHERE product_id=? LIMIT 1", (pid,))
+            )
+            if used:
+                return RedirectResponse(f"/products/{pid}/edit?perr=1", status_code=303)
+            execute("DELETE FROM price_list WHERE product_id=?", (pid,))
+            execute("DELETE FROM product WHERE product_id=?", (pid,))
+        return RedirectResponse("/products", status_code=303)
     g = lambda k: (f.get(k) or "").strip() or None
     ig = lambda k: int(f.get(k)) if (f.get(k) or "").strip() else None
     cols = dict(sku=(f.get("sku") or "").strip(), name=(f.get("name") or "").strip(),
