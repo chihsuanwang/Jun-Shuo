@@ -2,7 +2,7 @@
 {% block title %}庫存異動明細 · 桂圓帳房{% endblock %}
 {% block body %}
 <div class="head">
-  <div><div class="sup"><a href="/batches">焙製批次與庫存</a> / 異動明細</div><h1 class="serif">庫存異動明細</h1></div>
+  <div><div class="sup"><a href="/stock">庫存</a> / 異動明細</div><h1 class="serif">庫存異動明細</h1></div>
 </div>
 <hr class="rule">
 
@@ -15,18 +15,17 @@
 
 <div class="card">
   <table>
-    <thead><tr><th>日期</th><th>商品</th><th>批次</th><th>類型</th><th>數量</th><th>關聯訂單</th><th style="text-align:left">備註</th></tr></thead>
+    <thead><tr><th>日期</th><th>商品</th><th>類型</th><th>數量</th><th>關聯訂單</th><th style="text-align:left">備註</th></tr></thead>
     <tbody>{% for r in rows %}
       <tr>
         <td>{{ r.move_date }}</td>
         <td style="text-align:left">{{ r.sku }} · {{ r.pname }}</td>
-        <td>{{ r.batch_code or '—' }}</td>
         <td>{{ r.move_type }}</td>
         <td class="{{ 'neg' if r.qty < 0 else 'pos' }}">{{ r.qty|round(0) }}</td>
         <td>{% if r.order_no %}<a href="/orders/{{ r.ref_order_id }}">{{ r.order_no }}</a>{% else %}—{% endif %}</td>
         <td style="text-align:left" class="muted">{{ r.note or '' }}</td>
       </tr>
-    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">沒有異動紀錄。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">沒有異動紀錄。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
 {% endblock %}

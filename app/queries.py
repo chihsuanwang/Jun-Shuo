@@ -71,9 +71,9 @@ def kpi(season=None, asof=None):
     sc, sp = _S(season)
     rev = q1(f"SELECT COALESCE(SUM(o.paid_amount),0) v FROM \"order\" o WHERE {sc} AND order_kind='銷售' AND {PAID_O}", sp)["v"]
     m = q1(f"""SELECT COALESCE(SUM(ol.line_subtotal),0) rev,
-                      COALESCE(SUM(ol.qty*COALESCE(b.unit_cost,0)),0) cogs
+                      COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) cogs
                FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-               LEFT JOIN batch b ON b.batch_id=ol.batch_id
+               JOIN product p ON p.product_id=ol.product_id
                WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}""", sp)
     ret_gross, ret_cogs = _returns_agg(season)
     net_rev = m["rev"] - ret_gross
@@ -83,9 +83,9 @@ def kpi(season=None, asof=None):
     ship_cost = q1(f"SELECT COALESCE(SUM(shipping_cost_actual),0) v FROM \"order\" o WHERE {sc}", sp)["v"]
     ar = q1(f"""SELECT COALESCE(SUM(order_total - COALESCE(paid_amount,0)),0) v, COUNT(*) n FROM "order" o
                 WHERE {sc} AND payment_status IN ('待收款','部分收款')""", sp)
-    pr = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(b.unit_cost,0)),0) v
+    pr = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
                 FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-                LEFT JOIN batch b ON b.batch_id=ol.batch_id
+                JOIN product p ON p.product_id=ol.product_id
                 WHERE {sc} AND o.order_kind<>'銷售'""", sp)["v"]
     return dict(
         revenue=rev, returns=ret_gross, net_revenue=net_rev,
@@ -118,14 +118,6 @@ def alerts(season=None, asof=None):
                 WHERE issue_type IN ('破損','遺失') AND (resolution IS NULL OR resolution='')""")
     if iss["n"]:
         out.append({"text": f"破損 / 遺失待處理 {iss['n']} 件", "href": "/issues"})
-    near = q1("""SELECT b.batch_code,
-                        julianday(MIN(date(b.mfg_date,'+'||p.shelf_life_days||' days'))) - julianday(?) days
-                 FROM batch b JOIN order_line ol ON ol.batch_id=b.batch_id
-                 JOIN product p ON p.product_id=ol.product_id
-                 GROUP BY b.batch_code HAVING days BETWEEN 0 AND 60
-                 ORDER BY days LIMIT 1""", (a,))
-    if near:
-        out.append({"text": f"批 {near['batch_code']} 約 {near['days']:.0f} 天到期", "href": "/reports?tab=batch"})
     d = q1(f"""SELECT
                  COALESCE(SUM(o.discount_total),0)
                  + COALESCE(SUM(CASE WHEN ol.list_price>ol.unit_price
@@ -158,9 +150,9 @@ def monthly(season=None):
                      FROM "order" o WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}
                      GROUP BY ym""", sp)
     cogs_rows = q(f"""SELECT strftime('%Y-%m', o.order_date) ym,
-                             COALESCE(SUM(ol.qty*COALESCE(b.unit_cost,0)),0) cogs
+                             COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) cogs
                       FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-                      LEFT JOIN batch b ON b.batch_id=ol.batch_id
+                      JOIN product p ON p.product_id=ol.product_id
                       WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}
                       GROUP BY ym""", sp)
     cogs_map = {r["ym"]: r["cogs"] for r in cogs_rows}
@@ -169,8 +161,8 @@ def monthly(season=None):
     rmap = {r["ym"]: r for r in q(f"""SELECT strftime('%Y-%m', sr.return_date) ym,
                 COALESCE(SUM(sr.amount),0) ret,
                 COALESCE(SUM(CASE WHEN sr.restock=1
-                     THEN COALESCE(sr.qty,0)*COALESCE(b.unit_cost,0) ELSE 0 END),0) rcogs
-              FROM sales_return sr LEFT JOIN batch b ON b.batch_id=sr.batch_id
+                     THEN COALESCE(sr.qty,0)*COALESCE(p.unit_cost,0) ELSE 0 END),0) rcogs
+              FROM sales_return sr LEFT JOIN product p ON p.product_id=sr.product_id
               WHERE {rc} GROUP BY ym""", rp)}
     by_ym = {r["ym"]: r for r in rows}
     for ym, x in rmap.items():
@@ -190,8 +182,8 @@ def by_channel(season=None):
         (SELECT COUNT(*) FROM "order" o WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') orders,
         (SELECT COALESCE(SUM(ol.line_subtotal),0) FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
            WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') rev,
-        (SELECT COALESCE(SUM(ol.qty*COALESCE(b.unit_cost,0)),0) FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-           LEFT JOIN batch b ON b.batch_id=ol.batch_id
+        (SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
+           JOIN product p ON p.product_id=ol.product_id
            WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') cogs
         FROM channel c""", sp * 3)
     for r in rows:
@@ -285,9 +277,8 @@ def order_get(oid):
                      (SELECT name FROM channel WHERE channel_id=o.channel_id) chan
               FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
               WHERE o.order_id=?""", (oid,))
-    lines = q("""SELECT ol.*, p.name pname, p.uom, b.batch_code
+    lines = q("""SELECT ol.*, p.name pname, p.uom
                  FROM order_line ol JOIN product p ON p.product_id=ol.product_id
-                 LEFT JOIN batch b ON b.batch_id=ol.batch_id
                  WHERE ol.order_id=? ORDER BY ol.line_id""", (oid,))
     return o, lines
 
@@ -311,42 +302,14 @@ def profit_by_product(season=None):
                         SUM(ol.line_subtotal) rev,
                         SUM(CASE WHEN ol.list_price>ol.unit_price
                                  THEN (ol.list_price-ol.unit_price)*ol.qty ELSE 0 END) disc,
-                        AVG(NULLIF(b.unit_cost,0)) unit_cost,
-                        SUM(ol.line_subtotal - ol.qty*COALESCE(b.unit_cost,0)) gp,
+                        AVG(NULLIF(p.unit_cost,0)) unit_cost,
+                        SUM(ol.line_subtotal - ol.qty*COALESCE(p.unit_cost,0)) gp,
                         AVG(NULLIF(ol.unit_price,0)) avg_price,
                         AVG(NULLIF(ol.list_price,0)) list_price
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
-                 LEFT JOIN batch b ON b.batch_id=ol.batch_id
                  WHERE {sc} AND o.order_kind='銷售' AND ol.is_gift=0
                  GROUP BY p.name ORDER BY rev DESC""", sp)
-
-
-# ---------- 報表:批次與效期 -----------------------------------
-def batch_report(season=None, asof=None):
-    a = as_of(asof)
-    sc, sp = _S(season, alias="b")
-    rows = q(f"""SELECT b.batch_id, b.batch_code, b.season, b.output_qty, b.output_uom, b.mfg_date,
-                        b.unit_cost,
-                        (SELECT p.name FROM product p WHERE p.product_id=b.product_id) pname,
-                        COALESCE(
-                          (SELECT p.shelf_life_days FROM product p WHERE p.product_id=b.product_id),
-                          (SELECT MIN(p.shelf_life_days) FROM order_line ol JOIN product p
-                             ON p.product_id=ol.product_id WHERE ol.batch_id=b.batch_id)
-                        ) shelf,
-                        COALESCE((SELECT SUM(ol.qty) FROM order_line ol WHERE ol.batch_id=b.batch_id),0) sold
-                 FROM batch b WHERE {sc} ORDER BY b.batch_code""", sp)
-    for r in rows:
-        r["remain"] = (r["output_qty"] or 0) - r["sold"]
-        r["rate"] = (r["sold"] / r["output_qty"]) if r["output_qty"] else 0
-        r["remain_value"] = r["remain"] * (r["unit_cost"] or 0)
-        if r["mfg_date"] and r["shelf"]:
-            exp = (dt.date.fromisoformat(r["mfg_date"]) + dt.timedelta(days=r["shelf"]))
-            r["expiry"] = exp.isoformat()
-            r["days_left"] = (exp - dt.date.fromisoformat(a)).days
-        else:
-            r["expiry"], r["days_left"] = None, None
-    return rows
 
 
 # ---------- 報表:跨產季比較(YoY) ---------------------------
@@ -454,9 +417,9 @@ def finance_months(season=None):
 def finance_month(ym):
     rev = q1(f"""SELECT COALESCE(SUM(paid_amount),0) v FROM "order" o
                 WHERE order_kind='銷售' AND {PAID_O} AND strftime('%Y-%m',order_date)=?""", (ym,))["v"]
-    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(b.unit_cost,0)),0) v
+    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-                 LEFT JOIN batch b ON b.batch_id=ol.batch_id
+                 JOIN product p ON p.product_id=ol.product_id
                  WHERE o.order_kind='銷售' AND {PAID_O} AND strftime('%Y-%m',o.order_date)=?""", (ym,))["v"]
     ship_cost = q1("""SELECT COALESCE(SUM(shipping_cost_actual),0) v
                        FROM "order" WHERE strftime('%Y-%m',order_date)=?""", (ym,))["v"]
@@ -520,16 +483,16 @@ def _returns_agg(season):
     sc, sp = _S(season, alias="sr")
     r = q1(f"""SELECT COALESCE(SUM(sr.amount),0) gross,
                       COALESCE(SUM(CASE WHEN sr.restock=1
-                           THEN COALESCE(sr.qty,0)*COALESCE(b.unit_cost,0) ELSE 0 END),0) cogs_back
-               FROM sales_return sr LEFT JOIN batch b ON b.batch_id=sr.batch_id
+                           THEN COALESCE(sr.qty,0)*COALESCE(p.unit_cost,0) ELSE 0 END),0) cogs_back
+               FROM sales_return sr LEFT JOIN product p ON p.product_id=sr.product_id
                WHERE {sc}""", sp)
     return r["gross"], r["cogs_back"]
 
 def _returns_month(ym):
     r = q1("""SELECT COALESCE(SUM(sr.amount),0) gross,
                      COALESCE(SUM(CASE WHEN sr.restock=1
-                          THEN COALESCE(sr.qty,0)*COALESCE(b.unit_cost,0) ELSE 0 END),0) cogs_back
-              FROM sales_return sr LEFT JOIN batch b ON b.batch_id=sr.batch_id
+                          THEN COALESCE(sr.qty,0)*COALESCE(p.unit_cost,0) ELSE 0 END),0) cogs_back
+              FROM sales_return sr LEFT JOIN product p ON p.product_id=sr.product_id
               WHERE strftime('%Y-%m', sr.return_date)=?""", (ym,))
     return r["gross"], r["cogs_back"]
 
@@ -538,12 +501,11 @@ def returns_list(order_id=None):
     where = "sr.order_id=?" if order_id else "1=1"
     args = (order_id,) if order_id else ()
     return q(f"""SELECT sr.*, o.order_no, cu.display_name cust,
-                        p.name pname, p.uom, bt.batch_code
+                        p.name pname, p.uom
                  FROM sales_return sr
                  JOIN "order" o ON o.order_id=sr.order_id
                  LEFT JOIN customer cu ON cu.customer_id=o.customer_id
                  LEFT JOIN product p ON p.product_id=sr.product_id
-                 LEFT JOIN batch bt ON bt.batch_id=sr.batch_id
                  WHERE {where}
                  ORDER BY sr.return_date DESC, sr.return_id DESC""", args)
 
@@ -553,9 +515,9 @@ def season_finance(season):
     銷貨退回 / 折讓依「發生產季」沖減(cogs 為回沖後淨額)。"""
     rev = q1(f"""SELECT COALESCE(SUM(paid_amount),0) v FROM "order" o
                 WHERE season=? AND order_kind='銷售' AND {PAID_O}""", (season,))["v"]
-    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(b.unit_cost,0)),0) v
+    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-                 LEFT JOIN batch b ON b.batch_id=ol.batch_id
+                 JOIN product p ON p.product_id=ol.product_id
                  WHERE o.season=? AND o.order_kind='銷售' AND {PAID_O}""", (season,))["v"]
     ship_cost = q1("""SELECT COALESCE(SUM(shipping_cost_actual),0) v
                        FROM "order" WHERE season=?""", (season,))["v"]
@@ -598,14 +560,13 @@ def product_line_pnl(season=None, basis="rev"):
                           direct_labor=0.0, field=0.0, cert=0.0, rnd=0.0,
                           dep=0.0, other_line=0.0) for g in groups}
 
-    # 營收 / 銷量 / 批次直接材料
+    # 營收 / 銷量 / 直接材料(商品單位成本)
     for r in q(f"""SELECT p.product_group_id pg, ol.qty,
                           ol.line_subtotal sub,
-                          ol.qty * COALESCE(bt.unit_cost,0) bcost
+                          ol.qty * COALESCE(p.unit_cost,0) bcost
                    FROM order_line ol
                    JOIN "order" o ON o.order_id=ol.order_id
                    JOIN product p ON p.product_id=ol.product_id
-                   LEFT JOIN batch bt ON bt.batch_id=ol.batch_id
                    WHERE {sc} AND o.order_kind='銷售'""", sp):
         g = L.get(r["pg"])
         if not g:
@@ -634,10 +595,9 @@ def product_line_pnl(season=None, basis="rev"):
     # 銷貨退回 / 折讓:有 product_id → 歸該線;純折讓(無品項)→ 依原單各線營收佔比分攤(僅金額)
     rc, rp = _S(season, alias="sr")
     for r in q(f"""SELECT sr.order_id oid, sr.amount, sr.qty, sr.restock,
-                          COALESCE(bt.unit_cost,0) ucost, p.product_group_id pg
+                          COALESCE(p.unit_cost,0) ucost, p.product_group_id pg
                    FROM sales_return sr
                    LEFT JOIN product p ON p.product_id=sr.product_id
-                   LEFT JOIN batch bt ON bt.batch_id=sr.batch_id
                    WHERE {rc}""", rp):
         amt = r["amount"] or 0
         back = (r["qty"] or 0) * r["ucost"] if r["restock"] else 0
@@ -676,7 +636,7 @@ def product_line_pnl(season=None, basis="rev"):
     out = list(L.values())
     for g in out:
         g["direct_material"] = g["dm_batch"] if g["dm_batch"] > 0 else g["dm_purchase"]
-        g["dm_from"] = "批次成本" if g["dm_batch"] > 0 else ("進貨估算" if g["dm_purchase"] else "—")
+        g["dm_from"] = "商品單位成本" if g["dm_batch"] > 0 else ("進貨估算" if g["dm_purchase"] else "—")
         g["line_opex"] = (g["direct_labor"] + g["field"] + g["cert"] + g["rnd"]
                           + g["dep"] + g["other_line"])
         g["net_revenue"] = g["revenue"] - g["returns"]
@@ -802,26 +762,7 @@ def stock_on_hand():
     for r in rows:
         thr = r["low_stock"] if r["low_stock"] is not None else 0
         r["low"] = r["on_hand"] <= thr
-        # 只列「還有正庫存」的批次,依製造日(舊到新 = 先出)排序
-        r["by_batch"] = q("""SELECT COALESCE(b.batch_code,'(未指定)') batch_code,
-                                    SUM(sm.qty) qty,
-                                    MAX(b.mfg_date) mfg_date
-                             FROM stock_move sm LEFT JOIN batch b ON b.batch_id=sm.batch_id
-                             WHERE sm.product_id=? GROUP BY sm.batch_id
-                             HAVING SUM(sm.qty) > 0.0001
-                             ORDER BY mfg_date""", (r["product_id"],))
-        r["oldest"] = r["by_batch"][0] if r["by_batch"] else None
     return rows
-
-def oldest_batch_for_product(product_id):
-    """該商品目前還有庫存的批次中,製造日最舊的一批(先進先出)。沒有批次資料回傳 None。"""
-    rows = q("""SELECT sm.batch_id, SUM(sm.qty) remain, MAX(b.mfg_date) mfg_date
-                FROM stock_move sm LEFT JOIN batch b ON b.batch_id=sm.batch_id
-                WHERE sm.product_id=? AND sm.batch_id IS NOT NULL
-                GROUP BY sm.batch_id
-                HAVING SUM(sm.qty) > 0.0001
-                ORDER BY mfg_date""", (product_id,))
-    return rows[0]["batch_id"] if rows else None
 
 
 def stock_on_hand_map():
@@ -837,11 +778,9 @@ def stock_moves(product_id=None, mtype=None, limit=400):
         where.append("sm.product_id=?"); args.append(int(product_id))
     if mtype:
         where.append("sm.move_type=?"); args.append(mtype)
-    return q(f"""SELECT sm.*, p.sku, p.name pname, p.uom,
-                        b.batch_code, o.order_no
+    return q(f"""SELECT sm.*, p.sku, p.name pname, p.uom, o.order_no
                  FROM stock_move sm
                  JOIN product p ON p.product_id=sm.product_id
-                 LEFT JOIN batch b ON b.batch_id=sm.batch_id
                  LEFT JOIN "order" o ON o.order_id=sm.ref_order_id
                  WHERE {' AND '.join(where)}
                  ORDER BY sm.move_date DESC, sm.move_id DESC LIMIT ?""", args + [limit])
@@ -873,9 +812,8 @@ def shipping_orders(scope="pending", date=None):
                    FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
                    WHERE {' AND '.join(where)} ORDER BY o.order_date, o.order_no""", args)
     for o in orders:
-        o["lines"] = q("""SELECT p.name pname, p.uom, p.type_code_raw spec, ol.qty, b.batch_code
+        o["lines"] = q("""SELECT p.name pname, p.uom, p.type_code_raw spec, ol.qty
                           FROM order_line ol JOIN product p ON p.product_id=ol.product_id
-                          LEFT JOIN batch b ON b.batch_id=ol.batch_id
                           WHERE ol.order_id=? ORDER BY ol.line_id""", (o["order_id"],))
     ids = [o["order_id"] for o in orders]
     summary = []

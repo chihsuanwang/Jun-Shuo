@@ -66,10 +66,10 @@ for p in products:
     status = "停售" if sku == "GY-DRY-500" else "在售"
     c.execute("""INSERT INTO product(sku,name,product_type,type_code_raw,net_weight_g,gross_weight_g,
                  package_form,uom,grams_per_uom,shelf_life_days,gift_only,ingredients,origin,status,low_stock,
-                 product_group_id)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 product_group_id,unit_cost)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10],
-               ingredients, "南投中寮", status, low, pg[p[13]]))
+               ingredients, "南投中寮", status, low, pg[p[13]], p[14]))
     pid = c.lastrowid
     prod[sku] = dict(id=pid, retail=p[11], wholesale=p[12], unit_cost=p[14], uom=p[7])
     for seg, price in (("零售", p[11]), ("批發", p[12]), ("團購", round(p[11] * 0.95)),

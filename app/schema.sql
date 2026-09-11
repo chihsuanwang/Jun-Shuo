@@ -45,6 +45,7 @@ CREATE TABLE product (
   status          TEXT    NOT NULL DEFAULT '在售' CHECK (status IN ('在售','停售')),
   low_stock       INTEGER,              -- 低庫存警戒量;NULL = 不設
   product_group_id INTEGER REFERENCES product_group(pg_id),   -- 歸屬產品群組;NULL = 尚未歸類
+  unit_cost       REAL    NOT NULL DEFAULT 0,   -- 每單位成本(算毛利用,不分批次)
   note            TEXT
 );
 

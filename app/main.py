@@ -101,6 +101,16 @@ def migrate_db():
         if "ship_payer" not in ocols:
             execute('ALTER TABLE "order" ADD COLUMN ship_payer TEXT NOT NULL DEFAULT \'店家吸收\'')
             print("[migrate] order.ship_payer 已補上")
+        pcols = [r["name"] for r in q("PRAGMA table_info(product)")]
+        if "unit_cost" not in pcols:
+            execute("ALTER TABLE product ADD COLUMN unit_cost REAL NOT NULL DEFAULT 0")
+            # 用舊批次資料的平均單位成本幫忙帶一個初值,之後可在商品目錄手動調整
+            for r in q("""SELECT ol.product_id pid, AVG(b.unit_cost) v
+                          FROM order_line ol JOIN batch b ON b.batch_id=ol.batch_id
+                          WHERE b.unit_cost IS NOT NULL AND b.unit_cost > 0
+                          GROUP BY ol.product_id"""):
+                execute("UPDATE product SET unit_cost=? WHERE product_id=?", (r["v"], r["pid"]))
+            print("[migrate] product.unit_cost 已補上(用舊批次成本帶初值)")
         execute("CREATE TABLE IF NOT EXISTS pricing_param (key TEXT PRIMARY KEY, value REAL NOT NULL)")
         execute("""CREATE TABLE IF NOT EXISTS sales_return (
           return_id    INTEGER PRIMARY KEY,
@@ -655,6 +665,7 @@ async def product_save(request: Request):
                 storage_condition=g("storage_condition"), ingredients=g("ingredients"),
                 origin=g("origin"), barcode=g("barcode"),
                 gift_only=1 if f.get("gift_only") else 0,
+                unit_cost=(float(f.get("unit_cost")) if (f.get("unit_cost") or "").strip() else 0),
                 status=(f.get("status") or "在售").strip(), note=g("note"))
     pid = f.get("product_id")
     if pid:
@@ -672,56 +683,6 @@ async def product_save(request: Request):
             execute("""INSERT INTO price_list(product_id,customer_segment,unit_price,effective_from)
                        VALUES(?,?,?,'2000-01-01')""", (pid, seg, float(v)))
     return RedirectResponse("/products", status_code=303)
-
-
-# ---------- 批次 -------------------------------------------
-@app.get("/batches", response_class=HTMLResponse)
-def batches_page(request: Request):
-    rows = Q.batch_report(None, "latest")
-    rows.sort(key=lambda r: r["batch_code"], reverse=True)
-    return tpl.TemplateResponse("batches.html", dict(
-        request=request, active="batch", rows=rows,
-        stock_rows=Q.stock_on_hand(),
-        products=q("SELECT product_id,sku,name FROM product WHERE status='在售' ORDER BY sku"),
-        batch_opts=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code DESC"),
-        in_types=STOCK_IN_TYPES, adj_types=STOCK_ADJ_TYPES))
-
-@app.get("/batches/new", response_class=HTMLResponse)
-def batch_new(request: Request):
-    return tpl.TemplateResponse("batch_form.html", dict(
-        request=request, active="batch", b=None,
-        default_season=Q.season_of(dt.date.today().isoformat()),
-        products=q("SELECT product_id,name FROM product ORDER BY name")))
-
-@app.get("/batches/{bid}/edit", response_class=HTMLResponse)
-def batch_edit(request: Request, bid: int):
-    b = q("SELECT * FROM batch WHERE batch_id=?", (bid,))
-    if not b:
-        return RedirectResponse("/batches", status_code=303)
-    return tpl.TemplateResponse("batch_form.html", dict(
-        request=request, active="batch", b=b[0],
-        products=q("SELECT product_id,name FROM product ORDER BY name")))
-
-@app.post("/batches")
-async def batch_save(request: Request):
-    f = await request.form()
-    g = lambda k: (f.get(k) or "").strip() or None
-    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else None
-    cols = dict(batch_code=(f.get("batch_code") or "").strip(),
-                season=int(f.get("season") or Q.season_of(dt.date.today().isoformat())),
-                product_id=(int(f.get("product_id")) if f.get("product_id") else None),
-                roast_start=g("roast_start"), roast_end=g("roast_end"),
-                raw_source=g("raw_source"), raw_input_kg=fl("raw_input_kg"),
-                output_qty=fl("output_qty"), output_uom=(f.get("output_uom") or "份").strip(),
-                mfg_date=g("mfg_date"), unit_cost=fl("unit_cost"), note=g("note"))
-    bid = f.get("batch_id")
-    if bid:
-        sets = ",".join(f"{k}=:{k}" for k in cols)
-        execute(f"UPDATE batch SET {sets} WHERE batch_id=:id", {**cols, "id": int(bid)})
-    else:
-        keys = ",".join(cols)
-        execute(f"INSERT INTO batch({keys}) VALUES({','.join(':'+k for k in cols)})", cols)
-    return RedirectResponse("/batches", status_code=303)
 
 
 # ---------- 通路 -------------------------------------------
@@ -984,7 +945,6 @@ def order_new(request: Request):
         request=request, active="order", customers=customers,
         channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id"),
         products=q("SELECT product_id,sku,name,uom FROM product WHERE status='在售' ORDER BY sku"),
-        batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code"),
         today=dt.date.today().isoformat(),
         prices_json=json.dumps(prices), cust_seg_json=json.dumps(cust_seg),
         stock_json=json.dumps(Q.stock_on_hand_map()), ship_payers=SHIP_PAYERS,
@@ -1014,7 +974,7 @@ async def order_create(request: Request):
                 for r in q("SELECT product_id,unit_price FROM price_list WHERE customer_segment=? AND channel_id IS NULL", (pseg,))}
 
     prods = f.getlist("product_id"); qtys = f.getlist("qty")
-    ups   = f.getlist("unit_price"); bats = f.getlist("batch_id")
+    ups   = f.getlist("unit_price")
     lines = []
     for i, p in enumerate(prods):
         if not p:
@@ -1033,9 +993,7 @@ async def order_create(request: Request):
             up = None
         if up is None:                       # 沒填單價 -> 帶標準價
             up = lp if (lp is not None and order_kind == "銷售") else 0
-        b = bats[i] if i < len(bats) and bats[i] else None
-        b = int(b) if b else Q.oldest_batch_for_product(pid)  # 沒指定批次 -> 自動抓現貨最舊的一批(先進先出)
-        lines.append((pid, qv, up, b, lp))
+        lines.append((pid, qv, up, None, lp))
 
     discount_total = flt("discount_total")
     subtotal = sum(qv * up for _, qv, up, _, _ in lines)
@@ -1099,7 +1057,6 @@ def order_detail(request: Request, oid: int):
     return tpl.TemplateResponse("order_detail.html", dict(
         request=request, active="order", o=o, lines=lines,
         products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
-        batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code"),
         pay_methods=PAY_METHODS, pay_status=PAY_STATUS,
         ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, ship_payers=SHIP_PAYERS, kinds=ORDER_KINDS,
         returns=Q.returns_list(oid), return_kinds=RETURN_KINDS,
@@ -1196,7 +1153,7 @@ async def order_update(request: Request, oid: int):
 
     # --- 重建訂單明細 ---
     prods, qtys = f.getlist("product_id"), f.getlist("qty")
-    ups, bats, gl = f.getlist("unit_price"), f.getlist("batch_id"), f.getlist("is_gift")
+    ups, gl = f.getlist("unit_price"), f.getlist("is_gift")
     new_lines = []
     for i, p in enumerate(prods):
         if not p:
@@ -1212,10 +1169,8 @@ async def order_update(request: Request, oid: int):
         except (ValueError, IndexError):
             up = 0
         pid = int(p)
-        b = bats[i] if i < len(bats) and bats[i] else None
-        b = int(b) if b else Q.oldest_batch_for_product(pid)  # 沒指定批次 -> 自動抓現貨最舊的一批(先進先出)
         is_gift = 1 if (i < len(gl) and gl[i] == "是") else 0
-        new_lines.append((pid, qv, up if not is_gift else 0, b, is_gift))
+        new_lines.append((pid, qv, up if not is_gift else 0, None, is_gift))
     execute("DELETE FROM order_line WHERE order_id=?", (oid,))
     for p, qv, up, b, gf in new_lines:
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift)
@@ -1514,7 +1469,6 @@ def stock_page(request: Request):
         request=request, active="stock",
         rows=Q.stock_on_hand(),
         products=q("SELECT product_id,sku,name FROM product WHERE status='在售' ORDER BY sku"),
-        batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code DESC"),
         in_types=STOCK_IN_TYPES, adj_types=STOCK_ADJ_TYPES))
 
 @app.get("/stock/moves", response_class=HTMLResponse)
@@ -1533,22 +1487,20 @@ async def stock_move_add(request: Request):
         pid = int(f.get("product_id"))
         qty = float(f.get("qty") or 0)
     except (TypeError, ValueError):
-        return RedirectResponse("/batches", status_code=303)
+        return RedirectResponse("/stock", status_code=303)
     mtype = (f.get("move_type") or "分裝入庫").strip()
-    bid = f.get("batch_id")
-    bid = int(bid) if bid and bid.isdigit() else None
     if qty == 0:
-        return RedirectResponse("/batches", status_code=303)
+        return RedirectResponse("/stock", status_code=303)
     # 入庫類一律記正,調整類依使用者填的正負,損耗報廢一律記負
     if mtype in ("分裝入庫", "退貨入庫", "期初庫存"):
         qty = abs(qty)
     elif mtype == "損耗報廢":
         qty = -abs(qty)
-    execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,note)
-               VALUES(?,?,?,?,?,?)""",
-            (f.get("move_date") or dt.date.today().isoformat(), pid, bid, qty, mtype,
+    execute("""INSERT INTO stock_move(move_date,product_id,qty,move_type,note)
+               VALUES(?,?,?,?,?)""",
+            (f.get("move_date") or dt.date.today().isoformat(), pid, qty, mtype,
              (f.get("note") or "").strip() or None))
-    return RedirectResponse("/batches", status_code=303)
+    return RedirectResponse("/stock", status_code=303)
 
 
 # ---------- 出貨作業:揀貨單 / 標籤 / 食品標示 ---------------
@@ -1561,8 +1513,7 @@ def shipping_hub(request: Request):
                                   WHERE ship_status='待出貨' ORDER BY d DESC LIMIT 20""")]
     return tpl.TemplateResponse("shipping.html", dict(
         request=request, active="ship", pending=pending, dates=dates,
-        products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
-        batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code DESC")))
+        products=q("SELECT product_id,sku,name FROM product ORDER BY sku")))
 
 def _ship_scope(request):
     d = request.query_params.get("date")
@@ -1586,14 +1537,12 @@ def shipping_labels(request: Request):
 @app.get("/shipping/foodlabel", response_class=HTMLResponse)
 def shipping_foodlabel(request: Request):
     pid = request.query_params.get("product_id")
-    bid = request.query_params.get("batch_id")
     try:
         copies = max(1, min(60, int(request.query_params.get("copies", 8))))
     except ValueError:
         copies = 8
-    data = Q.food_label(int(pid), int(bid) if bid else None) if pid else None
+    data = Q.food_label(int(pid)) if pid else None
     return tpl.TemplateResponse("foodlabel.html", dict(
         request=request, active="ship", data=data, copies=copies, sender=SENDER,
         products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
-        batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code DESC"),
-        pid=pid or "", bid=bid or ""))
+        pid=pid or ""))

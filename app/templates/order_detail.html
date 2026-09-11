@@ -165,8 +165,6 @@
         <div><label>退回品項<span class="muted">（有退實體貨才選）</span></label><select name="product_id"><option value="">—</option>
           {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}</option>{% endfor %}</select></div>
         <div><label>數量</label><input name="qty" type="number" step="0.01" min="0"></div>
-        <div><label>批次</label><select name="batch_id"><option value="">—</option>
-          {% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }} 批</option>{% endfor %}</select></div>
         <div><label>貨可再賣</label><select name="restock">
           <option value="">否(折讓 / 報廢)</option><option value="1">是,加回庫存</option></select></div>
         <div style="grid-column:1/-1"><label>原因</label><input name="reason" placeholder="客訴 / 破損 / 客戶退貨 …"></div>

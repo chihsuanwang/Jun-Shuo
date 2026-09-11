@@ -30,6 +30,7 @@
       {% for s in storage %}<option {{ 'selected' if p and p.storage_condition==s }}>{{ s }}</option>{% endfor %}</select></div>
     <div><label>原料成分</label><input name="ingredients" value="{{ p.ingredients if p else '龍眼(南投中寮)' }}"></div>
     <div><label>國際條碼</label><input name="barcode" value="{{ p.barcode if p else '' }}"></div>
+    <div><label>單位成本(算毛利用)</label><input name="unit_cost" type="number" step="1" min="0" value="{{ p.unit_cost|round(0) if p and p.unit_cost else 0 }}"></div>
     <div><label>狀態</label><select name="status">
       <option {{ 'selected' if p and p.status=='在售' }}>在售</option>
       <option {{ 'selected' if p and p.status=='停售' }}>停售</option></select></div>
