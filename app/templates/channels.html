@@ -8,15 +8,15 @@
 <hr class="rule">
 <div class="card">
   <table>
-    <thead><tr><th>代碼</th><th>名稱</th><th>分類</th><th>抽成</th><th>帳期(天)</th><th>訂單數</th><th></th></tr></thead>
+    <thead><tr><th>代碼</th><th>名稱</th><th>分類</th><th>帳期(天)</th><th>訂單數</th><th></th></tr></thead>
     <tbody>{% for r in rows %}
       <tr>
         <td>{{ r.code }}</td><td>{{ r.name }}</td><td>{{ r.category or '' }}</td>
-        <td>{{ (r.commission_pct*100)|round(1) }}%</td><td>{{ r.settlement_lag_days }}</td>
+        <td>{{ r.settlement_lag_days }}</td>
         <td>{{ r.n_orders }}</td>
         <td><a href="/channels/{{ r.channel_id }}/edit">編輯</a></td>
       </tr>
-    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">尚無管道。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">尚無管道。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
 {% endblock %}

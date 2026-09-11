@@ -147,8 +147,9 @@ CREATE TABLE "order" (
                   CHECK (payment_status IN ('待收款','部分收款','已收款','免收款')),
   paid_date       TEXT,
   paid_amount     REAL,
-  tax_doc_type    TEXT CHECK (tax_doc_type IN ('電子發票二聯','電子發票三聯','農民收據','免開立')),
-  tax_doc_no      TEXT,
+  tax_doc_type    TEXT CHECK (tax_doc_type IN ('電子發票二聯','電子發票三聯','農民收據','免開立')),  -- 舊欄位,畫面已不用
+  invoiced        INTEGER NOT NULL DEFAULT 0 CHECK (invoiced IN (0,1)),  -- 這筆有沒有開發票(單純記錄,不算稅)
+  tax_doc_no      TEXT,                 -- 發票號碼(選填,已開發票才有意義)
   -- 物流
   ship_method     TEXT CHECK (ship_method IN ('自行配送','客戶自取','宅配','超商店到店','超商賣貨便','冷藏宅配')),
   carrier         TEXT,

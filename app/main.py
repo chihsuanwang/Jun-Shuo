@@ -94,6 +94,10 @@ def migrate_db():
             execute("ALTER TABLE op_expense ADD COLUMN updated_at TEXT")
             execute("UPDATE op_expense SET updated_at=datetime('now','localtime') WHERE updated_at IS NULL")
             print("[migrate] op_expense.updated_at 已補上")
+        ocols = [r["name"] for r in q('PRAGMA table_info("order")')]
+        if "invoiced" not in ocols:
+            execute('ALTER TABLE "order" ADD COLUMN invoiced INTEGER NOT NULL DEFAULT 0')
+            print("[migrate] order.invoiced 已補上")
         execute("CREATE TABLE IF NOT EXISTS pricing_param (key TEXT PRIMARY KEY, value REAL NOT NULL)")
         execute("""CREATE TABLE IF NOT EXISTS sales_return (
           return_id    INTEGER PRIMARY KEY,
@@ -156,7 +160,6 @@ def export_order_lines(request: Request):
                         CASE ol.is_gift WHEN 1 THEN '是' ELSE '' END AS c_gift,
                         b.batch_code  AS c_batch,
                         o.discount_total AS c_odisc,
-                        o.shipping_fee_charged AS c_oship,
                         o.order_total AS c_ototal
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
@@ -165,7 +168,7 @@ def export_order_lines(request: Request):
                  LEFT JOIN batch b ON b.batch_id=ol.batch_id
                  WHERE {sc} AND {fc}
                  ORDER BY o.order_date, o.order_no, ol.line_id""", sp + fp)
-    # 訂單層欄位(折扣 / 運費 / 應收合計)只放在每張單的第一列,避免加總時重複計
+    # 訂單層欄位(折扣 / 應收合計)只放在每張單的第一列,避免加總時重複計
     seen, out = set(), []
     for r in rows:
         first = r["c_no"] not in seen
@@ -173,12 +176,12 @@ def export_order_lines(request: Request):
         out.append([r["c_no"], r["c_date"], r["c_season"], r["c_kind"], r["c_cust"],
                     r["c_channel"], r["c_sku"], r["c_product"], r["c_qty"], r["c_price"],
                     r["c_list"], r["c_subtotal"], r["c_gift"], r["c_batch"],
-                    r["c_odisc"] if first else "", r["c_oship"] if first else "",
+                    r["c_odisc"] if first else "",
                     r["c_ototal"] if first else ""])
     return csv_response("訂單明細.csv",
         ["單號","日期","產季","種類","客戶","管道","商品編號","品名",
          "數量","成交單價","定價","小計","贈品","批次",
-         "訂單折扣","訂單運費","訂單應收合計"],
+         "訂單折扣","訂單應收合計"],
         out)
 
 @app.get("/export/orders.csv")
@@ -187,18 +190,19 @@ def export_orders(request: Request):
     fc, fp = Q.orders_filter(*_orders_filter_arg(request))
     rows = q(f"""SELECT o.order_no, o.order_date, o.season, o.order_kind,
                         cu.display_name, ch.name,
-                        o.discount_total, o.shipping_fee_charged, o.platform_fee, o.order_total,
-                        o.payment_method, o.payment_status, o.paid_date,
+                        o.discount_total, o.order_total,
+                        o.payment_method, o.payment_status, o.paid_date, o.paid_amount,
                         o.ship_method, o.carrier, o.tracking_no, o.shipped_date, o.ship_status,
-                        o.shipping_cost_actual, o.tax_doc_type
+                        o.shipping_cost_actual,
+                        CASE o.invoiced WHEN 1 THEN '是' ELSE '否' END, o.tax_doc_no
                  FROM "order" o
                  LEFT JOIN customer cu ON cu.customer_id=o.customer_id
                  LEFT JOIN channel ch ON ch.channel_id=o.channel_id
                  WHERE {sc} AND {fc} ORDER BY o.order_date, o.order_no""", sp + fp)
     return csv_response("訂單.csv",
-        ["單號","日期","產季","種類","客戶","管道","折扣","向客收運費","通路抽成","應收合計",
-         "付款方式","收款狀態","收款日","出貨方式","物流商","物流單號","出貨日","出貨狀態",
-         "我方運費","單據類型"],
+        ["單號","日期","產季","種類","客戶","管道","折扣","應收合計",
+         "付款方式","收款狀態","收款日","實收金額","出貨方式","物流商","物流單號","出貨日","出貨狀態",
+         "運費","已開發票","發票號碼"],
         [list(r.values()) for r in rows])
 
 @app.get("/export/customers.csv")
@@ -281,9 +285,11 @@ def dashboard(request: Request):
     monmax = max([m["rev"] for m in mon] + [1])
     fin = Q.finance_summary(season)
     prog = Q.season_progress(season)
-    pl = Q.product_line_pnl(season, "rev")
+    # 各產品線賺不賺(pl)2026-09 暫時隱藏,先不算 —— 要恢復時把這行打開,
+    # 連同 dashboard.html 裡對應那段一起解除註解。
+    # pl = Q.product_line_pnl(season, "rev")
     return tpl.TemplateResponse("dashboard.html", dict(
-        request=request, active="dash", k=k, fin=fin, prog=prog, pl=pl,
+        request=request, active="dash", k=k, fin=fin, prog=prog,
         mon_json=json.dumps(mon), monmax=monmax,
         alerts=Q.alerts(season, asof), **ctx,
     ))
@@ -743,7 +749,6 @@ async def channel_save(request: Request):
     g = lambda k: (f.get(k) or "").strip() or None
     cols = dict(code=(f.get("code") or "").strip(), name=(f.get("name") or "").strip(),
                 category=g("category"),
-                commission_pct=float(f.get("commission_pct") or 0),
                 settlement_lag_days=int(f.get("settlement_lag_days") or 0), note=g("note"))
     chid = f.get("channel_id")
     if chid:
@@ -1012,20 +1017,22 @@ async def order_create(request: Request):
         lines.append((pid, qv, up, int(b) if b else None, lp))
 
     discount_total = flt("discount_total")
-    shipping_fee_charged = flt("shipping_fee_charged")
     subtotal = sum(qv * up for _, qv, up, _, _ in lines)
     # 每列的成交價已是實收價;discount_total 只放使用者另外填的整單折讓。
     # 「賣得比定價低」的差額改由 list_price 於報表即時計算,不重複扣。
-    total = subtotal - discount_total + shipping_fee_charged
+    # 應收金額不含運費(運費只是家易花多少錢的紀錄,不跟客人收的部分另外拆帳)。
+    total = subtotal - discount_total
+    invoiced = 1 if one("invoiced") else 0
     n = q("SELECT COUNT(*) c FROM \"order\"")[0]["c"] + 1
     oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
-                     discount_total,shipping_fee_charged,order_total,payment_method,payment_status,
-                     shipping_cost_actual,ship_method,ship_status)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨')""",
+                     discount_total,order_total,payment_method,payment_status,
+                     shipping_cost_actual,ship_method,ship_status,invoiced,tax_doc_no)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
                   (f"S{n:04d}", order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
-                   discount_total, shipping_fee_charged, total,
+                   discount_total, total,
                    one("payment_method") or None, one("payment_status", "待收款"),
-                   flt("shipping_cost_actual"), one("ship_method") or None))
+                   flt("shipping_cost_actual"), one("ship_method") or None,
+                   invoiced, one("tax_doc_no") or None))
     for p, qv, up, b, lp in lines:
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal)
                    VALUES(?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up))
@@ -1170,18 +1177,19 @@ async def order_update(request: Request, oid: int):
                    VALUES(?,?,?,?,?,?,?)""", (oid, p, b, qv, up, qv * up, gf))
 
     subtotal = sum(qv * up for _, qv, up, _, gf in new_lines if not gf)
-    disc = flt("discount_total"); fee = flt("shipping_fee_charged")
-    total = subtotal - disc + fee
+    disc = flt("discount_total")
+    total = subtotal - disc
 
     cust_id = f.get("customer_id")
     cols = dict(order_date=g("order_date"), order_kind=g("order_kind"),
                 payment_method=g("payment_method"), payment_status=g("payment_status") or "待收款",
                 paid_date=g("paid_date"), paid_amount=(flt("paid_amount") or None),
-                discount_total=disc, shipping_fee_charged=fee, order_total=total,
+                discount_total=disc, order_total=total,
                 ship_method=g("ship_method"), carrier=g("carrier"), tracking_no=g("tracking_no"),
                 shipped_date=g("shipped_date"), delivered_date=g("delivered_date"),
                 ship_status=g("ship_status") or "待出貨",
-                shipping_cost_actual=flt("shipping_cost_actual"), note=g("note"))
+                shipping_cost_actual=flt("shipping_cost_actual"), note=g("note"),
+                invoiced=(1 if f.get("invoiced") else 0), tax_doc_no=g("tax_doc_no"))
     if cust_id and cust_id.isdigit():
         cols["customer_id"] = int(cust_id)
     if cols.get("order_date"):
@@ -1215,11 +1223,22 @@ def order_copy(oid: int):
     return RedirectResponse(f"/orders/{noid}?ok=1", status_code=303)
 
 @app.post("/orders/{oid}/paid")
-def order_mark_paid(oid: int):
+async def order_mark_paid(request: Request, oid: int):
+    f = await request.form()
     o, _ = Q.order_get(oid)
-    if o:
-        execute("""UPDATE "order" SET payment_status='已收款', paid_date=?, paid_amount=?
-                   WHERE order_id=?""", (dt.date.today().isoformat(), o["order_total"], oid))
+    if not o:
+        return RedirectResponse("/orders", status_code=303)
+    try:
+        amt = float(f.get("paid_amount") or 0)
+    except ValueError:
+        amt = 0.0
+    if amt <= 0:
+        return RedirectResponse(f"/orders/{oid}?perr=1", status_code=303)
+    pdate = (f.get("paid_date") or "").strip() or dt.date.today().isoformat()
+    # 實收 >= 應收(差一點四捨五入誤差也算)→ 已收款;不足 → 部分收款
+    status = "已收款" if amt >= (o["order_total"] or 0) - 0.5 else "部分收款"
+    execute("""UPDATE "order" SET payment_status=?, paid_date=?, paid_amount=?
+               WHERE order_id=?""", (status, pdate, amt, oid))
     return RedirectResponse(f"/orders/{oid}?done=paid", status_code=303)
 
 @app.post("/orders/{oid}/shipped")
@@ -1301,8 +1320,8 @@ def finance_page(request: Request):
     for ym in Q.finance_months(season):
         d = Q.finance_month(ym)
         fin.append(dict(ym=ym, revenue=d["revenue"], returns=d["returns"], cogs=d["cogs"],
-                        gross_profit=d["gross_profit"], platform_fee=d["platform_fee"],
-                        ship_pnl=d["ship_pnl"], opex_total=d["opex_total"], pretax=d["pretax"],
+                        gross_profit=d["gross_profit"], ship_cost=d["ship_cost"],
+                        opex_total=d["opex_total"], pretax=d["pretax"],
                         opex={r["category"]: r["amt"] for r in d["opex"]}))
     return tpl.TemplateResponse("finance.html", dict(
         request=request, active="finance",

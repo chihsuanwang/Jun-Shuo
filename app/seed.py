@@ -132,30 +132,29 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
     seg = seg_to_priceseg.get(ci["seg"], "零售")
     subtotal = sum(qty * (0 if (gift or kind != "銷售") else price_of(sku, seg))
                    for sku, qty, gift in lines)
-    ship_charged = ship_cost = 0
+    ship_cost = 0
     carrier = None
     if ship_method in ("宅配", "超商店到店", "冷藏宅配"):
         carrier = "黑貓"
         ship_cost = 70
-        ship_charged = 0 if ci["seg"] in ("批發", "機構") else 60
-    plat = round(subtotal * (0.05 if chan == "LINE 社群" else 0))
-    total = subtotal + ship_charged
+    total = subtotal
     pm = {"批發": "銀行匯款", "機構": "銀行匯款"}.get(ci["seg"], "現金")
     if kind != "銷售":
         pm, pay_status, total = "未收款", "免收款", 0
     if ship_status is None:
         ship_status = "已送達" if pay_status == "已收款" else "已出貨"
+    invoiced = 1 if ci["seg"] in ("批發", "機構") else 0
+    paid_amount = total if pay_status == "已收款" else (round(total * 0.5) if pay_status == "部分收款" else None)
     c.execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
-                 source_ref,discount_total,shipping_fee_charged,platform_fee,order_total,
-                 payment_method,payment_account,payment_status,paid_date,
-                 tax_doc_type,ship_method,carrier,shipping_cost_actual,ship_status)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 source_ref,discount_total,order_total,
+                 payment_method,payment_account,payment_status,paid_date,paid_amount,
+                 invoiced,ship_method,carrier,shipping_cost_actual,ship_status)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (f"S{order_no:04d}", d.isoformat(), season, cid, ch[chan], kind,
-               None, 0, ship_charged, plat, total,
+               None, 0, total,
                pm, "郵局" if pm == "銀行匯款" else None, pay_status,
-               d.isoformat() if pay_status == "已收款" else None,
-               "農民收據" if ci["seg"] in ("批發", "機構") else "免開立",
-               ship_method, carrier, ship_cost, ship_status))
+               d.isoformat() if pay_status == "已收款" else None, paid_amount,
+               invoiced, ship_method, carrier, ship_cost, ship_status))
     oid = c.lastrowid
     bcode = f"{season}-A"
     for sku, qty, gift in lines:

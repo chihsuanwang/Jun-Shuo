@@ -159,7 +159,7 @@
 <div class="card">
   <h3 class="serif">各產季合計(含淡月固定成本)</h3>
   <table>
-    <thead><tr><th>產季</th><th>期間</th><th>營收</th><th>退貨/折讓</th><th>毛利</th><th>通路抽成</th><th>運費賺賠</th><th>營運費用(12 月)</th><th>稅前利潤</th></tr></thead>
+    <thead><tr><th>產季</th><th>期間</th><th>營收(實收)</th><th>退貨/折讓</th><th>毛利</th><th>運費</th><th>營運費用(12 月)</th><th>稅前利潤</th></tr></thead>
     <tbody>{% for s in seasons_fin %}
       <tr>
         <td>{{ s.season }}</td>
@@ -167,8 +167,7 @@
         <td>{{ s.revenue|money }}</td>
         <td class="{{ 'neg' if s.returns }}">{{ ('− ' ~ s.returns|money) if s.returns else '—' }}</td>
         <td>{{ s.gross_profit|money }}</td>
-        <td>− {{ s.platform_fee|money }}</td>
-        <td class="{{ 'neg' if s.ship_pnl < 0 }}">{{ s.ship_pnl|money }}</td>
+        <td>− {{ s.ship_cost|money }}</td>
         <td>− {{ s.opex|money }} <span class="muted" style="font-size:11px">({{ s.opex_months }} 月)</span></td>
         <td class="{{ 'neg' if s.pretax < 0 else 'pos' }}" style="font-weight:700">{{ s.pretax|money }}</td>
       </tr>
@@ -183,7 +182,8 @@
 {% endif %}
 
 <p class="muted" style="font-size:12px;margin-top:16px">
-營收 / 銷貨成本 / 毛利 / 通路抽成 / 運費 由系統的實際訂單算出;
+<b>營收只算已收款的訂單</b>(標記已收款時填的實收金額),還沒收到錢的訂單先不算,但照樣可以出貨。
+銷貨成本 / 毛利 / 運費由系統依實際訂單算出;
 <b>營運費用需由郡碩農創逐月填入</b>(「維護營運費用」,淡月也要填)。
 <b>銷貨退回 / 折讓</b>認列在「發生的月份」,好貨退回進庫時成本也回沖 —— 所以沒銷售的月份可能出現負的「銷貨成本」(等於退回沖銷)。目前為示範假資料。</p>
 
@@ -288,10 +288,10 @@
   function drawSel() {
     var yms = FIN.filter(function (t) { return sel.has(t.ym); });
     yms.sort(function (a, b) { return a.ym < b.ym ? -1 : 1; });
-    var S = { revenue: 0, returns: 0, cogs: 0, gross_profit: 0, platform_fee: 0, ship_pnl: 0, opex_total: 0, pretax: 0, opex: {} };
+    var S = { revenue: 0, returns: 0, cogs: 0, gross_profit: 0, ship_cost: 0, opex_total: 0, pretax: 0, opex: {} };
     CATS.forEach(function (c) { S.opex[c] = 0; });
     yms.forEach(function (t) {
-      ['revenue', 'returns', 'cogs', 'gross_profit', 'platform_fee', 'ship_pnl', 'opex_total', 'pretax'].forEach(function (f) { S[f] += t[f] || 0; });
+      ['revenue', 'returns', 'cogs', 'gross_profit', 'ship_cost', 'opex_total', 'pretax'].forEach(function (f) { S[f] += t[f] || 0; });
       Object.keys(t.opex || {}).forEach(function (c) { S.opex[c] = (S.opex[c] || 0) + t.opex[c]; });
     });
     var netRev = S.revenue - S.returns;
@@ -309,12 +309,11 @@
       .map(function (c) { return row('− ' + c, '− ' + fmt(S.opex[c])); }).join('');
 
     var h = '<table><tbody>' +
-      row('營收', fmt(S.revenue), '', true) +
+      row('營收(實收)', fmt(S.revenue), '', true) +
       (S.returns ? row('− 銷貨退回與折讓', '− ' + fmt(S.returns)) : '') +
       row('− 銷貨成本', '− ' + fmt(S.cogs)) +
       row('= 毛利(毛利率 ' + (margin * 100).toFixed(0) + '%)', fmt(S.gross_profit), '', true) +
-      row('− 通路抽成', '− ' + fmt(S.platform_fee)) +
-      row('± 運費賺賠', fmt(S.ship_pnl)) +
+      row('− 運費', '− ' + fmt(S.ship_cost)) +
       (opexRows || row('尚未填營運費用', '− 0')) +
       '<tr><td class="serif" style="font-size:16px;font-weight:900">= 稅前利潤</td><td style="text-align:right"><span class="serif" style="font-size:18px;font-weight:900;color:' +
       (S.pretax >= 0 ? 'var(--good)' : 'var(--seal)') + '">' + fmt(S.pretax) + '</span></td></tr>' +

@@ -4,9 +4,15 @@
 <div class="head">
   <div><div class="sup"><a href="/orders">訂單</a> / {{ o.order_no }}</div>
     <h1 class="serif">{{ o.order_no }} · {{ o.cust or '—' }}</h1></div>
-  <div style="display:flex;gap:8px">
-    <form method="post" action="/orders/{{ o.order_id }}/paid" style="display:inline">
-      <button type="submit" {{ 'disabled' if o.payment_status=='已收款' }}>標記已收款</button></form>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    {% if o.payment_status == '已收款' %}
+    <span class="muted" style="font-size:13px">已收款 · 實收 {{ o.paid_amount|money }}{% if o.paid_date %}（{{ o.paid_date }}）{% endif %}</span>
+    {% else %}
+    <form method="post" action="/orders/{{ o.order_id }}/paid" style="display:flex;gap:6px;align-items:center">
+      <input name="paid_amount" type="number" step="1" min="0" placeholder="實收多少" required style="width:110px">
+      <button type="submit">標記已收款</button>
+    </form>
+    {% endif %}
     <form method="post" action="/orders/{{ o.order_id }}/shipped" style="display:inline">
       <button type="submit" class="ghost" {{ 'disabled' if o.ship_status!='待出貨' }}>標記已出貨</button></form>
     <form method="post" action="/orders/{{ o.order_id }}/copy" style="display:inline">
@@ -15,7 +21,8 @@
 </div>
 <hr class="rule">
 {% if request.query_params.get('ok') %}<div class="ok">已儲存。</div>{% endif %}
-{% if request.query_params.get('done') == 'paid' %}<div class="ok">已標記為「已收款」,收款日填今天,實收金額帶入應收 {{ o.order_total|money }}。</div>{% endif %}
+{% if request.query_params.get('done') == 'paid' %}<div class="ok">已標記收款。</div>{% endif %}
+{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請輸入實收金額(要大於 0)。</div>{% endif %}
 {% if request.query_params.get('done') == 'shipped' %}<div class="ok">已標記為「已出貨」,出貨日填今天。</div>{% endif %}
 {% if request.query_params.get('rok') %}<div class="ok">退貨 / 折讓已登記。</div>{% endif %}
 {% if request.query_params.get('rerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">沖減金額要大於 0。</div>{% endif %}
@@ -83,7 +90,12 @@
       <div><label>收款日</label><input type="date" name="paid_date" value="{{ o.paid_date or '' }}"></div>
       <div><label>實收金額</label><input name="paid_amount" type="number" value="{{ o.paid_amount or '' }}"></div>
       <div><label>折扣(少收)</label><input name="discount_total" type="number" value="{{ o.discount_total or 0 }}"></div>
-      <div><label>跟客人收的運費</label><input name="shipping_fee_charged" type="number" value="{{ o.shipping_fee_charged or 0 }}"></div>
+      <div style="display:flex;align-items:flex-end;padding-bottom:9px">
+        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
+          <input type="checkbox" name="invoiced" value="1" style="width:auto" {{ 'checked' if o.invoiced }}> 已開發票
+        </label>
+      </div>
+      <div><label>發票號碼(選填)</label><input name="tax_doc_no" value="{{ o.tax_doc_no or '' }}"></div>
     </div>
   </div>
   <div class="card">
@@ -93,7 +105,7 @@
         {% for s in ship_methods %}<option {{ 'selected' if o.ship_method==s }}>{{ s }}</option>{% endfor %}</select></div>
       <div><label>物流商</label><input name="carrier" value="{{ o.carrier or '' }}"></div>
       <div><label>物流單號</label><input name="tracking_no" value="{{ o.tracking_no or '' }}"></div>
-      <div><label>我們付出的運費</label><input name="shipping_cost_actual" type="number" value="{{ o.shipping_cost_actual or 0 }}"></div>
+      <div><label>運費(花多少錢)</label><input name="shipping_cost_actual" type="number" value="{{ o.shipping_cost_actual or 0 }}"></div>
       <div><label>出貨日</label><input type="date" name="shipped_date" value="{{ o.shipped_date or '' }}"></div>
       <div><label>到貨日</label><input type="date" name="delivered_date" value="{{ o.delivered_date or '' }}"></div>
       <div><label>出貨狀態</label><select name="ship_status">

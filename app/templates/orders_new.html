@@ -61,20 +61,27 @@
       <div><label>出貨方式</label><select name="ship_method">
         <option value="">—</option>{% for s in ['自行配送','客戶自取','宅配','超商店到店','超商賣貨便','冷藏宅配'] %}<option>{{ s }}</option>{% endfor %}
       </select></div>
-      <div><label>跟客人收的運費</label><input name="shipping_fee_charged" type="number" value="0"></div>
-      <div><label>我們付出的運費</label><input name="shipping_cost_actual" type="number" value="0"></div>
+      <div><label>運費(花多少錢)</label><input name="shipping_cost_actual" type="number" value="0"></div>
       <div><label>折扣(少收的金額)</label><input name="discount_total" type="number" value="0"></div>
     </div>
   </div>
   <div class="card">
-    <h3 class="serif">收款</h3>
+    <h3 class="serif">收款 / 發票</h3>
     <div class="grid" style="grid-template-columns:1fr 1fr">
       <div><label>付款方式</label><select name="payment_method">
         <option value="">—</option>{% for p in ['現金','銀行匯款','貨到付款','行動支付','信用卡','平台代收','未收款'] %}<option>{{ p }}</option>{% endfor %}
       </select></div>
       <div><label>收款狀態</label><select name="payment_status">
-        {% for p in ['待收款','部分收款','已收款','免收款'] %}<option>{{ p }}</option>{% endfor %}
-      </select></div>
+        {% for p in ['待收款','免收款'] %}<option>{{ p }}</option>{% endfor %}
+      </select>
+        <div class="muted" style="font-size:11px;margin-top:3px">實收金額之後在訂單頁「標記已收款」時再填</div>
+      </div>
+      <div style="display:flex;align-items:flex-end;padding-bottom:9px">
+        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
+          <input type="checkbox" name="invoiced" value="1" style="width:auto"> 已開發票
+        </label>
+      </div>
+      <div><label>發票號碼(選填)</label><input name="tax_doc_no"></div>
     </div>
   </div>
 </div>
