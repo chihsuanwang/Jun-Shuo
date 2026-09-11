@@ -8,8 +8,9 @@
     {% if o.payment_status == '已收款' %}
     <span class="muted" style="font-size:13px">已收款 · 實收 {{ o.paid_amount|money }}{% if o.paid_date %}（{{ o.paid_date }}）{% endif %}</span>
     {% else %}
-    <form method="post" action="/orders/{{ o.order_id }}/paid" style="display:flex;gap:6px;align-items:center">
-      <input name="paid_amount" type="number" step="1" min="0" placeholder="實收多少" required style="width:110px">
+    <form method="post" action="/orders/{{ o.order_id }}/paid" id="markPaidForm" style="display:inline">
+      <input type="hidden" name="paid_amount" id="markPaidAmount">
+      <input type="hidden" name="paid_date" id="markPaidDate">
       <button type="submit">標記已收款</button>
     </form>
     {% endif %}
@@ -92,8 +93,8 @@
         {% for p in pay_methods %}<option {{ 'selected' if o.payment_method==p }}>{{ p }}</option>{% endfor %}</select></div>
       <div><label>收款狀態</label><select name="payment_status">
         {% for p in pay_status %}<option {{ 'selected' if o.payment_status==p }}>{{ p }}</option>{% endfor %}</select></div>
-      <div><label>收款日</label><input type="date" name="paid_date" value="{{ o.paid_date or '' }}"></div>
-      <div><label>實收金額</label><input name="paid_amount" type="number" value="{{ o.paid_amount or '' }}"></div>
+      <div><label>收款日</label><input type="date" name="paid_date" id="paidDateField" value="{{ o.paid_date or '' }}"></div>
+      <div><label>實收金額</label><input name="paid_amount" type="number" id="paidAmountField" value="{{ o.paid_amount or '' }}"></div>
       <div style="display:flex;align-items:flex-end;padding-bottom:9px">
         <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
           <input type="checkbox" name="invoiced" value="1" style="width:auto" {{ 'checked' if o.invoiced }}> 已開發票
@@ -267,6 +268,24 @@
   document.addEventListener('click', function (e) {
     if (!results.contains(e.target) && e.target !== search) results.hidden = true;
   });
+
+  // --- 標記已收款:直接沿用「收款」卡裡的實收金額/收款日,沒填就提醒 ---
+  var markPaidForm = document.getElementById('markPaidForm');
+  if (markPaidForm) {
+    markPaidForm.addEventListener('submit', function (e) {
+      var amtField = document.getElementById('paidAmountField');
+      var amt = amtField ? parseFloat(amtField.value) : 0;
+      if (!amt || amt <= 0) {
+        e.preventDefault();
+        alert('請先在下面「收款」卡填實收金額,再標記已收款。');
+        if (amtField) amtField.focus();
+        return;
+      }
+      document.getElementById('markPaidAmount').value = amt;
+      var dateField = document.getElementById('paidDateField');
+      document.getElementById('markPaidDate').value = (dateField && dateField.value) || '';
+    });
+  }
   recalc();
 })();
 </script>
