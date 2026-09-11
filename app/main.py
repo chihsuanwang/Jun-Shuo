@@ -98,6 +98,9 @@ def migrate_db():
         if "invoiced" not in ocols:
             execute('ALTER TABLE "order" ADD COLUMN invoiced INTEGER NOT NULL DEFAULT 0')
             print("[migrate] order.invoiced 已補上")
+        if "ship_payer" not in ocols:
+            execute('ALTER TABLE "order" ADD COLUMN ship_payer TEXT NOT NULL DEFAULT \'店家吸收\'')
+            print("[migrate] order.ship_payer 已補上")
         execute("CREATE TABLE IF NOT EXISTS pricing_param (key TEXT PRIMARY KEY, value REAL NOT NULL)")
         execute("""CREATE TABLE IF NOT EXISTS sales_return (
           return_id    INTEGER PRIMARY KEY,
@@ -964,7 +967,7 @@ def order_new(request: Request):
         batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code"),
         today=dt.date.today().isoformat(),
         prices_json=json.dumps(prices), cust_seg_json=json.dumps(cust_seg),
-        stock_json=json.dumps(Q.stock_on_hand_map()),
+        stock_json=json.dumps(Q.stock_on_hand_map()), ship_payers=SHIP_PAYERS,
     ))
 
 
@@ -1023,12 +1026,12 @@ async def order_create(request: Request):
     n = q("SELECT COUNT(*) c FROM \"order\"")[0]["c"] + 1
     oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
                      discount_total,order_total,payment_method,payment_status,
-                     shipping_cost_actual,ship_method,ship_status,invoiced,tax_doc_no)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
+                     shipping_cost_actual,ship_payer,ship_method,ship_status,invoiced,tax_doc_no)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
                   (f"S{n:04d}", order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
                    discount_total, total,
                    one("payment_method") or None, one("payment_status", "待收款"),
-                   flt("shipping_cost_actual"), one("ship_method") or None,
+                   flt("shipping_cost_actual"), one("ship_payer", "店家吸收"), one("ship_method") or None,
                    invoiced, one("tax_doc_no") or None))
     for p, qv, up, b, lp in lines:
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal)
@@ -1056,6 +1059,7 @@ PAY_METHODS  = ['現金', '銀行匯款', '貨到付款', '行動支付', '信�
 PAY_STATUS   = ['待收款', '部分收款', '已收款', '免收款']
 SHIP_METHODS = ['自行配送', '客戶自取', '宅配', '超商店到店', '超商賣貨便', '冷藏宅配']
 SHIP_STATUS  = ['待出貨', '已出貨', '已送達', '退回', '遺失', '破損']
+SHIP_PAYERS  = ['店家吸收', '客戶付']
 ORDER_KINDS  = ['銷售', '贈送-公關', '贈送-捐贈', '樣品', '理賠重寄', '換貨補出', '內部領用']
 FILTERS = {"all": "全部", "overdue": "貨款逾期", "unpaid": "未收款", "unshipped": "超過 3 天未出貨"}
 
@@ -1077,7 +1081,7 @@ def order_detail(request: Request, oid: int):
         products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
         batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code"),
         pay_methods=PAY_METHODS, pay_status=PAY_STATUS,
-        ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, kinds=ORDER_KINDS,
+        ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, ship_payers=SHIP_PAYERS, kinds=ORDER_KINDS,
         returns=Q.returns_list(oid), return_kinds=RETURN_KINDS,
         today=dt.date.today().isoformat()))
 
@@ -1196,18 +1200,19 @@ async def order_update(request: Request, oid: int):
                    VALUES(?,?,?,?,?,?,?)""", (oid, p, b, qv, up, qv * up, gf))
 
     subtotal = sum(qv * up for _, qv, up, _, gf in new_lines if not gf)
-    disc = flt("discount_total")
+    disc = o["discount_total"] or 0  # 折扣欄位已不開放編輯,沿用原值(通常是 0)
     total = subtotal - disc
 
     cust_id = f.get("customer_id")
     cols = dict(order_date=g("order_date"), order_kind=g("order_kind"),
                 payment_method=g("payment_method"), payment_status=g("payment_status") or "待收款",
                 paid_date=g("paid_date"), paid_amount=(flt("paid_amount") or None),
-                discount_total=disc, order_total=total,
+                order_total=total,
                 ship_method=g("ship_method"), carrier=g("carrier"), tracking_no=g("tracking_no"),
                 shipped_date=g("shipped_date"), delivered_date=g("delivered_date"),
                 ship_status=g("ship_status") or "待出貨",
-                shipping_cost_actual=flt("shipping_cost_actual"), note=g("note"),
+                shipping_cost_actual=flt("shipping_cost_actual"),
+                ship_payer=g("ship_payer") or "店家吸收", note=g("note"),
                 invoiced=(1 if f.get("invoiced") else 0), tax_doc_no=g("tax_doc_no"))
     if cust_id and cust_id.isdigit():
         cols["customer_id"] = int(cust_id)

@@ -45,7 +45,7 @@
 <div class="card" style="margin-bottom:16px">
   <h3 class="serif">品項</h3>
   <table>
-    <thead><tr><th>品項</th><th>批次</th><th>數量</th><th>單價</th><th>贈品</th><th></th></tr></thead>
+    <thead><tr><th>品項</th><th>批次</th><th>數量</th><th>單價</th><th>小計</th><th>贈品</th><th></th></tr></thead>
     <tbody id="lines">
     {% for l in lines %}
       <tr class="line">
@@ -57,6 +57,7 @@
         </select></td>
         <td><input name="qty" type="number" step="0.01" min="0" value="{{ l.qty }}"></td>
         <td><input name="unit_price" type="number" step="1" min="0" value="{{ l.unit_price|round(0) }}"></td>
+        <td class="linesub r">{{ (l.qty * l.unit_price)|round(0)|int }}</td>
         <td><select name="is_gift"><option>否</option><option {{ 'selected' if l.is_gift }}>是</option></select></td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
       </tr>
@@ -67,14 +68,16 @@
         <td><select name="batch_id"><option value="">—</option>{% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }} 批</option>{% endfor %}</select></td>
         <td><input name="qty" type="number" step="0.01" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
+        <td class="linesub r">0</td>
         <td><select name="is_gift"><option>否</option><option>是</option></select></td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
       </tr>
     {% endif %}
     </tbody>
+    <tfoot><tr><td colspan="4" class="r"><b>應收合計(不含贈品)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="2"></td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
-  <p class="muted" style="font-size:11px;margin-top:6px">改完按下方「儲存」,小計與應收合計會重算。</p>
+  <p class="muted" style="font-size:11px;margin-top:6px">改完按下方「儲存」,應收合計會重算。</p>
 </div>
 
 <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
@@ -89,7 +92,6 @@
         {% for p in pay_status %}<option {{ 'selected' if o.payment_status==p }}>{{ p }}</option>{% endfor %}</select></div>
       <div><label>收款日</label><input type="date" name="paid_date" value="{{ o.paid_date or '' }}"></div>
       <div><label>實收金額</label><input name="paid_amount" type="number" value="{{ o.paid_amount or '' }}"></div>
-      <div><label>折扣(少收)</label><input name="discount_total" type="number" value="{{ o.discount_total or 0 }}"></div>
       <div style="display:flex;align-items:flex-end;padding-bottom:9px">
         <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
           <input type="checkbox" name="invoiced" value="1" style="width:auto" {{ 'checked' if o.invoiced }}> 已開發票
@@ -106,6 +108,9 @@
       <div><label>物流商</label><input name="carrier" value="{{ o.carrier or '' }}"></div>
       <div><label>物流單號</label><input name="tracking_no" value="{{ o.tracking_no or '' }}"></div>
       <div><label>運費(花多少錢)</label><input name="shipping_cost_actual" type="number" value="{{ o.shipping_cost_actual or 0 }}"></div>
+      <div><label>運費由誰負擔</label><select name="ship_payer">
+        {% for s in ship_payers %}<option {{ 'selected' if o.ship_payer==s }}>{{ s }}</option>{% endfor %}
+      </select></div>
       <div><label>出貨日</label><input type="date" name="shipped_date" value="{{ o.shipped_date or '' }}"></div>
       <div><label>到貨日</label><input type="date" name="delivered_date" value="{{ o.delivered_date or '' }}"></div>
       <div><label>出貨狀態</label><select name="ship_status">
@@ -181,12 +186,37 @@
     clone.querySelectorAll('select,input').forEach(function (el) {
       if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
     });
+    var subCell = clone.querySelector('.linesub'); if (subCell) subCell.textContent = '0';
     body.appendChild(clone);
   });
   body.addEventListener('click', function (e) {
     if (!e.target.classList.contains('del')) return;
     var rows = body.querySelectorAll('tr.line');
     if (rows.length > 1) e.target.closest('tr').remove();
+    recalc();
+  });
+
+  // --- 小計與應收合計(不含贈品) ---
+  function recalc() {
+    var sum = 0;
+    body.querySelectorAll('tr.line').forEach(function (row) {
+      var qty = parseFloat(row.querySelector('input[name="qty"]').value) || 0;
+      var up = parseFloat(row.querySelector('input[name="unit_price"]').value) || 0;
+      var giftSel = row.querySelector('select[name="is_gift"]');
+      var isGift = giftSel && giftSel.value === '是';
+      var sub = isGift ? 0 : qty * up;
+      var cell = row.querySelector('.linesub');
+      if (cell) cell.textContent = Math.round(sub).toLocaleString();
+      sum += sub;
+    });
+    var t = document.getElementById('ordertotal');
+    if (t) t.textContent = Math.round(sum).toLocaleString();
+  }
+  body.addEventListener('input', function (e) {
+    if (e.target.name === 'qty' || e.target.name === 'unit_price') recalc();
+  });
+  body.addEventListener('change', function (e) {
+    if (e.target.name === 'is_gift') recalc();
   });
 
   // 改客戶
@@ -217,6 +247,7 @@
   document.addEventListener('click', function (e) {
     if (!results.contains(e.target) && e.target !== search) results.hidden = true;
   });
+  recalc();
 })();
 </script>
 {% endblock %}

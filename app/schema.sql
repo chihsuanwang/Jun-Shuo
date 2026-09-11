@@ -158,6 +158,7 @@ CREATE TABLE "order" (
   shipped_date    TEXT,
   delivered_date  TEXT,
   shipping_cost_actual REAL NOT NULL DEFAULT 0,   -- 我方實付運費(費用面)
+  ship_payer      TEXT NOT NULL DEFAULT '店家吸收' CHECK (ship_payer IN ('店家吸收','客戶付')),  -- 單純記錄,不影響金額計算
   packaging_cost  REAL NOT NULL DEFAULT 0,
   ship_status     TEXT NOT NULL DEFAULT '待出貨'
                   CHECK (ship_status IN ('待出貨','已出貨','已送達','退回','遺失','破損')),

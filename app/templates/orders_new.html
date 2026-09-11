@@ -33,7 +33,7 @@
 <div class="card" style="margin-bottom:16px">
   <h3 class="serif">訂單明細</h3>
   <table>
-    <thead><tr><th>品項</th><th>批次</th><th>數量</th><th>單價</th><th></th></tr></thead>
+    <thead><tr><th>品項</th><th>批次</th><th>數量</th><th>單價</th><th>小計</th><th></th></tr></thead>
     <tbody id="lines">
     {% for i in range(3) %}
       <tr class="line">
@@ -45,13 +45,14 @@
         </select></td>
         <td><input name="qty" type="number" step="0.01" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
+        <td class="linesub r">0</td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
       </tr>
     {% endfor %}
     </tbody>
+    <tfoot><tr><td colspan="4" class="r"><b>應收合計</b></td><td class="r"><b id="ordertotal">0</b></td><td></td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
-  <p class="muted" style="font-size:11px;margin-top:8px">之後會加:自動算小計與應收金額、依客戶類型自動帶入定價、賣得比定價低時自動算成折扣。</p>
 </div>
 
 <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
@@ -62,7 +63,9 @@
         <option value="">—</option>{% for s in ['自行配送','客戶自取','宅配','超商店到店','超商賣貨便','冷藏宅配'] %}<option>{{ s }}</option>{% endfor %}
       </select></div>
       <div><label>運費(花多少錢)</label><input name="shipping_cost_actual" type="number" value="0"></div>
-      <div><label>折扣(少收的金額)</label><input name="discount_total" type="number" value="0"></div>
+      <div><label>運費由誰負擔</label><select name="ship_payer">
+        {% for s in ship_payers %}<option>{{ s }}</option>{% endfor %}
+      </select></div>
     </div>
   </div>
   <div class="card">
@@ -99,6 +102,7 @@
     clone.querySelectorAll('select,input').forEach(function (el) {
       if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
     });
+    var subCell = clone.querySelector('.linesub'); if (subCell) subCell.textContent = '0';
     body.appendChild(clone);
   });
   body.addEventListener('click', function (e) {
@@ -108,6 +112,25 @@
     else e.target.closest('tr').querySelectorAll('select,input').forEach(function (el) {
       if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
     });
+    recalc();
+  });
+
+  // --- 小計與應收合計 ---
+  function recalc() {
+    var sum = 0;
+    body.querySelectorAll('tr.line').forEach(function (row) {
+      var qty = parseFloat(row.querySelector('input[name="qty"]').value) || 0;
+      var up = parseFloat(row.querySelector('input[name="unit_price"]').value) || 0;
+      var sub = qty * up;
+      var cell = row.querySelector('.linesub');
+      if (cell) cell.textContent = sub.toLocaleString();
+      sum += sub;
+    });
+    var t = document.getElementById('ordertotal');
+    if (t) t.textContent = sum.toLocaleString();
+  }
+  body.addEventListener('input', function (e) {
+    if (e.target.name === 'qty' || e.target.name === 'unit_price') recalc();
   });
 
   // --- 依客戶分級自動帶標準價 + 現貨提示 ---
@@ -134,7 +157,7 @@
     if (force || !priceInput.value) priceInput.value = std;
   }
   body.addEventListener('change', function (e) {
-    if (e.target.name === 'product_id') fillRow(e.target.closest('tr'), false);
+    if (e.target.name === 'product_id') { fillRow(e.target.closest('tr'), false); recalc(); }
   });
 
   // --- 可搜尋客戶選單 + 確認卡 ---
@@ -193,6 +216,7 @@
     search.value = it.dataset.name;
     results.hidden = true;
     body.querySelectorAll('tr.line').forEach(function (r) { fillRow(r, true); });
+    recalc();
     fetch('/api/customers/' + it.dataset.id).then(function (r) { return r.json(); }).then(function (c) {
       var a = c.address || {};
       var os = (c.orders || []).map(function (o) {
