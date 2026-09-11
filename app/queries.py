@@ -812,6 +812,17 @@ def stock_on_hand():
         r["oldest"] = r["by_batch"][0] if r["by_batch"] else None
     return rows
 
+def oldest_batch_for_product(product_id):
+    """該商品目前還有庫存的批次中,製造日最舊的一批(先進先出)。沒有批次資料回傳 None。"""
+    rows = q("""SELECT sm.batch_id, SUM(sm.qty) remain, MAX(b.mfg_date) mfg_date
+                FROM stock_move sm LEFT JOIN batch b ON b.batch_id=sm.batch_id
+                WHERE sm.product_id=? AND sm.batch_id IS NOT NULL
+                GROUP BY sm.batch_id
+                HAVING SUM(sm.qty) > 0.0001
+                ORDER BY mfg_date""", (product_id,))
+    return rows[0]["batch_id"] if rows else None
+
+
 def stock_on_hand_map():
     return {r["product_id"]: r["on_hand"]
             for r in q("""SELECT p.product_id,

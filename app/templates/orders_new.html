@@ -33,16 +33,14 @@
 <div class="card" style="margin-bottom:16px">
   <h3 class="serif">訂單明細</h3>
   <table>
-    <thead><tr><th>品項</th><th>批次</th><th>數量</th><th>單價</th><th>小計</th><th></th></tr></thead>
+    <thead><tr><th>品項</th><th>現貨</th><th>數量</th><th>單價</th><th>小計</th><th></th></tr></thead>
     <tbody id="lines">
     {% for i in range(3) %}
-      <tr class="line" style="vertical-align:top">
+      <tr class="line">
         <td><select name="product_id"><option value="">—</option>
           {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
-        </select><div class="stockhint muted" style="font-size:11px;margin-top:2px;min-height:14px"></div></td>
-        <td><select name="batch_id"><option value="">—</option>
-          {% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }} 批</option>{% endfor %}
         </select></td>
+        <td class="stockhint muted">—</td>
         <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
         <td class="linesub r">0</td>
@@ -103,15 +101,20 @@
       if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
     });
     var subCell = clone.querySelector('.linesub'); if (subCell) subCell.textContent = '0';
+    var hintCell = clone.querySelector('.stockhint'); if (hintCell) { hintCell.textContent = '—'; hintCell.style.color = ''; }
     body.appendChild(clone);
   });
   body.addEventListener('click', function (e) {
     if (!e.target.classList.contains('del')) return;
     var rows = body.querySelectorAll('tr.line');
-    if (rows.length > 1) e.target.closest('tr').remove();
-    else e.target.closest('tr').querySelectorAll('select,input').forEach(function (el) {
-      if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
-    });
+    if (rows.length > 1) { e.target.closest('tr').remove(); }
+    else {
+      var lastRow = e.target.closest('tr');
+      lastRow.querySelectorAll('select,input').forEach(function (el) {
+        if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
+      });
+      var hintCell = lastRow.querySelector('.stockhint'); if (hintCell) { hintCell.textContent = '—'; hintCell.style.color = ''; }
+    }
     recalc();
   });
 
@@ -147,9 +150,9 @@
     if (hint) {
       if (pid && STOCK[pid] != null) {
         var s = Math.round(STOCK[pid]);
-        hint.textContent = '現貨 ' + s;
+        hint.textContent = s;
         hint.style.color = s <= 0 ? 'var(--seal)' : '';
-      } else if (hint) { hint.textContent = ''; }
+      } else { hint.textContent = '—'; hint.style.color = ''; }
     }
     if (!pid) return;
     var std = PRICES[pid] && PRICES[pid][seg()];

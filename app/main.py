@@ -1014,7 +1014,8 @@ async def order_create(request: Request):
         if up is None:                       # 沒填單價 -> 帶標準價
             up = lp if (lp is not None and order_kind == "銷售") else 0
         b = bats[i] if i < len(bats) and bats[i] else None
-        lines.append((pid, qv, up, int(b) if b else None, lp))
+        b = int(b) if b else Q.oldest_batch_for_product(pid)  # 沒指定批次 -> 自動抓現貨最舊的一批(先進先出)
+        lines.append((pid, qv, up, b, lp))
 
     discount_total = flt("discount_total")
     subtotal = sum(qv * up for _, qv, up, _, _ in lines)
@@ -1083,6 +1084,7 @@ def order_detail(request: Request, oid: int):
         pay_methods=PAY_METHODS, pay_status=PAY_STATUS,
         ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, ship_payers=SHIP_PAYERS, kinds=ORDER_KINDS,
         returns=Q.returns_list(oid), return_kinds=RETURN_KINDS,
+        stock_json=json.dumps(Q.stock_on_hand_map()),
         today=dt.date.today().isoformat()))
 
 
@@ -1190,10 +1192,11 @@ async def order_update(request: Request, oid: int):
             up = float(ups[i]) if (i < len(ups) and str(ups[i]).strip()) else 0
         except (ValueError, IndexError):
             up = 0
+        pid = int(p)
         b = bats[i] if i < len(bats) and bats[i] else None
+        b = int(b) if b else Q.oldest_batch_for_product(pid)  # 沒指定批次 -> 自動抓現貨最舊的一批(先進先出)
         is_gift = 1 if (i < len(gl) and gl[i] == "是") else 0
-        new_lines.append((int(p), qv, up if not is_gift else 0,
-                          int(b) if b else None, is_gift))
+        new_lines.append((pid, qv, up if not is_gift else 0, b, is_gift))
     execute("DELETE FROM order_line WHERE order_id=?", (oid,))
     for p, qv, up, b, gf in new_lines:
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift)

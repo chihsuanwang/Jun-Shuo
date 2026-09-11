@@ -45,16 +45,14 @@
 <div class="card" style="margin-bottom:16px">
   <h3 class="serif">品項</h3>
   <table>
-    <thead><tr><th>品項</th><th>批次</th><th>數量</th><th>單價</th><th>小計</th><th>贈品</th><th></th></tr></thead>
+    <thead><tr><th>品項</th><th>現貨</th><th>數量</th><th>單價</th><th>小計</th><th>贈品</th><th></th></tr></thead>
     <tbody id="lines">
     {% for l in lines %}
       <tr class="line">
         <td><select name="product_id">
           {% for p in products %}<option value="{{ p.product_id }}" {{ 'selected' if p.product_id==l.product_id }}>{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
         </select></td>
-        <td><select name="batch_id"><option value="">—</option>
-          {% for b in batches %}<option value="{{ b.batch_id }}" {{ 'selected' if b.batch_id==l.batch_id }}>{{ b.batch_code }} 批</option>{% endfor %}
-        </select></td>
+        <td class="stockhint muted">—</td>
         <td><input name="qty" type="number" step="1" min="0" value="{{ l.qty|round(0)|int }}"></td>
         <td><input name="unit_price" type="number" step="1" min="0" value="{{ l.unit_price|round(0) }}"></td>
         <td class="linesub r">{{ (l.qty * l.unit_price)|round(0)|int }}</td>
@@ -65,7 +63,7 @@
     {% if not lines %}
       <tr class="line">
         <td><select name="product_id">{% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}</select></td>
-        <td><select name="batch_id"><option value="">—</option>{% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }} 批</option>{% endfor %}</select></td>
+        <td class="stockhint muted">—</td>
         <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
         <td class="linesub r">0</td>
@@ -187,6 +185,7 @@
       if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
     });
     var subCell = clone.querySelector('.linesub'); if (subCell) subCell.textContent = '0';
+    var hintCell = clone.querySelector('.stockhint'); if (hintCell) { hintCell.textContent = '—'; hintCell.style.color = ''; }
     body.appendChild(clone);
   });
   body.addEventListener('click', function (e) {
@@ -194,6 +193,23 @@
     var rows = body.querySelectorAll('tr.line');
     if (rows.length > 1) e.target.closest('tr').remove();
     recalc();
+  });
+
+  // --- 現貨提示 ---
+  var STOCK = {{ stock_json | safe }};
+  function fillStock(row) {
+    var pid = row.querySelector('select[name="product_id"]').value;
+    var hint = row.querySelector('.stockhint');
+    if (!hint) return;
+    if (pid && STOCK[pid] != null) {
+      var s = Math.round(STOCK[pid]);
+      hint.textContent = s;
+      hint.style.color = s <= 0 ? 'var(--seal)' : '';
+    } else { hint.textContent = '—'; hint.style.color = ''; }
+  }
+  body.querySelectorAll('tr.line').forEach(fillStock);
+  body.addEventListener('change', function (e) {
+    if (e.target.name === 'product_id') fillStock(e.target.closest('tr'));
   });
 
   // --- 小計與應收合計(不含贈品) ---
