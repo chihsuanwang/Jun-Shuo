@@ -865,6 +865,17 @@ def customer_edit(request: Request, cid: int, next: str = ""):
 @app.post("/customers")
 async def customer_save(request: Request):
     f = await request.form()
+    if f.get("_delete"):
+        cid = f.get("customer_id")
+        if cid:
+            cid = int(cid)
+            used = q('SELECT 1 FROM "order" WHERE customer_id=? LIMIT 1', (cid,))
+            if used:
+                return RedirectResponse(f"/customers/{cid}/edit?perr=1", status_code=303)
+            execute("DELETE FROM address WHERE customer_id=?", (cid,))
+            execute("DELETE FROM customer_alias WHERE customer_id=?", (cid,))
+            execute("DELETE FROM customer WHERE customer_id=?", (cid,))
+        return RedirectResponse("/customers", status_code=303)
     g = lambda k: (f.get(k) or "").strip() or None
     ch = int(f.get("primary_channel_id")) if f.get("primary_channel_id") else None
     name = (f.get("display_name") or "").strip()

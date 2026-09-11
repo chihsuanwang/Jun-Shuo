@@ -7,6 +7,7 @@
   <h1 class="serif">{{ cust.display_name if editing else '新增客戶' }}</h1>
 </div></div>
 <hr class="rule">
+{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這位客戶已經有訂單紀錄,沒辦法刪除。</div>{% endif %}
 
 {% if dups %}
 <div class="card" style="max-width:760px;margin-bottom:16px;border-color:#E4B79C;background:var(--warn-bg)">
@@ -74,6 +75,10 @@
 
 <button type="submit">儲存</button>
 <a href="{{ next }}" style="margin-left:12px">取消</a>
+{% if editing %}
+<button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
+        onclick="return confirm('刪除客戶「{{ cust.display_name }}」?已經有訂單的客戶沒辦法刪除。')">刪除</button>
+{% endif %}
 </form>
 
 {% if not editing %}
