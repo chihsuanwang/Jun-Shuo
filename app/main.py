@@ -674,7 +674,12 @@ async def product_save(request: Request):
 def batches_page(request: Request):
     rows = Q.batch_report(None, "latest")
     rows.sort(key=lambda r: r["batch_code"], reverse=True)
-    return tpl.TemplateResponse("batches.html", dict(request=request, active="batch", rows=rows))
+    return tpl.TemplateResponse("batches.html", dict(
+        request=request, active="batch", rows=rows,
+        stock_rows=Q.stock_on_hand(),
+        products=q("SELECT product_id,sku,name FROM product WHERE status='在售' ORDER BY sku"),
+        batch_opts=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code DESC"),
+        in_types=STOCK_IN_TYPES, adj_types=STOCK_ADJ_TYPES))
 
 @app.get("/batches/new", response_class=HTMLResponse)
 def batch_new(request: Request):
@@ -1496,12 +1501,12 @@ async def stock_move_add(request: Request):
         pid = int(f.get("product_id"))
         qty = float(f.get("qty") or 0)
     except (TypeError, ValueError):
-        return RedirectResponse("/stock", status_code=303)
+        return RedirectResponse("/batches", status_code=303)
     mtype = (f.get("move_type") or "分裝入庫").strip()
     bid = f.get("batch_id")
     bid = int(bid) if bid and bid.isdigit() else None
     if qty == 0:
-        return RedirectResponse("/stock", status_code=303)
+        return RedirectResponse("/batches", status_code=303)
     # 入庫類一律記正,調整類依使用者填的正負,損耗報廢一律記負
     if mtype in ("分裝入庫", "退貨入庫", "期初庫存"):
         qty = abs(qty)
@@ -1511,7 +1516,7 @@ async def stock_move_add(request: Request):
                VALUES(?,?,?,?,?,?)""",
             (f.get("move_date") or dt.date.today().isoformat(), pid, bid, qty, mtype,
              (f.get("note") or "").strip() or None))
-    return RedirectResponse("/stock", status_code=303)
+    return RedirectResponse("/batches", status_code=303)
 
 
 # ---------- 出貨作業:揀貨單 / 標籤 / 食品標示 ---------------
