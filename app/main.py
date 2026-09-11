@@ -332,7 +332,7 @@ TAX_CLASSES = ['待確認', '應稅', '免稅', '零稅率']
 @app.get("/product-lines", response_class=HTMLResponse)
 def product_lines(request: Request):
     bus = q("SELECT bu_id, name, sort FROM business_unit ORDER BY sort, bu_id")
-    groups = q("""SELECT g.pg_id, g.bu_id, g.name, g.tax_class, g.sort,
+    groups = q("""SELECT g.pg_id, g.bu_id, g.name, g.sort,
                     (SELECT COUNT(*) FROM product p WHERE p.product_group_id=g.pg_id) n_sku
                   FROM product_group g ORDER BY g.sort, g.pg_id""")
     skus = q("""SELECT product_id, sku, name, status, product_group_id
@@ -346,7 +346,7 @@ def product_lines(request: Request):
     unassigned = [s for s in skus if s["product_group_id"] is None]
     return tpl.TemplateResponse("product_lines.html", dict(
         request=request, active="prodline",
-        bus=bus, groups=groups, skus=skus, unassigned=unassigned, tax_classes=TAX_CLASSES))
+        bus=bus, groups=groups, skus=skus, unassigned=unassigned))
 
 @app.post("/product-lines/bu")
 async def product_line_bu_save(request: Request):
@@ -377,26 +377,21 @@ async def product_line_group_save(request: Request):
             execute("DELETE FROM product_group WHERE pg_id=?", (int(gid),))
         return RedirectResponse("/product-lines", status_code=303)
     name = (f.get("name") or "").strip()
-    tc = (f.get("tax_class") or "待確認").strip()
-    if tc not in TAX_CLASSES:
-        tc = "待確認"
     if gid:
         row = q("SELECT bu_id FROM product_group WHERE pg_id=?", (int(gid),))
         if not row:
             return RedirectResponse("/product-lines", status_code=303)
         dup = q("SELECT pg_id FROM product_group WHERE bu_id=? AND name=?", (row[0]["bu_id"], name))
         if name and (not dup or dup[0]["pg_id"] == int(gid)):
-            execute("UPDATE product_group SET name=?, tax_class=? WHERE pg_id=?", (name, tc, int(gid)))
-        else:
-            execute("UPDATE product_group SET tax_class=? WHERE pg_id=?", (tc, int(gid)))
+            execute("UPDATE product_group SET name=? WHERE pg_id=?", (name, int(gid)))
     else:
         bu_id = f.get("bu_id")
         if not (name and bu_id):
             return RedirectResponse("/product-lines", status_code=303)
         if not q("SELECT 1 FROM product_group WHERE bu_id=? AND name=?", (int(bu_id), name)):
             n = q("SELECT COALESCE(MAX(sort),0)+1 s FROM product_group")[0]["s"]
-            execute("INSERT INTO product_group(bu_id,name,tax_class,sort) VALUES(?,?,?,?)",
-                    (int(bu_id), name, tc, n))
+            execute("INSERT INTO product_group(bu_id,name,sort) VALUES(?,?,?)",
+                    (int(bu_id), name, n))
     return RedirectResponse("/product-lines", status_code=303)
 
 @app.post("/product-lines/assign")
@@ -483,9 +478,8 @@ def purchases_page(request: Request):
                  WHERE {' AND '.join(where)}
                  ORDER BY p.purchase_date DESC, p.purchase_id DESC""", args)
     total = sum(r["amount"] for r in rows)
-    tax_total = sum(r["tax_amount"] for r in rows if r["tax_deductible"])
     return tpl.TemplateResponse("purchases.html", dict(
-        request=request, active="purchase", rows=rows, total=total, tax_total=tax_total,
+        request=request, active="purchase", rows=rows, total=total,
         groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
         yms=[r["ym"] for r in q("SELECT DISTINCT substr(purchase_date,1,7) ym FROM purchase ORDER BY ym DESC")],
         pg_sel=pgv, ym_sel=ym))
@@ -519,9 +513,7 @@ async def purchase_save(request: Request):
         supplier_id=(int(f.get("supplier_id")) if (f.get("supplier_id") or "").isdigit() else None),
         category=g("category"),
         product_group_id=(int(pgv) if pgv.isdigit() else None),
-        amount=fl("amount"), tax_amount=fl("tax_amount"),
-        tax_deductible=(1 if f.get("tax_deductible") else 0),
-        doc_type=g("doc_type"),
+        amount=fl("amount"),
         is_fixed_asset=(1 if f.get("is_fixed_asset") else 0),
         note=g("note"))
     if pid:
@@ -1395,9 +1387,7 @@ async def finance_expense_save(request: Request):
         ym=ym, category=cat, amount=fl("amount"),
         product_group_id=(int(pgv) if pgv.isdigit() else None),
         amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
-        tax_amount=fl("tax_amount"),
-        tax_deductible=(1 if f.get("tax_deductible") else 0),
-        doc_type=g("doc_type"), note=g("note"))
+        note=g("note"))
     if eid:
         sets = ",".join(f"{k}=:{k}" for k in cols)
         execute(f"UPDATE op_expense SET {sets}, updated_at=datetime('now','localtime') WHERE expense_id=:id",

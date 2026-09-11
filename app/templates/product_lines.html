@@ -37,14 +37,10 @@
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <strong>{{ g.name }}</strong>
         <span class="muted" style="font-size:12px">{{ g.n_sku }} 項商品</span>
-        <span class="muted" style="font-size:12px">· 稅別 {{ g.tax_class }}</span>
         <form method="post" action="/product-lines/group"
               style="display:flex;gap:6px;align-items:center;margin-left:auto">
           <input type="hidden" name="pg_id" value="{{ g.pg_id }}">
           <input name="name" value="{{ g.name }}" style="width:110px;padding:4px 8px;font-size:12px">
-          <select name="tax_class" style="width:96px;padding:4px;font-size:12px">
-            {% for t in tax_classes %}<option {{ 'selected' if t == g.tax_class }}>{{ t }}</option>{% endfor %}
-          </select>
           <button class="ghost" style="padding:4px 10px;font-size:12px">存</button>
         </form>
       </div>
@@ -84,9 +80,6 @@
           <select name="bu_id" required>{% for b in bus %}<option value="{{ b.bu_id }}">{{ b.name }}</option>{% endfor %}</select>
         </div>
         <div><label>產品線名稱</label><input name="name" placeholder="例:桂圓茶包" required></div>
-      </div>
-      <div style="margin-top:10px"><label>稅別</label>
-        <select name="tax_class">{% for t in tax_classes %}<option>{{ t }}</option>{% endfor %}</select>
       </div>
       <div style="margin-top:12px"><button type="submit">新增</button></div>
     </form>
