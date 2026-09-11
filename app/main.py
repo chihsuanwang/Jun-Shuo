@@ -1130,6 +1130,28 @@ async def order_return_create(request: Request, oid: int):
                  f"退貨單#{rid}"))
     return RedirectResponse(f"/orders/{oid}?rok=1", status_code=303)
 
+@app.post("/orders/{oid}/return_all")
+async def order_return_all(request: Request, oid: int):
+    o, lines = Q.order_get(oid)
+    if not o:
+        return RedirectResponse("/orders", status_code=303)
+    date = dt.date.today().isoformat()
+    season = Q.season_of(date)
+    for ln in lines:
+        if ln["is_gift"] or not ln["line_subtotal"]:
+            continue
+        rid = execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,
+                     product_id,qty,batch_id,restock,reason)
+                     VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (oid, date, season, "退貨", ln["line_subtotal"],
+                 ln["product_id"], ln["qty"], ln["batch_id"], 1, "整筆退單"))
+        execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,ref_order_id,note)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (date, ln["product_id"], ln["batch_id"], abs(ln["qty"]), "退貨入庫", oid,
+                 f"退貨單#{rid}"))
+    return RedirectResponse(f"/orders/{oid}?rok=1", status_code=303)
+
+
 @app.post("/returns/{rid}/delete")
 async def order_return_delete(request: Request, rid: int):
     r = q("SELECT order_id FROM sales_return WHERE return_id=?", (rid,))

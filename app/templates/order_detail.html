@@ -142,22 +142,30 @@
     {% endfor %}</tbody>
   </table>
   {% endif %}
-  <form method="post" action="/orders/{{ o.order_id }}/return">
-    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(155px,1fr))">
-      <div><label>發生日期</label><input type="date" name="return_date" value="{{ today }}"></div>
-      <div><label>類型</label><select name="kind">{% for k in return_kinds %}<option>{{ k }}</option>{% endfor %}</select></div>
-      <div><label>沖減金額</label><input name="amount" type="number" step="1" min="0" required></div>
-      <div><label>退回品項<span class="muted">（有退實體貨才選）</span></label><select name="product_id"><option value="">—</option>
-        {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}</option>{% endfor %}</select></div>
-      <div><label>數量</label><input name="qty" type="number" step="0.01" min="0"></div>
-      <div><label>批次</label><select name="batch_id"><option value="">—</option>
-        {% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }} 批</option>{% endfor %}</select></div>
-      <div><label>貨可再賣</label><select name="restock">
-        <option value="">否（折讓 / 報廢）</option><option value="1">是,加回庫存</option></select></div>
-      <div style="grid-column:1/-1"><label>原因</label><input name="reason" placeholder="客訴 / 破損 / 客戶退貨 …"></div>
-    </div>
-    <button type="submit" style="margin-top:10px">登記退貨 / 折讓</button>
+  <form method="post" action="/orders/{{ o.order_id }}/return_all"
+        onsubmit="return confirm('整筆退單:這張訂單的所有品項都會退貨入庫、金額全額沖銷,確定嗎?')">
+    <button type="submit" class="ghost">整筆退單(全退)</button>
+    <span class="muted" style="font-size:12px;margin-left:8px">貨全部退回庫存、金額全額沖銷 —— 適合客人整張訂單退貨的情況</span>
   </form>
+  <details style="margin-top:14px">
+    <summary class="muted" style="font-size:12px;cursor:pointer">只退部分品項 / 折讓(進階)</summary>
+    <form method="post" action="/orders/{{ o.order_id }}/return" style="margin-top:10px">
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(155px,1fr))">
+        <div><label>發生日期</label><input type="date" name="return_date" value="{{ today }}"></div>
+        <div><label>類型</label><select name="kind">{% for k in return_kinds %}<option>{{ k }}</option>{% endfor %}</select></div>
+        <div><label>沖減金額</label><input name="amount" type="number" step="1" min="0" required></div>
+        <div><label>退回品項<span class="muted">（有退實體貨才選）</span></label><select name="product_id"><option value="">—</option>
+          {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}</option>{% endfor %}</select></div>
+        <div><label>數量</label><input name="qty" type="number" step="0.01" min="0"></div>
+        <div><label>批次</label><select name="batch_id"><option value="">—</option>
+          {% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }} 批</option>{% endfor %}</select></div>
+        <div><label>貨可再賣</label><select name="restock">
+          <option value="">否(折讓 / 報廢)</option><option value="1">是,加回庫存</option></select></div>
+        <div style="grid-column:1/-1"><label>原因</label><input name="reason" placeholder="客訴 / 破損 / 客戶退貨 …"></div>
+      </div>
+      <button type="submit" style="margin-top:10px">登記退貨 / 折讓</button>
+    </form>
+  </details>
   <p class="muted" style="font-size:11px;margin-top:8px">
     在「發生日期」的月份 / 產季沖減營收(不是原訂單月份)。「是,加回庫存」= 好貨退回可再賣 →
     自動產生「退貨入庫」、成本也回沖;否 = 折讓或報廢,只沖營收。
