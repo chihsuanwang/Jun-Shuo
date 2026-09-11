@@ -55,7 +55,7 @@
         <td><select name="batch_id"><option value="">—</option>
           {% for b in batches %}<option value="{{ b.batch_id }}" {{ 'selected' if b.batch_id==l.batch_id }}>{{ b.batch_code }} 批</option>{% endfor %}
         </select></td>
-        <td><input name="qty" type="number" step="0.01" min="0" value="{{ l.qty }}"></td>
+        <td><input name="qty" type="number" step="1" min="0" value="{{ l.qty|round(0)|int }}"></td>
         <td><input name="unit_price" type="number" step="1" min="0" value="{{ l.unit_price|round(0) }}"></td>
         <td class="linesub r">{{ (l.qty * l.unit_price)|round(0)|int }}</td>
         <td><select name="is_gift"><option>否</option><option {{ 'selected' if l.is_gift }}>是</option></select></td>
@@ -66,7 +66,7 @@
       <tr class="line">
         <td><select name="product_id">{% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}</select></td>
         <td><select name="batch_id"><option value="">—</option>{% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }} 批</option>{% endfor %}</select></td>
-        <td><input name="qty" type="number" step="0.01" min="0"></td>
+        <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
         <td class="linesub r">0</td>
         <td><select name="is_gift"><option>否</option><option>是</option></select></td>
