@@ -21,12 +21,6 @@
     </div>
     <div><label>類別</label><select name="category"><option value="">—</option>
       {% for x in cats %}<option {{ 'selected' if p and p.category == x }}>{{ x }}</option>{% endfor %}</select></div>
-    <div><label>歸哪條產品線</label>
-      <select name="product_group_id">
-        <option value="">共同(不特定一條線)</option>
-        {% for g in groups %}<option value="{{ g.pg_id }}" {{ 'selected' if p and p.product_group_id == g.pg_id }}>{{ g.name }}</option>{% endfor %}
-      </select>
-    </div>
     <div><label>金額</label><input name="amount" type="number" step="1" value="{{ p.amount|round(0) if p else '' }}" required></div>
     <div style="display:flex;align-items:center;padding-top:22px">
       <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">

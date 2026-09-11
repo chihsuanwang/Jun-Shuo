@@ -17,13 +17,6 @@
       <select name="category" required>
         {% for c in cats %}<option {{ 'selected' if e and e.category == c }}>{{ c }}</option>{% endfor %}
       </select></div>
-    <div><label>歸哪條產品線</label>
-      <select name="product_group_id">
-        <option value="">共同(不特定一條線)</option>
-        {% for g in groups %}<option value="{{ g.pg_id }}" {{ 'selected' if e and e.product_group_id == g.pg_id }}>{{ g.name }}</option>{% endfor %}
-      </select>
-      <div class="muted" style="font-size:11px;margin-top:3px">直接人工 / 田間管理 / 驗證費通常歸某條線;人事 / 場地 / 行銷多半是共同</div>
-    </div>
     <div><label>金額(實際花的錢)</label>
       <input name="amount" type="number" step="1" value="{{ e.amount|round(0) if e else '' }}" required></div>
     <div><label>攤提月數(一次性大支出才填)</label>

@@ -7,14 +7,14 @@
 </div>
 <hr class="rule">
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">
-  每個月每個項目登一筆(淡月也要填)。可標「歸哪條產品線」或「共同」。
+  每個月每個項目登一筆(淡月也要填)。
   一次性的大支出(例:研發、設備)可設「攤提月數」,系統會分月認列。
 </p>
 
 <div class="card" style="overflow-x:auto">
   <table class="sortable">
     <thead><tr>
-      <th>月份</th><th>項目</th><th>產品線</th>
+      <th>月份</th><th>項目</th>
       <th data-num>金額</th><th>攤提</th>
       <th>修改日期</th><th>備註</th><th></th>
     </tr></thead>
@@ -22,14 +22,13 @@
     <tr>
       <td>{{ r.ym }}</td>
       <td>{{ r.category }}</td>
-      <td>{{ r.pg_name or '共同' }}</td>
       <td>{{ r.amount|money }}</td>
       <td>{{ (r.amortize_months ~ ' 個月') if r.amortize_months else '—' }}</td>
       <td class="muted">{{ (r.updated_at or '')[:16] }}</td>
       <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
       <td><a href="/finance/expenses/{{ r.expense_id }}/edit">編輯</a></td>
     </tr>
-    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
 <div class="muted" style="font-size:11px;margin-top:8px">

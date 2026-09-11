@@ -20,11 +20,6 @@
         <option value="">—</option>
         {% for c, yrs in cats.items() %}<option value="{{ c }}" data-life="{{ yrs }}" {{ 'selected' if d.category == c }}>{{ c }}({{ yrs }} 年)</option>{% endfor %}
       </select></div>
-    <div><label>歸哪條產品線</label>
-      <select name="product_group_id">
-        <option value="">共同(不特定一條線)</option>
-        {% for g in groups %}<option value="{{ g.pg_id }}" {{ 'selected' if d.product_group_id == g.pg_id }}>{{ g.name }}</option>{% endfor %}
-      </select></div>
     <div><label>取得日</label><input name="acquire_date" type="date" value="{{ d.acquire_date or today }}" required></div>
     <div><label>取得成本</label><input name="cost" id="cost" type="number" step="1" value="{{ d.cost|round(0) if d.cost else '' }}" required></div>
     <div><label>政府補助款(沒有填 0)</label><input name="grant_amount" id="grant" type="number" step="1" value="{{ d.grant_amount|round(0) if d.grant_amount else 0 }}"></div>

@@ -460,32 +460,24 @@ async def supplier_save(request: Request):
 def _purchase_form_ctx(request, p):
     return dict(request=request, active="purchase", p=p,
                suppliers=q("SELECT supplier_id, name FROM supplier ORDER BY name"),
-               groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
                cats=SUP_CATS, docs=DOC_TYPES, today=dt.date.today().isoformat())
 
 @app.get("/purchases", response_class=HTMLResponse)
 def purchases_page(request: Request):
-    pgv = request.query_params.get("pg") or ""
     ym = request.query_params.get("ym") or ""
     where, args = ["1=1"], []
-    if pgv == "common":
-        where.append("p.product_group_id IS NULL")
-    elif pgv.isdigit():
-        where.append("p.product_group_id=?"); args.append(int(pgv))
     if ym:
         where.append("substr(p.purchase_date,1,7)=?"); args.append(ym)
-    rows = q(f"""SELECT p.*, s.name sup_name, g.name pg_name,
+    rows = q(f"""SELECT p.*, s.name sup_name,
                         (SELECT COUNT(*) FROM fixed_asset fa WHERE fa.source_purchase_id=p.purchase_id) has_card
                  FROM purchase p LEFT JOIN supplier s ON s.supplier_id=p.supplier_id
-                 LEFT JOIN product_group g ON g.pg_id=p.product_group_id
                  WHERE {' AND '.join(where)}
                  ORDER BY p.purchase_date DESC, p.purchase_id DESC""", args)
     total = sum(r["amount"] for r in rows)
     return tpl.TemplateResponse("purchases.html", dict(
         request=request, active="purchase", rows=rows, total=total,
-        groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
         yms=[r["ym"] for r in q("SELECT DISTINCT substr(purchase_date,1,7) ym FROM purchase ORDER BY ym DESC")],
-        pg_sel=pgv, ym_sel=ym))
+        ym_sel=ym))
 
 @app.get("/purchases/new", response_class=HTMLResponse)
 def purchase_new(request: Request):
@@ -510,12 +502,10 @@ async def purchase_save(request: Request):
     date = (f.get("purchase_date") or "").strip()
     if not date:
         return RedirectResponse("/purchases", status_code=303)
-    pgv = f.get("product_group_id") or ""
     cols = dict(
         purchase_date=date,
         supplier_id=(int(f.get("supplier_id")) if (f.get("supplier_id") or "").isdigit() else None),
         category=g("category"),
-        product_group_id=(int(pgv) if pgv.isdigit() else None),
         amount=fl("amount"),
         is_fixed_asset=(1 if f.get("is_fixed_asset") else 0),
         note=g("note"))
@@ -547,8 +537,7 @@ def assets_page(request: Request):
 
 def _asset_form_ctx(request, a, prefill=None):
     return dict(request=request, active="asset", a=a, prefill=prefill,
-               cats=ASSET_CATS, groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
-               today=dt.date.today().isoformat())
+               cats=ASSET_CATS, today=dt.date.today().isoformat())
 
 @app.get("/assets/new", response_class=HTMLResponse)
 def asset_new(request: Request):
@@ -559,8 +548,7 @@ def asset_new(request: Request):
         if r:
             p = r[0]
             prefill = dict(source_purchase_id=p["purchase_id"], name=(p["note"] or "設備"),
-                           acquire_date=p["purchase_date"], cost=p["amount"],
-                           product_group_id=p["product_group_id"])
+                           acquire_date=p["purchase_date"], cost=p["amount"])
     return tpl.TemplateResponse("asset_form.html", _asset_form_ctx(request, None, prefill))
 
 @app.get("/assets/{aid}/edit", response_class=HTMLResponse)
@@ -588,11 +576,9 @@ async def asset_save(request: Request):
     grant = fl("grant_amount")
     sv = (f.get("salvage") or "").strip()
     salvage = float(sv) if sv else round(max(0.0, cost - grant) / (life + 1))
-    pgv = f.get("product_group_id") or ""
     spv = f.get("source_purchase_id") or ""
     cols = dict(
         name=name, category=g("category"),
-        product_group_id=(int(pgv) if pgv.isdigit() else None),
         acquire_date=date, cost=cost, grant_amount=grant, salvage=salvage,
         life_years=life, method="平均法",
         source_purchase_id=(int(spv) if spv.isdigit() else None),
@@ -1373,16 +1359,13 @@ def finance_page(request: Request):
 
 @app.get("/finance/expenses", response_class=HTMLResponse)
 def finance_expenses(request: Request):
-    rows = q("""SELECT e.*, g.name pg_name
-                FROM op_expense e LEFT JOIN product_group g ON g.pg_id=e.product_group_id
-                ORDER BY e.ym DESC, e.category""")
+    rows = q("SELECT * FROM op_expense ORDER BY ym DESC, category")
     return tpl.TemplateResponse("finance_expenses.html", dict(
         request=request, active="finance", rows=rows))
 
 def _expense_form_ctx(request, e):
     months = Q.months_with_data()
     return dict(request=request, active="finance", e=e, cats=Q.OPEX_CATS,
-               groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
                docs=DOC_TYPES,
                ym_default=(months[-1] if months else dt.date.today().strftime("%Y-%m")))
 
@@ -1410,11 +1393,9 @@ async def finance_expense_save(request: Request):
     cat = (f.get("category") or "").strip()
     if not (ym and cat):
         return RedirectResponse("/finance/expenses", status_code=303)
-    pgv = f.get("product_group_id") or ""
     am = f.get("amortize_months") or ""
     cols = dict(
         ym=ym, category=cat, amount=fl("amount"),
-        product_group_id=(int(pgv) if pgv.isdigit() else None),
         amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
         note=g("note"))
     if eid:

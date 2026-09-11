@@ -494,9 +494,9 @@ def asset_list(as_of_ym=None):
     """固定資產卡 + 到 as_of_ym 為止的累計折舊、帳面淨值。"""
     if not as_of_ym:
         as_of_ym = as_of()[:7]
-    rows = q("""SELECT a.*, g.name pg_name,
+    rows = q("""SELECT a.*,
                        (SELECT COUNT(*) FROM purchase p WHERE p.purchase_id=a.source_purchase_id) from_buy
-                FROM fixed_asset a LEFT JOIN product_group g ON g.pg_id=a.product_group_id
+                FROM fixed_asset a
                 ORDER BY a.acquire_date DESC, a.asset_id DESC""")
     for a in rows:
         base = asset_dep_base(a)
