@@ -1,10 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ o.order_no }} · 桂圓帳房{% endblock %}
 {% block body %}
-<div class="head">
+<div class="head" style="position:sticky;top:0;z-index:5;background:var(--paper);padding-top:4px">
   <div><div class="sup"><a href="/orders">訂單</a> / {{ o.order_no }}</div>
     <h1 class="serif">{{ o.order_no }} · {{ o.cust or '—' }}</h1></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <button type="submit" form="orderForm">儲存</button>
+    <a href="/orders">回列表</a>
     {% if o.payment_status == '已收款' %}
     <span class="muted" style="font-size:13px">已收款 · 實收 {{ o.paid_amount|money }}{% if o.paid_date %}（{{ o.paid_date }}）{% endif %}</span>
     {% else %}
@@ -32,7 +34,7 @@
 {% if request.query_params.get('rok') %}<div class="ok">退貨 / 折讓已登記。</div>{% endif %}
 {% if request.query_params.get('rerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">沖減金額要大於 0。</div>{% endif %}
 
-<form method="post" action="/orders/{{ o.order_id }}">
+<form method="post" action="/orders/{{ o.order_id }}" id="orderForm">
 
 <div class="card" style="margin-bottom:16px;position:relative">
   <h3 class="serif">基本</h3>
