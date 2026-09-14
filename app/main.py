@@ -1460,16 +1460,11 @@ async def targets_save(request: Request):
 
 
 # ---------- 庫存 --------------------------------------------
-STOCK_IN_TYPES  = ["分裝入庫", "退貨入庫", "期初庫存"]
-STOCK_ADJ_TYPES = ["盤點調整", "損耗報廢"]
-
 @app.get("/stock", response_class=HTMLResponse)
 def stock_page(request: Request):
     return tpl.TemplateResponse("stock.html", dict(
         request=request, active="stock",
-        rows=Q.stock_on_hand(),
-        products=q("SELECT product_id,sku,name FROM product WHERE status='在售' ORDER BY sku"),
-        in_types=STOCK_IN_TYPES, adj_types=STOCK_ADJ_TYPES))
+        rows=Q.stock_on_hand()))
 
 @app.get("/stock/moves", response_class=HTMLResponse)
 def stock_moves_page(request: Request):
@@ -1479,28 +1474,6 @@ def stock_moves_page(request: Request):
         rows=Q.stock_moves(pid or None, request.query_params.get("type") or None),
         products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
         pid=pid or ""))
-
-@app.post("/stock/move")
-async def stock_move_add(request: Request):
-    f = await request.form()
-    try:
-        pid = int(f.get("product_id"))
-        qty = float(f.get("qty") or 0)
-    except (TypeError, ValueError):
-        return RedirectResponse("/stock", status_code=303)
-    mtype = (f.get("move_type") or "分裝入庫").strip()
-    if qty == 0:
-        return RedirectResponse("/stock", status_code=303)
-    # 入庫類一律記正,調整類依使用者填的正負,損耗報廢一律記負
-    if mtype in ("分裝入庫", "退貨入庫", "期初庫存"):
-        qty = abs(qty)
-    elif mtype == "損耗報廢":
-        qty = -abs(qty)
-    execute("""INSERT INTO stock_move(move_date,product_id,qty,move_type,note)
-               VALUES(?,?,?,?,?)""",
-            (f.get("move_date") or dt.date.today().isoformat(), pid, qty, mtype,
-             (f.get("note") or "").strip() or None))
-    return RedirectResponse("/stock", status_code=303)
 
 
 # ---------- 出貨作業:揀貨單 / 標籤 / 食品標示 ---------------

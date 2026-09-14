@@ -22,45 +22,6 @@
       </tr>
     {% endfor %}</tbody>
   </table>
-  <p class="muted" style="font-size:11px;margin-top:6px">現有量 = 分裝入庫 + 退貨 + 盤點調整 − 銷售出庫 − 贈送出庫 − 報廢。負數代表賣超過現貨(通常是預購)。</p>
-</div>
-
-<div class="grid" style="grid-template-columns:1fr 1fr">
-  <div class="card">
-    <h3 class="serif">分裝入庫 / 期初 / 退貨入庫</h3>
-    <form method="post" action="/stock/move">
-      <div class="grid" style="grid-template-columns:1fr 1fr">
-        <div><label>日期</label><input type="date" name="move_date" value="{{ '' }}"></div>
-        <div><label>類型</label><select name="move_type">
-          {% for t in in_types %}<option>{{ t }}</option>{% endfor %}
-        </select></div>
-        <div><label>商品</label><select name="product_id" required>
-          {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
-        </select></div>
-        <div><label>數量(入庫,正數)</label><input name="qty" type="number" step="1" min="0" required></div>
-        <div><label>備註</label><input name="note" placeholder="例:2025-A 分裝 200 包"></div>
-      </div>
-      <div style="margin-top:12px"><button type="submit">登錄入庫</button></div>
-    </form>
-  </div>
-
-  <div class="card">
-    <h3 class="serif">盤點調整 / 損耗報廢</h3>
-    <form method="post" action="/stock/move">
-      <div class="grid" style="grid-template-columns:1fr 1fr">
-        <div><label>日期</label><input type="date" name="move_date"></div>
-        <div><label>類型</label><select name="move_type">
-          {% for t in adj_types %}<option>{{ t }}</option>{% endfor %}
-        </select></div>
-        <div><label>商品</label><select name="product_id" required>
-          {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
-        </select></div>
-        <div><label>數量</label><input name="qty" type="number" step="1" required></div>
-        <div><label>備註</label><input name="note" placeholder="盤點:填差異(±);報廢:填數量"></div>
-      </div>
-      <p class="muted" style="font-size:11px;margin-top:8px">盤點調整:實際比帳面多填正、少填負。損耗報廢:填數量即可(自動記為出庫)。</p>
-      <div style="margin-top:6px"><button type="submit">登錄調整</button></div>
-    </form>
-  </div>
+  <p class="muted" style="font-size:11px;margin-top:6px">現有量 = 銷售出庫 + 贈送出庫(訂單自動產生)。負數代表賣超過現貨(通常是預購)。</p>
 </div>
 {% endblock %}
