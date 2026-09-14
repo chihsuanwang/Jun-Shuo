@@ -5,6 +5,7 @@
   <div><div class="sup"><a href="/stock">庫存</a> / 異動明細</div><h1 class="serif">庫存異動明細</h1></div>
 </div>
 <hr class="rule">
+{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這筆是訂單自動產生的異動,沒辦法直接刪除(改/刪訂單它會跟著調整)。</div>{% endif %}
 
 <form method="get" action="/stock/moves" style="margin-bottom:14px;display:flex;gap:8px;font-size:13px">
   <select name="product_id" onchange="this.form.submit()">
@@ -15,7 +16,7 @@
 
 <div class="card">
   <table>
-    <thead><tr><th>日期</th><th>商品</th><th>類型</th><th>數量</th><th>關聯訂單</th><th style="text-align:left">備註</th></tr></thead>
+    <thead><tr><th>日期</th><th>商品</th><th>類型</th><th>數量</th><th>關聯訂單</th><th style="text-align:left">備註</th><th></th></tr></thead>
     <tbody>{% for r in rows %}
       <tr>
         <td>{{ r.move_date }}</td>
@@ -24,8 +25,14 @@
         <td class="{{ 'neg' if r.qty < 0 else 'pos' }}">{{ r.qty|round(0) }}</td>
         <td>{% if r.order_no %}<a href="/orders/{{ r.ref_order_id }}">{{ r.order_no }}</a>{% else %}—{% endif %}</td>
         <td style="text-align:left" class="muted">{{ r.note or '' }}</td>
+        <td>{% if not r.ref_order_id %}
+          <form method="post" action="/stock/moves/{{ r.move_id }}/delete" style="display:inline"
+                onsubmit="return confirm('刪除這筆異動紀錄?（現有量會跟著回沖)')">
+            <button type="submit" class="ghost" style="padding:3px 9px;font-size:12px">刪</button>
+          </form>
+        {% endif %}</td>
       </tr>
-    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">沒有異動紀錄。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">沒有異動紀錄。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
 {% endblock %}

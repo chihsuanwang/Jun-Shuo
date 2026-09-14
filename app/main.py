@@ -1502,6 +1502,17 @@ async def stock_move_add(request: Request):
              (f.get("note") or "").strip() or None))
     return RedirectResponse("/stock", status_code=303)
 
+@app.post("/stock/moves/{mid}/delete")
+async def stock_move_delete(request: Request, mid: int):
+    r = q("SELECT ref_order_id FROM stock_move WHERE move_id=?", (mid,))
+    if not r:
+        return RedirectResponse("/stock/moves", status_code=303)
+    if r[0]["ref_order_id"]:
+        return RedirectResponse("/stock/moves?perr=1", status_code=303)
+    execute("DELETE FROM stock_move WHERE move_id=?", (mid,))
+    f = await request.form()
+    return RedirectResponse(f.get("next") or "/stock/moves", status_code=303)
+
 
 # ---------- 出貨作業:揀貨單 / 標籤 / 食品標示 ---------------
 SENDER = {"name": "郡碩農創", "place": "南投縣中寮鄉", "addr": "[寄件地址]", "phone": "[寄件電話]"}
