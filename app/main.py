@@ -627,14 +627,37 @@ def product_new(request: Request):
         request=request, active="prod", p=None, prices={},
         segs=PRICE_SEGS, types=PROD_TYPES, forms=PKG_FORMS, uoms=UOMS, storage=STORAGE))
 
+def _product_delete_block_reason(pid):
+    """商品不能刪除的白話原因;沒有卡住的地方回傳 None。"""
+    n_orders = q("SELECT COUNT(DISTINCT order_id) n FROM order_line WHERE product_id=?", (pid,))[0]["n"]
+    on_hand = q("SELECT COALESCE(SUM(qty),0) v FROM stock_move WHERE product_id=?", (pid,))[0]["v"]
+    n_returns = q("SELECT COUNT(*) n FROM sales_return WHERE product_id=?", (pid,))[0]["n"]
+    n_batch = q("SELECT COUNT(*) n FROM batch WHERE product_id=?", (pid,))[0]["n"]
+    n_target = q("SELECT COUNT(*) n FROM sales_target WHERE product_id=?", (pid,))[0]["n"]
+    uom = (q("SELECT uom FROM product WHERE product_id=?", (pid,)) or [{}])[0].get("uom", "")
+    reasons = []
+    if n_orders:
+        reasons.append(f"有 {n_orders} 張訂單用過這個商品")
+    if on_hand:
+        reasons.append(f"現有庫存還有 {round(on_hand)} {uom}")
+    if n_returns:
+        reasons.append(f"有 {n_returns} 筆退貨紀錄")
+    if n_batch:
+        reasons.append(f"有 {n_batch} 筆舊的焙製批次紀錄")
+    if n_target:
+        reasons.append("設過產季目標")
+    return "、".join(reasons) if reasons else None
+
 @app.get("/products/{pid}/edit", response_class=HTMLResponse)
 def product_edit(request: Request, pid: int):
     p = q("SELECT * FROM product WHERE product_id=?", (pid,))
     if not p:
         return RedirectResponse("/products", status_code=303)
+    block_reason = _product_delete_block_reason(pid) if request.query_params.get("perr") else None
     return tpl.TemplateResponse("product_form.html", dict(
         request=request, active="prod", p=p[0], prices=_price_map(pid),
-        segs=PRICE_SEGS, types=PROD_TYPES, forms=PKG_FORMS, uoms=UOMS, storage=STORAGE))
+        segs=PRICE_SEGS, types=PROD_TYPES, forms=PKG_FORMS, uoms=UOMS, storage=STORAGE,
+        block_reason=block_reason))
 
 @app.post("/products")
 async def product_save(request: Request):
@@ -643,14 +666,7 @@ async def product_save(request: Request):
         pid = f.get("product_id")
         if pid:
             pid = int(pid)
-            used = (
-                q("SELECT 1 FROM order_line WHERE product_id=? LIMIT 1", (pid,)) or
-                q("SELECT 1 FROM stock_move WHERE product_id=? LIMIT 1", (pid,)) or
-                q("SELECT 1 FROM sales_return WHERE product_id=? LIMIT 1", (pid,)) or
-                q("SELECT 1 FROM batch WHERE product_id=? LIMIT 1", (pid,)) or
-                q("SELECT 1 FROM sales_target WHERE product_id=? LIMIT 1", (pid,))
-            )
-            if used:
+            if _product_delete_block_reason(pid):
                 return RedirectResponse(f"/products/{pid}/edit?perr=1", status_code=303)
             execute("DELETE FROM price_list WHERE product_id=?", (pid,))
             execute("DELETE FROM product WHERE product_id=?", (pid,))
@@ -816,9 +832,10 @@ def customer_edit(request: Request, cid: int, next: str = ""):
     if not cust:
         return RedirectResponse("/customers", status_code=303)
     addr = q("SELECT * FROM address WHERE customer_id=? ORDER BY is_default DESC LIMIT 1", (cid,))
+    n_orders = q('SELECT COUNT(*) n FROM "order" WHERE customer_id=?', (cid,))[0]["n"] if request.query_params.get("perr") else 0
     return tpl.TemplateResponse("customer_form.html", dict(
         request=request, active="cust", cust=cust[0], addr=(addr[0] if addr else None),
-        next=next or f"/customers/{cid}", dups=None,
+        next=next or f"/customers/{cid}", dups=None, n_orders=n_orders,
         aliases=q("SELECT alias_text FROM customer_alias WHERE customer_id=? ORDER BY alias_id", (cid,)),
         channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id"),
         types=CUST_TYPES, segs=CUST_SEGS, docs=DOC_PREFS))

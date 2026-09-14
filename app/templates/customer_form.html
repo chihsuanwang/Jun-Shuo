@@ -7,7 +7,7 @@
   <h1 class="serif">{{ cust.display_name if editing else '新增客戶' }}</h1>
 </div></div>
 <hr class="rule">
-{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這位客戶已經有訂單紀錄,沒辦法刪除。</div>{% endif %}
+{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這位客戶沒辦法刪除,因為已經有 {{ n_orders }} 張訂單是這位客戶的。刪掉訂單會找不到客戶資料,所以系統擋住了。</div>{% endif %}
 
 {% if dups %}
 <div class="card" style="max-width:760px;margin-bottom:16px;border-color:#E4B79C;background:var(--warn-bg)">

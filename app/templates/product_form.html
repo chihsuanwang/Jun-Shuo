@@ -6,7 +6,7 @@
   <h1 class="serif">{{ p.name if p else '新增商品' }}</h1>
 </div></div>
 <hr class="rule">
-{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這個商品已經有訂單或進出貨紀錄,沒辦法刪除,可以改成「停售」。</div>{% endif %}
+{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這個商品沒辦法刪除,因為{{ block_reason }}。可以改成「停售」,商品目錄還看得到,但新訂單不會再選到它。</div>{% endif %}
 
 <form method="post" action="/products">
 {% if p %}<input type="hidden" name="product_id" value="{{ p.product_id }}">{% endif %}
