@@ -6,6 +6,7 @@
   <h1 class="serif">{{ c.name if c else '新增管道' }}</h1>
 </div></div>
 <hr class="rule">
+{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這個管道沒辦法刪除,因為{{ block_reason }}。</div>{% endif %}
 
 <form method="post" action="/channels">
 {% if c %}<input type="hidden" name="channel_id" value="{{ c.channel_id }}">{% endif %}
@@ -19,7 +20,12 @@
   </div>
   <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ c.note if c else '' }}"></div>
   <div style="margin-top:16px"><button type="submit">儲存</button>
-    <a href="/channels" style="margin-left:12px">取消</a></div>
+    <a href="/channels" style="margin-left:12px">取消</a>
+    {% if c %}
+    <button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
+            onclick="return confirm('刪除管道「{{ c.name }}」?')">刪除</button>
+    {% endif %}
+  </div>
 </div>
 </form>
 {% endblock %}

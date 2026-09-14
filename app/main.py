@@ -715,16 +715,40 @@ def channels_page(request: Request):
 def channel_new(request: Request):
     return tpl.TemplateResponse("channel_form.html", dict(request=request, active="chan", c=None, cats=CH_CATS))
 
+def _channel_delete_block_reason(chid):
+    """通路不能刪除的白話原因;沒有卡住的地方回傳 None。"""
+    n_orders = q('SELECT COUNT(*) n FROM "order" WHERE channel_id=?', (chid,))[0]["n"]
+    n_cust = q("SELECT COUNT(*) n FROM customer WHERE primary_channel_id=?", (chid,))[0]["n"]
+    n_price = q("SELECT COUNT(*) n FROM price_list WHERE channel_id=?", (chid,))[0]["n"]
+    reasons = []
+    if n_orders:
+        reasons.append(f"有 {n_orders} 張訂單用這個管道")
+    if n_cust:
+        reasons.append(f"有 {n_cust} 位客戶的主要管道是它")
+    if n_price:
+        reasons.append(f"有 {n_price} 筆這個管道的專屬定價")
+    return "、".join(reasons) if reasons else None
+
 @app.get("/channels/{chid}/edit", response_class=HTMLResponse)
 def channel_edit(request: Request, chid: int):
     c = q("SELECT * FROM channel WHERE channel_id=?", (chid,))
     if not c:
         return RedirectResponse("/channels", status_code=303)
-    return tpl.TemplateResponse("channel_form.html", dict(request=request, active="chan", c=c[0], cats=CH_CATS))
+    block_reason = _channel_delete_block_reason(chid) if request.query_params.get("perr") else None
+    return tpl.TemplateResponse("channel_form.html", dict(
+        request=request, active="chan", c=c[0], cats=CH_CATS, block_reason=block_reason))
 
 @app.post("/channels")
 async def channel_save(request: Request):
     f = await request.form()
+    if f.get("_delete"):
+        chid = f.get("channel_id")
+        if chid:
+            chid = int(chid)
+            if _channel_delete_block_reason(chid):
+                return RedirectResponse(f"/channels/{chid}/edit?perr=1", status_code=303)
+            execute("DELETE FROM channel WHERE channel_id=?", (chid,))
+        return RedirectResponse("/channels", status_code=303)
     g = lambda k: (f.get(k) or "").strip() or None
     cols = dict(code=(f.get("code") or "").strip(), name=(f.get("name") or "").strip(),
                 category=g("category"),

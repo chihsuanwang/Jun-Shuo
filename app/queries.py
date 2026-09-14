@@ -511,7 +511,9 @@ def returns_list(order_id=None):
 
 
 def season_finance(season):
-    """整個產季合計:銷售月的營收 − 產季 12 個月(4 月初~隔年 3 月底)的營運費用。
+    """整個產季合計:銷售月的營收 − 已經過去月份的營運費用。
+    產季全長是 4 月初~隔年 3 月底共 12 個月,但還沒發生的月份不預先算進費用裡
+    (進行中的產季只算「已經過去的月份」,不會因為費用先算滿 12 個月而顯得稅前利潤一大包負的)。
     銷貨退回 / 折讓依「發生產季」沖減(cogs 為回沖後淨額)。"""
     rev = q1(f"""SELECT COALESCE(SUM(paid_amount),0) v FROM "order" o
                 WHERE season=? AND order_kind='銷售' AND {PAID_O}""", (season,))["v"]
@@ -524,12 +526,13 @@ def season_finance(season):
     ret_gross, ret_cogs = _returns_agg(season)
     cogs_net = cogs - ret_cogs
     net_rev = rev - ret_gross
-    lo, hi = f"{season}-04", f"{season + 1}-03"
+    lo, hi_full = f"{season}-04", f"{season + 1}-03"
+    hi = min(hi_full, dt.date.today().strftime("%Y-%m"))  # 進行中的產季只算到這個月,不預先算未發生的費用
     ox_rows = opex_rows(lo, hi)
     opex_v = sum(r["amt"] for r in ox_rows)
     opex_n = len(set(r["ym"] for r in ox_rows))
     gp = net_rev - cogs_net
-    return dict(season=season, window=f"{lo} ~ {hi}",
+    return dict(season=season, window=f"{lo} ~ {hi_full}",
                 revenue=rev, returns=ret_gross, cogs=cogs_net,
                 gross_profit=gp, ship_cost=ship_cost,
                 opex=opex_v, opex_months=opex_n,

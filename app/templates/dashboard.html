@@ -42,7 +42,7 @@
       <tr class="sum"><td>= 毛利<span class="muted">（{{ fin.margin|pct }}）</span></td>
           <td class="r {{ 'neg' if fin.gross_profit < 0 }}">{{ fin.gross_profit|money }}</td></tr>
       <tr><td>− 運費</td><td class="r">−{{ fin.ship_cost|money }}</td></tr>
-      <tr><td>− 營運費用<span class="muted">（{{ fin.opex_months }} 個月,含淡季）</span></td>
+      <tr><td>− 營運費用<span class="muted">（已經過去的 {{ fin.opex_months }} 個月,淡季也算）</span></td>
           <td class="r">−{{ fin.opex|money }}</td></tr>
       <tr class="sum"><td>= 稅前利潤</td>
           <td class="r {{ 'neg' if fin.pretax < 0 }}"><strong>{{ fin.pretax|money }}</strong></td></tr>
