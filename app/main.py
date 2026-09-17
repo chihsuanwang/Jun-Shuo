@@ -470,7 +470,8 @@ async def supplier_save(request: Request):
 def _purchase_form_ctx(request, p):
     return dict(request=request, active="purchase", p=p,
                suppliers=q("SELECT supplier_id, name FROM supplier ORDER BY name"),
-               cats=SUP_CATS, docs=DOC_TYPES, today=dt.date.today().isoformat())
+               cats=SUP_CATS, docs=DOC_TYPES,
+               today=dt.date.today().isoformat())
 
 @app.get("/purchases", response_class=HTMLResponse)
 def purchases_page(request: Request):
@@ -882,6 +883,9 @@ async def customer_save(request: Request):
     ch = int(f.get("primary_channel_id")) if f.get("primary_channel_id") else None
     name = (f.get("display_name") or "").strip()
     cid = f.get("customer_id")
+    if not name:
+        back = f"/customers/{cid}/edit" if cid else "/customers/new"
+        return RedirectResponse(back, status_code=303)
     cols = dict(display_name=name, customer_type=g("customer_type"), segment=g("segment"),
                 primary_channel_id=ch, phone=g("phone"), email=g("email"),
                 contact_person=g("contact_person"), invoice_title=g("invoice_title"),
@@ -1384,11 +1388,11 @@ def finance_page(request: Request):
 def finance_expenses(request: Request):
     rows = q("SELECT * FROM op_expense ORDER BY ym DESC, category")
     return tpl.TemplateResponse("finance_expenses.html", dict(
-        request=request, active="finance", rows=rows))
+        request=request, active="expenses", rows=rows))
 
 def _expense_form_ctx(request, e):
     months = Q.months_with_data()
-    return dict(request=request, active="finance", e=e, cats=Q.OPEX_CATS,
+    return dict(request=request, active="expenses", e=e, cats=Q.OPEX_CATS,
                docs=DOC_TYPES,
                ym_default=(months[-1] if months else dt.date.today().strftime("%Y-%m")))
 

@@ -70,13 +70,12 @@ def kpi(season=None, asof=None):
     a = as_of(asof)
     sc, sp = _S(season)
     rev = q1(f"SELECT COALESCE(SUM(o.paid_amount),0) v FROM \"order\" o WHERE {sc} AND order_kind='銷售' AND {PAID_O}", sp)["v"]
-    m = q1(f"""SELECT COALESCE(SUM(ol.line_subtotal),0) rev,
-                      COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) cogs
+    m = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) cogs
                FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                JOIN product p ON p.product_id=ol.product_id
                WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}""", sp)
     ret_gross, ret_cogs = _returns_agg(season)
-    net_rev = m["rev"] - ret_gross
+    net_rev = rev - ret_gross
     gp = net_rev - (m["cogs"] - ret_cogs)
     oc = q1(f"SELECT COUNT(*) n FROM \"order\" o WHERE {sc} AND order_kind='銷售'", sp)["n"]
     paid_oc = q1(f"SELECT COUNT(*) n FROM \"order\" o WHERE {sc} AND order_kind='銷售' AND {PAID_O}", sp)["n"]

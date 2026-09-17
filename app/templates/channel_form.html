@@ -18,7 +18,7 @@
       {% for x in cats %}<option {{ 'selected' if c and c.category==x }}>{{ x }}</option>{% endfor %}</select></div>
     <div><label>帳期(天)</label><input name="settlement_lag_days" type="number" value="{{ c.settlement_lag_days if c else 0 }}"></div>
   </div>
-  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ c.note if c else '' }}"></div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (c.note or '') if c else '' }}"></div>
   <div style="margin-top:16px"><button type="submit">儲存</button>
     <a href="/channels" style="margin-left:12px">取消</a>
     {% if c %}

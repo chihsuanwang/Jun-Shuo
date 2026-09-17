@@ -36,7 +36,7 @@
     </div>
   </div>
 
-  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ p.note if p else '' }}"></div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (p.note or '') if p else '' }}"></div>
   <div style="margin-top:16px">
     <button type="submit">儲存</button>
     <a href="/purchases" style="margin-left:12px">取消</a>

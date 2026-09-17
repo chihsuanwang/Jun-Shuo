@@ -26,7 +26,7 @@
     </div>
   </div>
 
-  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ e.note if e else '' }}"></div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (e.note or '') if e else '' }}"></div>
   <div style="margin-top:16px">
     <button type="submit">儲存</button>
     <a href="/finance/expenses" style="margin-left:12px">取消</a>

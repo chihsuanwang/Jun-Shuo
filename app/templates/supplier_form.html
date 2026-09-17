@@ -12,12 +12,12 @@
 <div class="card" style="max-width:620px">
   <div class="grid" style="grid-template-columns:1fr 1fr">
     <div><label>名稱</label><input name="name" value="{{ s.name if s else '' }}" required></div>
-    <div><label>統一編號(沒有可空)</label><input name="tax_id" value="{{ s.tax_id if s else '' }}" placeholder="農民 / 個人可空"></div>
+    <div><label>統一編號(沒有可空)</label><input name="tax_id" value="{{ (s.tax_id or '') if s else '' }}" placeholder="農民 / 個人可空"></div>
     <div><label>類別</label><select name="category"><option value="">—</option>
       {% for x in cats %}<option {{ 'selected' if s and s.category == x }}>{{ x }}</option>{% endfor %}</select></div>
-    <div><label>電話</label><input name="phone" value="{{ s.phone if s else '' }}"></div>
+    <div><label>電話</label><input name="phone" value="{{ (s.phone or '') if s else '' }}"></div>
   </div>
-  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ s.note if s else '' }}"></div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (s.note or '') if s else '' }}"></div>
   <div style="margin-top:16px">
     <button type="submit">儲存</button>
     <a href="/suppliers" style="margin-left:12px">取消</a>
