@@ -233,6 +233,7 @@ CREATE TABLE op_expense (
   tax_amount       REAL NOT NULL DEFAULT 0,  -- 進項稅額
   tax_deductible   INTEGER NOT NULL DEFAULT 0 CHECK (tax_deductible IN (0,1)),
   doc_type         TEXT CHECK (doc_type IN ('三聯式發票','二聯式發票','收據','農民收據','無憑證')),
+  payment_account  TEXT,               -- 用哪個帳戶付款(自由文字,例:現金 / 合庫);方案B分錄用
   note        TEXT,
   updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))   -- 最後新增 / 修改時間
 );
@@ -276,6 +277,7 @@ CREATE TABLE purchase (
   tax_deductible   INTEGER NOT NULL DEFAULT 1 CHECK (tax_deductible IN (0,1)),
   doc_type         TEXT CHECK (doc_type IN ('三聯式發票','二聯式發票','收據','農民收據','無憑證')),
   is_fixed_asset   INTEGER NOT NULL DEFAULT 0 CHECK (is_fixed_asset IN (0,1)),  -- 打勾標記;固定資產卡回合 3 才建
+  payment_account  TEXT,               -- 用哪個帳戶付款(自由文字,例:現金 / 合庫);方案B分錄用
   note             TEXT,
   created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -329,3 +331,24 @@ CREATE TABLE sales_return (
 CREATE INDEX ix_sret_order ON sales_return(order_id);
 CREATE INDEX ix_sret_date  ON sales_return(return_date);
 CREATE INDEX ix_sret_season ON sales_return(season);
+
+-- 19. 總帳明細(方案 B 試點:進貨 / 營運費用 自動過帳,2026-09) ----
+--     家易照舊填業務表單,系統依 ledger.py 的對照表組出分錄,存檔前在確認畫面
+--     給他看、可微調。同一來源(進貨/費用)重存 = 整張傳票重開(先刪舊列再插新列),
+--     不做部分修改 / 部分刪除。這次只接「進貨」「原料/包材/委外/服務/其他類」與
+--     「營運費用」——設備採購走固定資產,不在這批範圍。
+CREATE TABLE ledger_entry (
+  entry_id     INTEGER PRIMARY KEY,
+  voucher_no   TEXT NOT NULL,          -- 同一張傳票共用,例:P20260917-001
+  entry_date   TEXT NOT NULL,
+  account_code TEXT NOT NULL,
+  account_name TEXT NOT NULL,
+  debit        REAL NOT NULL DEFAULT 0,
+  credit       REAL NOT NULL DEFAULT 0,
+  source_type  TEXT NOT NULL CHECK (source_type IN ('purchase','op_expense')),
+  source_id    INTEGER NOT NULL,       -- 對應 purchase.purchase_id 或 op_expense.expense_id
+  note         TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX ix_ledger_voucher ON ledger_entry(voucher_no);
+CREATE INDEX ix_ledger_source  ON ledger_entry(source_type, source_id);
