@@ -1,12 +1,14 @@
 {% extends "base.html" %}
-{% block title %}焙製批次 · 桂圓帳房{% endblock %}
+{% block title %}焙製批次與庫存 · 桂圓帳房{% endblock %}
 {% block body %}
 <div class="head">
-  <div><div class="sup">桂圓帳房 / 焙製批次</div><h1 class="serif">焙製批次</h1></div>
+  <div><div class="sup">桂圓帳房 / 焙製批次與庫存</div><h1 class="serif">焙製批次與庫存</h1></div>
   <a href="/batches/new"><button>＋ 新增批次</button></a>
 </div>
 <hr class="rule">
-<div class="card" style="overflow-x:auto">
+
+<h3 class="serif" style="margin-bottom:8px">焙製批次</h3>
+<div class="card" style="overflow-x:auto;margin-bottom:22px">
   <table>
     <thead><tr><th>批次</th><th>產季</th><th>對應商品</th><th>製造日</th><th>到期日</th><th>剩餘天數</th><th>產出</th><th>已出</th><th>剩餘</th><th>賣出比例</th><th>單位成本</th><th>剩餘貨值</th><th></th></tr></thead>
     <tbody>{% for r in rows %}
@@ -26,7 +28,80 @@
     {% else %}<tr><td colspan="13" class="muted" style="text-align:left">尚無批次。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
-<div class="muted" style="font-size:11px;margin-top:8px">
+<div class="muted" style="font-size:11px;margin-top:-14px;margin-bottom:22px">
   「剩餘天數」以最新訂單日為結算基準,少於 30 天標紅 —— 優先促銷、通知團購主,或轉做加工品。
+</div>
+
+<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+  <h3 class="serif">庫存(依商品品項)</h3>
+  <a href="/stock/moves" style="font-size:12px">異動明細 →</a>
+</div>
+<div class="card" style="margin-bottom:18px">
+  <table>
+    <thead><tr><th>商品編號</th><th>品名</th><th>單位</th><th>現有量</th><th>低庫存線</th><th style="text-align:left">在庫批次(先出的在前)</th><th></th></tr></thead>
+    <tbody>{% for r in stock_rows %}
+      <tr>
+        <td>{{ r.sku }}</td>
+        <td class="{{ 'muted' if r.status=='停售' }}">{{ r.name }}{{ '(停售)' if r.status=='停售' }}</td>
+        <td>{{ r.uom }}</td>
+        <td class="{{ 'neg' if r.on_hand < 0 or (r.low and r.status=='在售') }}">{{ r.on_hand|round(0) }}</td>
+        <td class="muted">{{ r.low_stock if r.low_stock is not none else '—' }}</td>
+        <td style="text-align:left;font-size:12px" class="muted">
+          {% if r.by_batch %}
+            {% for b in r.by_batch[:3] %}{{ b.batch_code }} {{ b.qty|round(0) }}{% if not loop.last %}　·　{% endif %}{% endfor %}
+            {% if r.by_batch|length > 3 %}　…共 {{ r.by_batch|length }} 批{% endif %}
+            {% if r.oldest and r.oldest.mfg_date %}<br><span style="color:var(--ink-3)">最舊 {{ r.oldest.batch_code }} · 製 {{ r.oldest.mfg_date }}</span>{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td><a href="/stock/moves?product_id={{ r.product_id }}" style="font-size:12px">明細</a></td>
+      </tr>
+    {% endfor %}</tbody>
+  </table>
+  <p class="muted" style="font-size:11px;margin-top:6px">現有量 = 分裝入庫 + 退貨 + 盤點調整 − 銷售出庫 − 贈送出庫 − 報廢。負數代表賣超過現貨(通常是預購)。「在庫批次」只列還有正庫存的批,依製造日先出。</p>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr">
+  <div class="card">
+    <h3 class="serif">分裝入庫 / 期初 / 退貨入庫</h3>
+    <form method="post" action="/stock/move">
+      <div class="grid" style="grid-template-columns:1fr 1fr">
+        <div><label>日期</label><input type="date" name="move_date" value=""></div>
+        <div><label>類型</label><select name="move_type">
+          {% for t in in_types %}<option>{{ t }}</option>{% endfor %}
+        </select></div>
+        <div><label>商品</label><select name="product_id" required>
+          {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
+        </select></div>
+        <div><label>批次</label><select name="batch_id"><option value="">—</option>
+          {% for b in batch_opts %}<option value="{{ b.batch_id }}">{{ b.batch_code }}</option>{% endfor %}
+        </select></div>
+        <div><label>數量(入庫,正數)</label><input name="qty" type="number" step="1" min="0" required></div>
+        <div><label>備註</label><input name="note" placeholder="例:2025-A 分裝 200 包"></div>
+      </div>
+      <div style="margin-top:12px"><button type="submit">登錄入庫</button></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3 class="serif">盤點調整 / 損耗報廢</h3>
+    <form method="post" action="/stock/move">
+      <div class="grid" style="grid-template-columns:1fr 1fr">
+        <div><label>日期</label><input type="date" name="move_date"></div>
+        <div><label>類型</label><select name="move_type">
+          {% for t in adj_types %}<option>{{ t }}</option>{% endfor %}
+        </select></div>
+        <div><label>商品</label><select name="product_id" required>
+          {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
+        </select></div>
+        <div><label>批次</label><select name="batch_id"><option value="">—</option>
+          {% for b in batch_opts %}<option value="{{ b.batch_id }}">{{ b.batch_code }}</option>{% endfor %}
+        </select></div>
+        <div><label>數量</label><input name="qty" type="number" step="1" required></div>
+        <div><label>備註</label><input name="note" placeholder="盤點:填差異(±);報廢:填數量"></div>
+      </div>
+      <p class="muted" style="font-size:11px;margin-top:8px">盤點調整:實際比帳面多填正、少填負。損耗報廢:填數量即可(自動記為出庫)。</p>
+      <div style="margin-top:6px"><button type="submit">登錄調整</button></div>
+    </form>
+  </div>
 </div>
 {% endblock %}

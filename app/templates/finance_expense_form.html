@@ -17,13 +17,6 @@
       <select name="category" required>
         {% for c in cats %}<option {{ 'selected' if e and e.category == c }}>{{ c }}</option>{% endfor %}
       </select></div>
-    <div><label>歸哪條產品線</label>
-      <select name="product_group_id">
-        <option value="">共同(不特定一條線)</option>
-        {% for g in groups %}<option value="{{ g.pg_id }}" {{ 'selected' if e and e.product_group_id == g.pg_id }}>{{ g.name }}</option>{% endfor %}
-      </select>
-      <div class="muted" style="font-size:11px;margin-top:3px">直接人工 / 田間管理 / 驗證費通常歸某條線;人事 / 場地 / 行銷多半是共同</div>
-    </div>
     <div><label>金額(實際花的錢)</label>
       <input name="amount" type="number" step="1" value="{{ e.amount|round(0) if e else '' }}" required></div>
     <div><label>攤提月數(一次性大支出才填)</label>
@@ -33,21 +26,7 @@
     </div>
   </div>
 
-  <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--rule-2)">
-    <div class="muted" style="font-size:12px;margin-bottom:8px">報稅 / 憑證(之後報 403 用,不確定可先留白)</div>
-    <div class="grid" style="grid-template-columns:1fr 1fr">
-      <div><label>進項稅額(沒有填 0)</label>
-        <input name="tax_amount" type="number" step="1" value="{{ e.tax_amount|round(0) if e else 0 }}"></div>
-      <div><label>憑證類型</label><select name="doc_type"><option value="">—</option>
-        {% for d in docs %}<option {{ 'selected' if e and e.doc_type == d }}>{{ d }}</option>{% endfor %}</select></div>
-    </div>
-    <label style="display:flex;align-items:center;gap:6px;margin:10px 0 0;font-size:13px;color:var(--ink)">
-      <input type="checkbox" name="tax_deductible" value="1" style="width:auto"
-             {{ 'checked' if e and e.tax_deductible }}> 進項稅額可扣抵
-    </label>
-  </div>
-
-  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ e.note if e else '' }}"></div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (e.note or '') if e else '' }}"></div>
   <div style="margin-top:16px">
     <button type="submit">儲存</button>
     <a href="/finance/expenses" style="margin-left:12px">取消</a>

@@ -7,18 +7,11 @@
 </div>
 <hr class="rule">
 <p class="muted" style="font-size:13px;margin:-4px 0 14px">
-  買進來的成本:鮮果收購、包材、木柴、委外加工、設備。每筆標「歸哪條產品線」或「共同」。
-  <b>目前只做登錄</b> —— 進貨金額還沒自動算進損益表(會和批次成本重複),那部分留到之後。
+  買進來的成本:鮮果收購、包材、木柴、委外加工、設備。
+  <b>目前只做登錄</b> —— 進貨金額不會自動算進損益表;商品賣出去要算多少成本,是在「商品目錄」裡個別商品填的「單位成本」。
 </p>
 
 <form method="get" action="/purchases" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px">
-  <div><label>產品線</label>
-    <select name="pg" onchange="this.form.submit()">
-      <option value="">全部</option>
-      <option value="common" {{ 'selected' if pg_sel == 'common' }}>共同</option>
-      {% for g in groups %}<option value="{{ g.pg_id }}" {{ 'selected' if pg_sel == g.pg_id|string }}>{{ g.name }}</option>{% endfor %}
-    </select>
-  </div>
   <div><label>月份</label>
     <select name="ym" onchange="this.form.submit()">
       <option value="">全部</option>
@@ -27,29 +20,24 @@
   </div>
 </form>
 
-<div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
-  <div class="card kpi"><div class="lab">未稅金額合計(目前篩選)</div><div class="val">{{ total|money }}</div></div>
-  <div class="card kpi" style="border-top-color:var(--leaf)"><div class="lab">可扣抵進項稅額</div><div class="val">{{ tax_total|money }}</div><div class="sub">之後報 403 用</div></div>
+<div class="grid" style="grid-template-columns:1fr;margin-bottom:16px">
+  <div class="card kpi"><div class="lab">金額合計(目前篩選)</div><div class="val">{{ total|money }}</div></div>
 </div>
 
 <div class="card" style="overflow-x:auto">
   <table>
-    <thead><tr><th>日期</th><th>供應商</th><th>類別</th><th>產品線</th><th>未稅</th><th>稅額</th><th>可扣抵</th><th>憑證</th><th>固定資產</th><th>備註</th><th></th></tr></thead>
+    <thead><tr><th>日期</th><th>供應商</th><th>類別</th><th>金額</th><th>固定資產</th><th>備註</th><th></th></tr></thead>
     <tbody>{% for r in rows %}
       <tr>
         <td>{{ r.purchase_date }}</td>
         <td>{{ r.sup_name or '—' }}</td>
         <td>{{ r.category or '' }}</td>
-        <td>{{ r.pg_name or '共同' }}</td>
         <td>{{ r.amount|money }}</td>
-        <td>{{ r.tax_amount|money }}</td>
-        <td>{{ '是' if r.tax_deductible else '否' }}</td>
-        <td>{{ r.doc_type or '—' }}</td>
         <td>{% if r.is_fixed_asset %}{% if r.has_card %}<span class="muted">已建卡</span>{% else %}<a href="/assets/new?purchase={{ r.purchase_id }}">建卡 →</a>{% endif %}{% endif %}</td>
         <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
         <td><a href="/purchases/{{ r.purchase_id }}/edit">編輯</a></td>
       </tr>
-    {% else %}<tr><td colspan="11" class="muted" style="text-align:left">這個範圍還沒有進貨紀錄。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">這個範圍還沒有進貨紀錄。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
 {% endblock %}

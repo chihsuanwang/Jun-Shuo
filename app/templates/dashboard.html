@@ -23,8 +23,8 @@
 {% endif %}
 
 <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:20px">
-  <div class="card kpi"><div class="lab">本產季營收</div><div class="val">{{ k.revenue|money }}</div><div class="sub">{% if k.returns %}扣退貨 {{ k.returns|money }} → 淨 {{ k.net_revenue|money }}{% else %}銷售訂單{% endif %}</div></div>
-  <div class="card kpi" style="border-top-color:var(--seal)"><div class="lab">本產季稅前利潤</div><div class="val {{ 'neg' if fin.pretax < 0 }}">{{ fin.pretax|money }}</div><div class="sub">毛利再扣通路抽成 / 運費 / 全產季營運費用</div></div>
+  <div class="card kpi"><div class="lab">本產季營收(實收)</div><div class="val">{{ k.revenue|money }}</div><div class="sub">{% if k.returns %}扣退貨 {{ k.returns|money }} → 淨 {{ k.net_revenue|money }}{% else %}已收到的錢,還沒收的不算{% endif %}</div></div>
+  <div class="card kpi" style="border-top-color:var(--seal)"><div class="lab">本產季稅前利潤</div><div class="val {{ 'neg' if fin.pretax < 0 }}">{{ fin.pretax|money }}</div><div class="sub">毛利再扣運費 / 全產季營運費用</div></div>
   <div class="card kpi" style="border-top-color:var(--s-mgn)"><div class="lab">毛利率</div><div class="val">{{ k.margin|pct }}</div><div class="sub">毛利 {{ k.gross_profit|money }}(營收扣進貨/製造成本)</div></div>
   <div class="card kpi"><div class="lab">還沒收到的貨款</div><div class="val">{{ k.ar_amount|money }}</div><div class="sub">{{ k.ar_count }} 筆 · <a href="/reports?tab=aging">看清單</a></div></div>
 </div>
@@ -32,7 +32,7 @@
 <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:18px">
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:baseline">
-      <h3 class="serif">本產季損益簡表</h3>
+      <h3 class="serif">本產季至今損益簡表</h3>
       <a href="/finance?{{ season_qs }}" style="font-size:12px">看每月完整損益 →</a>
     </div>
     <table class="pnl">
@@ -41,10 +41,8 @@
       <tr><td>− 銷貨成本(進貨/製造)</td><td class="r">−{{ fin.cogs|money }}</td></tr>
       <tr class="sum"><td>= 毛利<span class="muted">（{{ fin.margin|pct }}）</span></td>
           <td class="r {{ 'neg' if fin.gross_profit < 0 }}">{{ fin.gross_profit|money }}</td></tr>
-      <tr><td>− 通路抽成</td><td class="r">−{{ fin.platform_fee|money }}</td></tr>
-      <tr><td>{{ '+' if fin.ship_pnl >= 0 else '−' }} 運費賺賠</td>
-          <td class="r {{ 'neg' if fin.ship_pnl < 0 }}">{{ fin.ship_pnl|money }}</td></tr>
-      <tr><td>− 營運費用<span class="muted">（{{ fin.opex_months }} 個月,含淡季）</span></td>
+      <tr><td>− 運費</td><td class="r">−{{ fin.ship_cost|money }}</td></tr>
+      <tr><td>− 營運費用<span class="muted">（已經過去的 {{ fin.opex_months }} 個月,淡季也算）</span></td>
           <td class="r">−{{ fin.opex|money }}</td></tr>
       <tr class="sum"><td>= 稅前利潤</td>
           <td class="r {{ 'neg' if fin.pretax < 0 }}"><strong>{{ fin.pretax|money }}</strong></td></tr>
@@ -89,6 +87,9 @@
   </div>
 </div>
 
+{# 各產品線賺不賺:2026-09 暫時隱藏(先簡化系統,分析功能之後再開)。
+   程式碼保留 —— queries.product_line_pnl()、/lines 頁都還在,之後要恢復,
+   把下面這段連同 main.py 的 pl 變數一起打開即可。
 <div class="card" style="margin-bottom:18px">
   <div style="display:flex;justify-content:space-between;align-items:baseline">
     <h3 class="serif">各產品線賺不賺</h3>
@@ -109,8 +110,9 @@
           <td class="r {{ 'neg' if pl.total.profit < 0 }}">{{ pl.total.margin|pct }}</td></tr>
     </tbody>
   </table>
-  <div class="muted" style="font-size:11px;margin-top:6px">線利潤 = 營收 − 直接材料 − 通路/運費 − 直接人工/田間/折舊等 − 分攤共同費用(依營收)</div>
+  <div class="muted" style="font-size:11px;margin-top:6px">線利潤 = 營收 − 直接材料 − 運費 − 直接人工/田間/折舊等 − 分攤共同費用(依營收)</div>
 </div>
+#}
 
 <div class="card">
   <div style="display:flex;justify-content:space-between;align-items:baseline">

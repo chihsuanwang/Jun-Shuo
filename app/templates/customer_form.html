@@ -7,6 +7,7 @@
   <h1 class="serif">{{ cust.display_name if editing else '新增客戶' }}</h1>
 </div></div>
 <hr class="rule">
+{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這位客戶沒辦法刪除,因為已經有 {{ n_orders }} 張訂單是這位客戶的。刪掉訂單會找不到客戶資料,所以系統擋住了。</div>{% endif %}
 
 {% if dups %}
 <div class="card" style="max-width:760px;margin-bottom:16px;border-color:#E4B79C;background:var(--warn-bg)">
@@ -36,7 +37,7 @@
   <div class="grid" style="grid-template-columns:1fr 1fr">
     <div><label>名稱</label><input name="display_name" id="cf_name" value="{{ cust.display_name if cust else '' }}" required>
       <div id="cf_namehint" class="muted" style="font-size:11px;margin-top:4px"></div></div>
-    <div><label>電話</label><input name="phone" value="{{ cust.phone if cust else '' }}"></div>
+    <div><label>電話</label><input name="phone" value="{{ (cust.phone or '') if cust else '' }}"></div>
     <div><label>類型</label><select name="customer_type"><option value="">—</option>
       {% for t in types %}<option {{ 'selected' if cust and cust.customer_type==t }}>{{ t }}</option>{% endfor %}
     </select></div>
@@ -46,34 +47,38 @@
     <div><label>主要銷售管道</label><select name="primary_channel_id"><option value="">—</option>
       {% for c in channels %}<option value="{{ c.channel_id }}" {{ 'selected' if cust and cust.primary_channel_id==c.channel_id }}>{{ c.name }}</option>{% endfor %}
     </select></div>
-    <div><label>Email</label><input name="email" value="{{ cust.email if cust else '' }}"></div>
-    <div><label>聯絡人</label><input name="contact_person" value="{{ cust.contact_person if cust else '' }}"></div>
-    <div><label>標籤(逗號分隔)</label><input name="tags" value="{{ cust.tags if cust else '' }}" placeholder="例:老客戶,送禮"></div>
+    <div><label>Email</label><input name="email" value="{{ (cust.email or '') if cust else '' }}"></div>
+    <div><label>聯絡人</label><input name="contact_person" value="{{ (cust.contact_person or '') if cust else '' }}"></div>
+    <div><label>標籤(逗號分隔)</label><input name="tags" value="{{ (cust.tags or '') if cust else '' }}" placeholder="例:老客戶,送禮"></div>
   </div>
 </div>
 
 <div class="card" style="max-width:760px;margin-bottom:16px">
   <h3 class="serif">開單據 / 收件</h3>
   <div class="grid" style="grid-template-columns:1fr 1fr">
-    <div><label>發票抬頭</label><input name="invoice_title" value="{{ cust.invoice_title if cust else '' }}"></div>
-    <div><label>統一編號</label><input name="tax_id" value="{{ cust.tax_id if cust else '' }}"></div>
+    <div><label>發票抬頭</label><input name="invoice_title" value="{{ (cust.invoice_title or '') if cust else '' }}"></div>
+    <div><label>統一編號</label><input name="tax_id" value="{{ (cust.tax_id or '') if cust else '' }}"></div>
     <div><label>單據需求</label><select name="tax_doc_pref"><option value="">—</option>
       {% for d in docs %}<option {{ 'selected' if cust and cust.tax_doc_pref==d }}>{{ d }}</option>{% endfor %}
     </select></div>
-    <div><label>收件人</label><input name="addr_recipient" value="{{ addr.recipient_name if addr else (cust.addr_recipient if cust else '') }}"></div>
-    <div><label>收件電話</label><input name="addr_phone" value="{{ addr.recipient_phone if addr else (cust.addr_phone if cust else '') }}"></div>
-    <div><label>郵遞區號</label><input name="addr_zip" value="{{ addr.zipcode if addr else (cust.addr_zip if cust else '') }}"></div>
-    <div style="grid-column:1 / -1"><label>地址</label><input name="addr_full" value="{{ addr.address_full if addr else (cust.addr_full if cust else '') }}"></div>
+    <div><label>收件人</label><input name="addr_recipient" value="{{ (addr.recipient_name or '') if addr else ((cust.addr_recipient or '') if cust else '') }}"></div>
+    <div><label>收件電話</label><input name="addr_phone" value="{{ (addr.recipient_phone or '') if addr else ((cust.addr_phone or '') if cust else '') }}"></div>
+    <div><label>郵遞區號</label><input name="addr_zip" value="{{ (addr.zipcode or '') if addr else ((cust.addr_zip or '') if cust else '') }}"></div>
+    <div style="grid-column:1 / -1"><label>地址</label><input name="addr_full" value="{{ (addr.address_full or '') if addr else ((cust.addr_full or '') if cust else '') }}"></div>
   </div>
 </div>
 
 <div class="card" style="max-width:760px;margin-bottom:16px">
-  <div><label>備註</label><input name="note" value="{{ cust.note if cust else '' }}"></div>
+  <div><label>備註</label><input name="note" value="{{ (cust.note or '') if cust else '' }}"></div>
   {% if aliases %}<div class="muted" style="font-size:12px;margin-top:12px">舊稱呼(歷史各種寫法,自動對應):{{ aliases | map(attribute='alias_text') | join('、') }}</div>{% endif %}
 </div>
 
 <button type="submit">儲存</button>
 <a href="{{ next }}" style="margin-left:12px">取消</a>
+{% if editing %}
+<button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
+        onclick="return confirm('刪除客戶「{{ cust.display_name }}」?已經有訂單的客戶沒辦法刪除。')">刪除</button>
+{% endif %}
 </form>
 
 {% if not editing %}

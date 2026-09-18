@@ -21,38 +21,22 @@
     </div>
     <div><label>類別</label><select name="category"><option value="">—</option>
       {% for x in cats %}<option {{ 'selected' if p and p.category == x }}>{{ x }}</option>{% endfor %}</select></div>
-    <div><label>歸哪條產品線</label>
-      <select name="product_group_id">
-        <option value="">共同(不特定一條線)</option>
-        {% for g in groups %}<option value="{{ g.pg_id }}" {{ 'selected' if p and p.product_group_id == g.pg_id }}>{{ g.name }}</option>{% endfor %}
-      </select>
+    <div><label>金額</label><input name="amount" type="number" step="1" value="{{ p.amount|round(0) if p else '' }}" required></div>
+    <div style="display:flex;align-items:center;padding-top:22px">
+      <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
+        <input type="checkbox" name="is_fixed_asset" value="1" style="width:auto"
+               {{ 'checked' if p and p.is_fixed_asset }}> 這是設備(固定資產)
+      </label>
     </div>
-    <div><label>未稅金額</label><input name="amount" type="number" step="1" value="{{ p.amount|round(0) if p else '' }}" required></div>
-    <div><label>稅額(沒有填 0)</label><input name="tax_amount" type="number" step="1" value="{{ p.tax_amount|round(0) if p else 0 }}"></div>
   </div>
 
   <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--rule-2)">
-    <div class="muted" style="font-size:12px;margin-bottom:8px">報稅 / 憑證(之後報 403 用,現在不確定可先留白)</div>
-    <div class="grid" style="grid-template-columns:1fr 1fr">
-      <div><label>憑證類型</label><select name="doc_type"><option value="">—</option>
-        {% for d in docs %}<option {{ 'selected' if p and p.doc_type == d }}>{{ d }}</option>{% endfor %}</select></div>
-      <div style="display:flex;align-items:center;gap:16px;padding-top:22px">
-        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
-          <input type="checkbox" name="tax_deductible" value="1" style="width:auto"
-                 {{ 'checked' if (not p) or p.tax_deductible }}> 進項稅額可扣抵
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
-          <input type="checkbox" name="is_fixed_asset" value="1" style="width:auto"
-                 {{ 'checked' if p and p.is_fixed_asset }}> 這是設備(固定資產)
-        </label>
-      </div>
-    </div>
-    <div class="muted" style="font-size:11px;margin-top:6px">
+    <div class="muted" style="font-size:11px">
       勾「設備」= 這筆之後會建成固定資產、逐年提折舊,不當一次性費用。
     </div>
   </div>
 
-  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ p.note if p else '' }}"></div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (p.note or '') if p else '' }}"></div>
   <div style="margin-top:16px">
     <button type="submit">儲存</button>
     <a href="/purchases" style="margin-left:12px">取消</a>

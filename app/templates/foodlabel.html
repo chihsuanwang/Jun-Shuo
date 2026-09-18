@@ -12,16 +12,12 @@
   <div><label>商品</label><select name="product_id" style="min-width:200px">
     {% for p in products %}<option value="{{ p.product_id }}" {{ 'selected' if pid == p.product_id|string }}>{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
   </select></div>
-  <div><label>批次</label><select name="batch_id">
-    <option value="">—</option>
-    {% for b in batches %}<option value="{{ b.batch_id }}" {{ 'selected' if bid == b.batch_id|string }}>{{ b.batch_code }}</option>{% endfor %}
-  </select></div>
   <div><label>份數</label><input name="copies" type="number" value="{{ copies }}" min="1" max="60" style="width:80px"></div>
   <button type="submit">產生</button>
 </form>
 
 {% if not data %}
-<p class="muted">選商品(和批次)後按「產生」。</p>
+<p class="muted">選商品後按「產生」。製造日期 / 有效日期留白,列印後手寫。</p>
 {% else %}
 {% set p = data.p %}
 <div class="lbl-grid" style="grid-template-columns:repeat(3,1fr)">
@@ -34,7 +30,6 @@
     <div>保存方式:{{ p.storage_condition or '常溫' }}、避免陽光直射</div>
     <div>製造日期:{{ data.mfg or '　　　　　' }}</div>
     <div>有效日期:{{ data.exp or '　　　　　' }}{% if p.shelf_life_days %}(保存 {{ p.shelf_life_days }} 天){% endif %}</div>
-    {% if data.b and data.b.batch_code %}<div>批號:{{ data.b.batch_code }}</div>{% endif %}
     <div style="margin-top:4px">製造商:{{ sender.name }}</div>
     <div>地址:{{ sender.place }} {{ sender.addr }}　電話:{{ sender.phone }}</div>
   </div>

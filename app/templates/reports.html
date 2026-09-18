@@ -37,10 +37,9 @@
 <div class="card" style="margin-bottom:20px">
   <h3 class="serif">依銷售管道</h3>
   <table>
-    <thead><tr><th>管道</th><th>訂單</th><th>營收</th><th>運費賺賠</th><th>毛利</th><th>毛利率</th></tr></thead>
+    <thead><tr><th>管道</th><th>訂單</th><th>營收</th><th>毛利</th><th>毛利率</th></tr></thead>
     <tbody>{% for c in ch %}
       <tr><td>{{ c.name }}</td><td>{{ c.orders }}</td><td>{{ c.rev|money }}</td>
-          <td class="{{ 'neg' if c.ship_pnl < 0 }}">{{ c.ship_pnl|money }}</td>
           <td class="{{ 'neg' if c.gp < 0 else 'pos' }}">{{ c.gp|money }}</td>
           <td class="{{ 'neg' if c.gp < 0 }}">{{ (c.gp / c.rev if c.rev else 0)|pct }}</td></tr>
     {% endfor %}</tbody>

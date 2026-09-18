@@ -1,26 +1,40 @@
 {% extends "base.html" %}
 {% block title %}{{ o.order_no }} · 桂圓帳房{% endblock %}
 {% block body %}
-<div class="head">
+<div class="head" style="position:sticky;top:0;z-index:5;background:var(--paper);padding-top:4px">
   <div><div class="sup"><a href="/orders">訂單</a> / {{ o.order_no }}</div>
     <h1 class="serif">{{ o.order_no }} · {{ o.cust or '—' }}</h1></div>
-  <div style="display:flex;gap:8px">
-    <form method="post" action="/orders/{{ o.order_id }}/paid" style="display:inline">
-      <button type="submit" {{ 'disabled' if o.payment_status=='已收款' }}>標記已收款</button></form>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <button type="submit" form="orderForm">儲存</button>
+    <a href="/orders">回列表</a>
+    {% if o.payment_status == '已收款' %}
+    <span class="muted" style="font-size:13px">已收款 · 實收 {{ o.paid_amount|money }}{% if o.paid_date %}（{{ o.paid_date }}）{% endif %}</span>
+    {% else %}
+    <form method="post" action="/orders/{{ o.order_id }}/paid" id="markPaidForm" style="display:inline">
+      <input type="hidden" name="paid_amount" id="markPaidAmount">
+      <input type="hidden" name="paid_date" id="markPaidDate">
+      <button type="submit">標記已收款</button>
+    </form>
+    {% endif %}
     <form method="post" action="/orders/{{ o.order_id }}/shipped" style="display:inline">
       <button type="submit" class="ghost" {{ 'disabled' if o.ship_status!='待出貨' }}>標記已出貨</button></form>
-    <form method="post" action="/orders/{{ o.order_id }}/copy" style="display:inline">
+    <form method="post" action="/orders/{{ o.order_id }}/copy" style="display:inline"
+          onsubmit="return confirm('確定要複製這張訂單嗎?會建立一張新的訂單(品項、客戶、管道相同,收款/出貨狀態重新開始)。')">
       <button type="submit" class="ghost">複製訂單</button></form>
+    <form method="post" action="/orders/{{ o.order_id }}/delete" style="display:inline"
+          onsubmit="return confirm('確定要刪除這張訂單嗎?刪除後無法復原,連同品項、退貨紀錄、庫存異動一起刪掉。')">
+      <button type="submit" class="ghost" style="color:var(--seal);border-color:var(--seal)">刪除訂單</button></form>
   </div>
 </div>
 <hr class="rule">
 {% if request.query_params.get('ok') %}<div class="ok">已儲存。</div>{% endif %}
-{% if request.query_params.get('done') == 'paid' %}<div class="ok">已標記為「已收款」,收款日填今天,實收金額帶入應收 {{ o.order_total|money }}。</div>{% endif %}
+{% if request.query_params.get('done') == 'paid' %}<div class="ok">已標記收款。</div>{% endif %}
+{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請輸入實收金額(要大於 0)。</div>{% endif %}
 {% if request.query_params.get('done') == 'shipped' %}<div class="ok">已標記為「已出貨」,出貨日填今天。</div>{% endif %}
 {% if request.query_params.get('rok') %}<div class="ok">退貨 / 折讓已登記。</div>{% endif %}
 {% if request.query_params.get('rerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">沖減金額要大於 0。</div>{% endif %}
 
-<form method="post" action="/orders/{{ o.order_id }}">
+<form method="post" action="/orders/{{ o.order_id }}" id="orderForm">
 
 <div class="card" style="margin-bottom:16px;position:relative">
   <h3 class="serif">基本</h3>
@@ -38,18 +52,17 @@
 <div class="card" style="margin-bottom:16px">
   <h3 class="serif">品項</h3>
   <table>
-    <thead><tr><th>品項</th><th>批次</th><th>數量</th><th>單價</th><th>贈品</th><th></th></tr></thead>
+    <thead><tr><th>品項</th><th>現貨</th><th>數量</th><th>單價</th><th>小計</th><th>贈品</th><th></th></tr></thead>
     <tbody id="lines">
     {% for l in lines %}
       <tr class="line">
         <td><select name="product_id">
           {% for p in products %}<option value="{{ p.product_id }}" {{ 'selected' if p.product_id==l.product_id }}>{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
         </select></td>
-        <td><select name="batch_id"><option value="">—</option>
-          {% for b in batches %}<option value="{{ b.batch_id }}" {{ 'selected' if b.batch_id==l.batch_id }}>{{ b.batch_code }} 批</option>{% endfor %}
-        </select></td>
-        <td><input name="qty" type="number" step="0.01" min="0" value="{{ l.qty }}"></td>
+        <td class="stockhint muted">—</td>
+        <td><input name="qty" type="number" step="1" min="0" value="{{ l.qty|round(0)|int }}"></td>
         <td><input name="unit_price" type="number" step="1" min="0" value="{{ l.unit_price|round(0) }}"></td>
+        <td class="linesub r">{{ (l.qty * l.unit_price)|round(0)|int }}</td>
         <td><select name="is_gift"><option>否</option><option {{ 'selected' if l.is_gift }}>是</option></select></td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
       </tr>
@@ -57,17 +70,19 @@
     {% if not lines %}
       <tr class="line">
         <td><select name="product_id">{% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}</select></td>
-        <td><select name="batch_id"><option value="">—</option>{% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }} 批</option>{% endfor %}</select></td>
-        <td><input name="qty" type="number" step="0.01" min="0"></td>
+        <td class="stockhint muted">—</td>
+        <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
+        <td class="linesub r">0</td>
         <td><select name="is_gift"><option>否</option><option>是</option></select></td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
       </tr>
     {% endif %}
     </tbody>
+    <tfoot><tr><td colspan="4" class="r"><b>應收合計(不含贈品)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="2"></td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
-  <p class="muted" style="font-size:11px;margin-top:6px">改完按下方「儲存」,小計與應收合計會重算。</p>
+  <p class="muted" style="font-size:11px;margin-top:6px">改完按上方「儲存」,應收合計會重算。</p>
 </div>
 
 <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
@@ -80,10 +95,14 @@
         {% for p in pay_methods %}<option {{ 'selected' if o.payment_method==p }}>{{ p }}</option>{% endfor %}</select></div>
       <div><label>收款狀態</label><select name="payment_status">
         {% for p in pay_status %}<option {{ 'selected' if o.payment_status==p }}>{{ p }}</option>{% endfor %}</select></div>
-      <div><label>收款日</label><input type="date" name="paid_date" value="{{ o.paid_date or '' }}"></div>
-      <div><label>實收金額</label><input name="paid_amount" type="number" value="{{ o.paid_amount or '' }}"></div>
-      <div><label>折扣(少收)</label><input name="discount_total" type="number" value="{{ o.discount_total or 0 }}"></div>
-      <div><label>跟客人收的運費</label><input name="shipping_fee_charged" type="number" value="{{ o.shipping_fee_charged or 0 }}"></div>
+      <div><label>收款日</label><input type="date" name="paid_date" id="paidDateField" value="{{ o.paid_date or '' }}"></div>
+      <div><label>實收金額</label><input name="paid_amount" type="number" id="paidAmountField" value="{{ o.paid_amount or '' }}"></div>
+      <div style="display:flex;align-items:flex-end;padding-bottom:9px">
+        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
+          <input type="checkbox" name="invoiced" value="1" style="width:auto" {{ 'checked' if o.invoiced }}> 已開發票
+        </label>
+      </div>
+      <div><label>發票號碼(選填)</label><input name="tax_doc_no" value="{{ o.tax_doc_no or '' }}"></div>
     </div>
   </div>
   <div class="card">
@@ -93,7 +112,10 @@
         {% for s in ship_methods %}<option {{ 'selected' if o.ship_method==s }}>{{ s }}</option>{% endfor %}</select></div>
       <div><label>物流商</label><input name="carrier" value="{{ o.carrier or '' }}"></div>
       <div><label>物流單號</label><input name="tracking_no" value="{{ o.tracking_no or '' }}"></div>
-      <div><label>我們付出的運費</label><input name="shipping_cost_actual" type="number" value="{{ o.shipping_cost_actual or 0 }}"></div>
+      <div><label>運費(花多少錢)</label><input name="shipping_cost_actual" type="number" value="{{ o.shipping_cost_actual or 0 }}"></div>
+      <div><label>運費由誰負擔</label><select name="ship_payer">
+        {% for s in ship_payers %}<option {{ 'selected' if o.ship_payer==s }}>{{ s }}</option>{% endfor %}
+      </select></div>
       <div><label>出貨日</label><input type="date" name="shipped_date" value="{{ o.shipped_date or '' }}"></div>
       <div><label>到貨日</label><input type="date" name="delivered_date" value="{{ o.delivered_date or '' }}"></div>
       <div><label>出貨狀態</label><select name="ship_status">
@@ -102,8 +124,6 @@
   </div>
 </div>
 <div class="card" style="margin-bottom:16px"><label>備註</label><input name="note" value="{{ o.note or '' }}"></div>
-<button type="submit">儲存</button>
-<a href="/orders" style="margin-left:12px">回列表</a>
 </form>
 
 <div class="card" style="margin:18px 0 16px">
@@ -130,22 +150,28 @@
     {% endfor %}</tbody>
   </table>
   {% endif %}
-  <form method="post" action="/orders/{{ o.order_id }}/return">
-    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(155px,1fr))">
-      <div><label>發生日期</label><input type="date" name="return_date" value="{{ today }}"></div>
-      <div><label>類型</label><select name="kind">{% for k in return_kinds %}<option>{{ k }}</option>{% endfor %}</select></div>
-      <div><label>沖減金額</label><input name="amount" type="number" step="1" min="0" required></div>
-      <div><label>退回品項<span class="muted">（有退實體貨才選）</span></label><select name="product_id"><option value="">—</option>
-        {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}</option>{% endfor %}</select></div>
-      <div><label>數量</label><input name="qty" type="number" step="0.01" min="0"></div>
-      <div><label>批次</label><select name="batch_id"><option value="">—</option>
-        {% for b in batches %}<option value="{{ b.batch_id }}">{{ b.batch_code }} 批</option>{% endfor %}</select></div>
-      <div><label>貨可再賣</label><select name="restock">
-        <option value="">否（折讓 / 報廢）</option><option value="1">是,加回庫存</option></select></div>
-      <div style="grid-column:1/-1"><label>原因</label><input name="reason" placeholder="客訴 / 破損 / 客戶退貨 …"></div>
-    </div>
-    <button type="submit" style="margin-top:10px">登記退貨 / 折讓</button>
+  <form method="post" action="/orders/{{ o.order_id }}/return_all"
+        onsubmit="return confirm('整筆退單:這張訂單的所有品項都會退貨入庫、金額全額沖銷,確定嗎?')">
+    <button type="submit" class="ghost">整筆退單(全退)</button>
+    <span class="muted" style="font-size:12px;margin-left:8px">貨全部退回庫存、金額全額沖銷 —— 適合客人整張訂單退貨的情況</span>
   </form>
+  <details style="margin-top:14px">
+    <summary class="muted" style="font-size:12px;cursor:pointer">只退部分品項 / 折讓(進階)</summary>
+    <form method="post" action="/orders/{{ o.order_id }}/return" style="margin-top:10px">
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(155px,1fr))">
+        <div><label>發生日期</label><input type="date" name="return_date" value="{{ today }}"></div>
+        <div><label>類型</label><select name="kind">{% for k in return_kinds %}<option>{{ k }}</option>{% endfor %}</select></div>
+        <div><label>沖減金額</label><input name="amount" type="number" step="1" min="0" required></div>
+        <div><label>退回品項<span class="muted">（有退實體貨才選）</span></label><select name="product_id"><option value="">—</option>
+          {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}</option>{% endfor %}</select></div>
+        <div><label>數量</label><input name="qty" type="number" step="0.01" min="0"></div>
+        <div><label>貨可再賣</label><select name="restock">
+          <option value="">否(折讓 / 報廢)</option><option value="1">是,加回庫存</option></select></div>
+        <div style="grid-column:1/-1"><label>原因</label><input name="reason" placeholder="客訴 / 破損 / 客戶退貨 …"></div>
+      </div>
+      <button type="submit" style="margin-top:10px">登記退貨 / 折讓</button>
+    </form>
+  </details>
   <p class="muted" style="font-size:11px;margin-top:8px">
     在「發生日期」的月份 / 產季沖減營收(不是原訂單月份)。「是,加回庫存」= 好貨退回可再賣 →
     自動產生「退貨入庫」、成本也回沖;否 = 折讓或報廢,只沖營收。
@@ -161,12 +187,55 @@
     clone.querySelectorAll('select,input').forEach(function (el) {
       if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
     });
+    var subCell = clone.querySelector('.linesub'); if (subCell) subCell.textContent = '0';
+    var hintCell = clone.querySelector('.stockhint'); if (hintCell) { hintCell.textContent = '—'; hintCell.style.color = ''; }
     body.appendChild(clone);
   });
   body.addEventListener('click', function (e) {
     if (!e.target.classList.contains('del')) return;
     var rows = body.querySelectorAll('tr.line');
     if (rows.length > 1) e.target.closest('tr').remove();
+    recalc();
+  });
+
+  // --- 現貨提示 ---
+  var STOCK = {{ stock_json | safe }};
+  function fillStock(row) {
+    var pid = row.querySelector('select[name="product_id"]').value;
+    var hint = row.querySelector('.stockhint');
+    if (!hint) return;
+    if (pid && STOCK[pid] != null) {
+      var s = Math.round(STOCK[pid]);
+      hint.textContent = s;
+      hint.style.color = s <= 0 ? 'var(--seal)' : '';
+    } else { hint.textContent = '—'; hint.style.color = ''; }
+  }
+  body.querySelectorAll('tr.line').forEach(fillStock);
+  body.addEventListener('change', function (e) {
+    if (e.target.name === 'product_id') fillStock(e.target.closest('tr'));
+  });
+
+  // --- 小計與應收合計(不含贈品) ---
+  function recalc() {
+    var sum = 0;
+    body.querySelectorAll('tr.line').forEach(function (row) {
+      var qty = parseFloat(row.querySelector('input[name="qty"]').value) || 0;
+      var up = parseFloat(row.querySelector('input[name="unit_price"]').value) || 0;
+      var giftSel = row.querySelector('select[name="is_gift"]');
+      var isGift = giftSel && giftSel.value === '是';
+      var sub = isGift ? 0 : qty * up;
+      var cell = row.querySelector('.linesub');
+      if (cell) cell.textContent = Math.round(sub).toLocaleString();
+      sum += sub;
+    });
+    var t = document.getElementById('ordertotal');
+    if (t) t.textContent = Math.round(sum).toLocaleString();
+  }
+  body.addEventListener('input', function (e) {
+    if (e.target.name === 'qty' || e.target.name === 'unit_price') recalc();
+  });
+  body.addEventListener('change', function (e) {
+    if (e.target.name === 'is_gift') recalc();
   });
 
   // 改客戶
@@ -197,6 +266,25 @@
   document.addEventListener('click', function (e) {
     if (!results.contains(e.target) && e.target !== search) results.hidden = true;
   });
+
+  // --- 標記已收款:直接沿用「收款」卡裡的實收金額/收款日,沒填就提醒 ---
+  var markPaidForm = document.getElementById('markPaidForm');
+  if (markPaidForm) {
+    markPaidForm.addEventListener('submit', function (e) {
+      var amtField = document.getElementById('paidAmountField');
+      var amt = amtField ? parseFloat(amtField.value) : 0;
+      if (!amt || amt <= 0) {
+        e.preventDefault();
+        alert('請先在下面「收款」卡填實收金額,再標記已收款。');
+        if (amtField) amtField.focus();
+        return;
+      }
+      document.getElementById('markPaidAmount').value = amt;
+      var dateField = document.getElementById('paidDateField');
+      document.getElementById('markPaidDate').value = (dateField && dateField.value) || '';
+    });
+  }
+  recalc();
 })();
 </script>
 {% endblock %}

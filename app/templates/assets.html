@@ -20,12 +20,11 @@
 
 <div class="card" style="overflow-x:auto">
   <table>
-    <thead><tr><th>名稱</th><th>類別</th><th>產品線</th><th>取得日</th><th>成本</th><th>補助</th><th>殘值</th><th>年數</th><th>每月折舊</th><th>累計折舊</th><th>帳面淨值</th><th>狀態</th><th></th></tr></thead>
+    <thead><tr><th>名稱</th><th>類別</th><th>取得日</th><th>成本</th><th>補助</th><th>殘值</th><th>年數</th><th>每月折舊</th><th>累計折舊</th><th>帳面淨值</th><th>狀態</th><th></th></tr></thead>
     <tbody>{% for a in rows %}
       <tr style="{{ 'opacity:.5' if not a.in_use }}">
         <td>{{ a.name }}{% if a.from_buy %} <span class="muted" style="font-size:11px">(來自進貨)</span>{% endif %}</td>
         <td>{{ a.category or '' }}</td>
-        <td>{{ a.pg_name or '共同' }}</td>
         <td>{{ a.acquire_date }}</td>
         <td>{{ a.cost|money }}</td>
         <td>{{ a.grant_amount|money if a.grant_amount else '—' }}</td>
@@ -37,7 +36,7 @@
         <td>{{ '在用' if a.in_use else ('處分 ' ~ a.disposed_date) }}</td>
         <td><a href="/assets/{{ a.asset_id }}/edit">編輯</a></td>
       </tr>
-    {% else %}<tr><td colspan="13" class="muted" style="text-align:left">還沒有固定資產。設備類的進貨可從「進貨」頁點「建卡」帶入。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="12" class="muted" style="text-align:left">還沒有固定資產。設備類的進貨可從「進貨」頁點「建卡」帶入。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
 <div class="muted" style="font-size:11px;margin-top:8px">

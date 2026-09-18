@@ -61,34 +61,36 @@ def _S(season, alias="o"):
 
 
 # ---------- KPI --------------------------------------------------------
+#   「營收」一律用實收(paid_amount,家易標記已收款時填的金額),不是訂單金額 ——
+#   他在意的是收支情況,錢真的進來才算數。還沒收到錢的訂單,先不計入營收/毛利,
+#   但照樣可以出貨(出貨跟庫存不受付款狀態影響)。
+PAID_O = "o.payment_status IN ('已收款','部分收款')"
+
 def kpi(season=None, asof=None):
     a = as_of(asof)
     sc, sp = _S(season)
-    rev = q1(f"SELECT COALESCE(SUM(order_total),0) v FROM \"order\" o WHERE {sc} AND order_kind='銷售'", sp)["v"]
-    m = q1(f"""SELECT COALESCE(SUM(ol.line_subtotal),0) rev,
-                      COALESCE(SUM(ol.qty*COALESCE(b.unit_cost,0)),0) cogs
+    rev = q1(f"SELECT COALESCE(SUM(o.paid_amount),0) v FROM \"order\" o WHERE {sc} AND order_kind='銷售' AND {PAID_O}", sp)["v"]
+    m = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) cogs
                FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-               LEFT JOIN batch b ON b.batch_id=ol.batch_id
-               WHERE {sc} AND o.order_kind='銷售'""", sp)
+               JOIN product p ON p.product_id=ol.product_id
+               WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}""", sp)
     ret_gross, ret_cogs = _returns_agg(season)
-    net_rev = m["rev"] - ret_gross
+    net_rev = rev - ret_gross
     gp = net_rev - (m["cogs"] - ret_cogs)
     oc = q1(f"SELECT COUNT(*) n FROM \"order\" o WHERE {sc} AND order_kind='銷售'", sp)["n"]
-    ship = q1(f"""SELECT COALESCE(SUM(shipping_fee_charged),0) charged,
-                         COALESCE(SUM(shipping_cost_actual),0) cost
-                  FROM "order" o WHERE {sc}""", sp)
-    ar = q1(f"""SELECT COALESCE(SUM(order_total),0) v, COUNT(*) n FROM "order" o
+    paid_oc = q1(f"SELECT COUNT(*) n FROM \"order\" o WHERE {sc} AND order_kind='銷售' AND {PAID_O}", sp)["n"]
+    ship_cost = q1(f"SELECT COALESCE(SUM(shipping_cost_actual),0) v FROM \"order\" o WHERE {sc}", sp)["v"]
+    ar = q1(f"""SELECT COALESCE(SUM(order_total - COALESCE(paid_amount,0)),0) v, COUNT(*) n FROM "order" o
                 WHERE {sc} AND payment_status IN ('待收款','部分收款')""", sp)
-    pr = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(b.unit_cost,0)),0) v
+    pr = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
                 FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-                LEFT JOIN batch b ON b.batch_id=ol.batch_id
+                JOIN product p ON p.product_id=ol.product_id
                 WHERE {sc} AND o.order_kind<>'銷售'""", sp)["v"]
     return dict(
         revenue=rev, returns=ret_gross, net_revenue=net_rev,
         gross_profit=gp, margin=(gp / net_rev if net_rev else 0),
-        orders=oc, aov=(rev / oc if oc else 0),
-        ship_pnl=ship["charged"] - ship["cost"],
-        ship_subsidy=((ship["cost"] - ship["charged"]) / ship["cost"] if ship["cost"] else 0),
+        orders=oc, aov=(rev / paid_oc if paid_oc else 0),
+        ship_cost=ship_cost,
         ar_amount=ar["v"], ar_count=ar["n"],
         pr_cost=pr, pr_ratio=(pr / rev if rev else 0),
         as_of=a,
@@ -115,14 +117,6 @@ def alerts(season=None, asof=None):
                 WHERE issue_type IN ('破損','遺失') AND (resolution IS NULL OR resolution='')""")
     if iss["n"]:
         out.append({"text": f"破損 / 遺失待處理 {iss['n']} 件", "href": "/issues"})
-    near = q1("""SELECT b.batch_code,
-                        julianday(MIN(date(b.mfg_date,'+'||p.shelf_life_days||' days'))) - julianday(?) days
-                 FROM batch b JOIN order_line ol ON ol.batch_id=b.batch_id
-                 JOIN product p ON p.product_id=ol.product_id
-                 GROUP BY b.batch_code HAVING days BETWEEN 0 AND 60
-                 ORDER BY days LIMIT 1""", (a,))
-    if near:
-        out.append({"text": f"批 {near['batch_code']} 約 {near['days']:.0f} 天到期", "href": "/reports?tab=batch"})
     d = q1(f"""SELECT
                  COALESCE(SUM(o.discount_total),0)
                  + COALESCE(SUM(CASE WHEN ol.list_price>ol.unit_price
@@ -149,20 +143,25 @@ def alerts(season=None, asof=None):
 
 # ---------- 儀表板圖表 --------------------------------------------
 def monthly(season=None):
+    """依訂單日期歸月,金額用實收(只算已收款 / 部分收款的訂單)。"""
     sc, sp = _S(season)
-    rows = q(f"""SELECT strftime('%Y-%m', o.order_date) ym,
-                        SUM(ol.line_subtotal) rev,
-                        SUM(ol.line_subtotal - ol.qty*COALESCE(b.unit_cost,0)) gp
-                 FROM "order" o JOIN order_line ol ON ol.order_id=o.order_id
-                 LEFT JOIN batch b ON b.batch_id=ol.batch_id
-                 WHERE {sc} AND o.order_kind='銷售'
-                 GROUP BY ym ORDER BY ym""", sp)
+    rev_rows = q(f"""SELECT strftime('%Y-%m', o.order_date) ym, COALESCE(SUM(o.paid_amount),0) rev
+                     FROM "order" o WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}
+                     GROUP BY ym""", sp)
+    cogs_rows = q(f"""SELECT strftime('%Y-%m', o.order_date) ym,
+                             COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) cogs
+                      FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
+                      JOIN product p ON p.product_id=ol.product_id
+                      WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}
+                      GROUP BY ym""", sp)
+    cogs_map = {r["ym"]: r["cogs"] for r in cogs_rows}
+    rows = [dict(ym=r["ym"], rev=r["rev"], gp=r["rev"] - cogs_map.get(r["ym"], 0)) for r in rev_rows]
     rc, rp = _S(season, alias="sr")
     rmap = {r["ym"]: r for r in q(f"""SELECT strftime('%Y-%m', sr.return_date) ym,
                 COALESCE(SUM(sr.amount),0) ret,
                 COALESCE(SUM(CASE WHEN sr.restock=1
-                     THEN COALESCE(sr.qty,0)*COALESCE(b.unit_cost,0) ELSE 0 END),0) rcogs
-              FROM sales_return sr LEFT JOIN batch b ON b.batch_id=sr.batch_id
+                     THEN COALESCE(sr.qty,0)*COALESCE(p.unit_cost,0) ELSE 0 END),0) rcogs
+              FROM sales_return sr LEFT JOIN product p ON p.product_id=sr.product_id
               WHERE {rc} GROUP BY ym""", rp)}
     by_ym = {r["ym"]: r for r in rows}
     for ym, x in rmap.items():
@@ -182,15 +181,12 @@ def by_channel(season=None):
         (SELECT COUNT(*) FROM "order" o WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') orders,
         (SELECT COALESCE(SUM(ol.line_subtotal),0) FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
            WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') rev,
-        (SELECT COALESCE(SUM(ol.qty*COALESCE(b.unit_cost,0)),0) FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-           LEFT JOIN batch b ON b.batch_id=ol.batch_id
-           WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') cogs,
-        (SELECT COALESCE(SUM(o.platform_fee),0) FROM "order" o WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') pfee,
-        (SELECT COALESCE(SUM(o.shipping_fee_charged - o.shipping_cost_actual),0) FROM "order" o
-           WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') ship_pnl
-        FROM channel c""", sp * 5)
+        (SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
+           JOIN product p ON p.product_id=ol.product_id
+           WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') cogs
+        FROM channel c""", sp * 3)
     for r in rows:
-        r["gp"] = r["rev"] - r["cogs"] - r["pfee"]
+        r["gp"] = r["rev"] - r["cogs"]
     rows = [r for r in rows if r["orders"]]
     rows.sort(key=lambda r: r["rev"], reverse=True)
     return rows
@@ -265,7 +261,8 @@ def orders_list(flt="all", kw=""):
     a = as_of()
     fc, fp = orders_filter(flt, kw)
     sql = f"""SELECT o.order_id, o.order_no, o.order_date, o.order_kind, o.order_total,
-                     o.payment_status, o.ship_status, cu.display_name cust,
+                     o.payment_status, o.ship_status, o.invoiced, o.paid_amount,
+                     o.shipping_cost_actual, o.ship_payer, cu.display_name cust,
                      (SELECT c.name FROM channel c WHERE c.channel_id=o.channel_id) chan,
                      CAST(julianday(?)-julianday(o.order_date) AS INT) age
               FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
@@ -279,9 +276,8 @@ def order_get(oid):
                      (SELECT name FROM channel WHERE channel_id=o.channel_id) chan
               FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
               WHERE o.order_id=?""", (oid,))
-    lines = q("""SELECT ol.*, p.name pname, p.uom, b.batch_code
+    lines = q("""SELECT ol.*, p.name pname, p.uom
                  FROM order_line ol JOIN product p ON p.product_id=ol.product_id
-                 LEFT JOIN batch b ON b.batch_id=ol.batch_id
                  WHERE ol.order_id=? ORDER BY ol.line_id""", (oid,))
     return o, lines
 
@@ -305,42 +301,14 @@ def profit_by_product(season=None):
                         SUM(ol.line_subtotal) rev,
                         SUM(CASE WHEN ol.list_price>ol.unit_price
                                  THEN (ol.list_price-ol.unit_price)*ol.qty ELSE 0 END) disc,
-                        AVG(NULLIF(b.unit_cost,0)) unit_cost,
-                        SUM(ol.line_subtotal - ol.qty*COALESCE(b.unit_cost,0)) gp,
+                        AVG(NULLIF(p.unit_cost,0)) unit_cost,
+                        SUM(ol.line_subtotal - ol.qty*COALESCE(p.unit_cost,0)) gp,
                         AVG(NULLIF(ol.unit_price,0)) avg_price,
                         AVG(NULLIF(ol.list_price,0)) list_price
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
-                 LEFT JOIN batch b ON b.batch_id=ol.batch_id
                  WHERE {sc} AND o.order_kind='銷售' AND ol.is_gift=0
                  GROUP BY p.name ORDER BY rev DESC""", sp)
-
-
-# ---------- 報表:批次與效期 -----------------------------------
-def batch_report(season=None, asof=None):
-    a = as_of(asof)
-    sc, sp = _S(season, alias="b")
-    rows = q(f"""SELECT b.batch_id, b.batch_code, b.season, b.output_qty, b.output_uom, b.mfg_date,
-                        b.unit_cost,
-                        (SELECT p.name FROM product p WHERE p.product_id=b.product_id) pname,
-                        COALESCE(
-                          (SELECT p.shelf_life_days FROM product p WHERE p.product_id=b.product_id),
-                          (SELECT MIN(p.shelf_life_days) FROM order_line ol JOIN product p
-                             ON p.product_id=ol.product_id WHERE ol.batch_id=b.batch_id)
-                        ) shelf,
-                        COALESCE((SELECT SUM(ol.qty) FROM order_line ol WHERE ol.batch_id=b.batch_id),0) sold
-                 FROM batch b WHERE {sc} ORDER BY b.batch_code""", sp)
-    for r in rows:
-        r["remain"] = (r["output_qty"] or 0) - r["sold"]
-        r["rate"] = (r["sold"] / r["output_qty"]) if r["output_qty"] else 0
-        r["remain_value"] = r["remain"] * (r["unit_cost"] or 0)
-        if r["mfg_date"] and r["shelf"]:
-            exp = (dt.date.fromisoformat(r["mfg_date"]) + dt.timedelta(days=r["shelf"]))
-            r["expiry"] = exp.isoformat()
-            r["days_left"] = (exp - dt.date.fromisoformat(a)).days
-        else:
-            r["expiry"], r["days_left"] = None, None
-    return rows
 
 
 # ---------- 報表:跨產季比較(YoY) ---------------------------
@@ -446,16 +414,14 @@ def finance_months(season=None):
     return [m for m in mw if season_of(m + "-01") in ss]
 
 def finance_month(ym):
-    rev = q1("""SELECT COALESCE(SUM(order_total),0) v FROM "order"
-                WHERE order_kind='銷售' AND strftime('%Y-%m',order_date)=?""", (ym,))["v"]
-    cogs = q1("""SELECT COALESCE(SUM(ol.qty*COALESCE(b.unit_cost,0)),0) v
+    rev = q1(f"""SELECT COALESCE(SUM(paid_amount),0) v FROM "order" o
+                WHERE order_kind='銷售' AND {PAID_O} AND strftime('%Y-%m',order_date)=?""", (ym,))["v"]
+    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-                 LEFT JOIN batch b ON b.batch_id=ol.batch_id
-                 WHERE o.order_kind='銷售' AND strftime('%Y-%m',o.order_date)=?""", (ym,))["v"]
-    plat = q1("""SELECT COALESCE(SUM(platform_fee),0) v FROM "order"
-                 WHERE order_kind='銷售' AND strftime('%Y-%m',order_date)=?""", (ym,))["v"]
-    ship = q1("""SELECT COALESCE(SUM(shipping_fee_charged - shipping_cost_actual),0) v
-                 FROM "order" WHERE strftime('%Y-%m',order_date)=?""", (ym,))["v"]
+                 JOIN product p ON p.product_id=ol.product_id
+                 WHERE o.order_kind='銷售' AND {PAID_O} AND strftime('%Y-%m',o.order_date)=?""", (ym,))["v"]
+    ship_cost = q1("""SELECT COALESCE(SUM(shipping_cost_actual),0) v
+                       FROM "order" WHERE strftime('%Y-%m',order_date)=?""", (ym,))["v"]
     by_cat = {}
     for r in opex_rows(ym, ym):
         by_cat[r["category"]] = by_cat.get(r["category"], 0) + r["amt"]
@@ -466,10 +432,10 @@ def finance_month(ym):
     net_rev = rev - ret_gross
     gp = net_rev - cogs_net
     margin = gp / net_rev if net_rev else 0
-    pretax = gp - plat + ship - opex_total
+    pretax = gp - ship_cost - opex_total
     breakeven = (opex_total / margin) if margin else None
     return dict(ym=ym, revenue=rev, returns=ret_gross, cogs=cogs_net, gross_profit=gp, margin=margin,
-                platform_fee=plat, ship_pnl=ship, opex=opex, opex_total=opex_total,
+                ship_cost=ship_cost, opex=opex, opex_total=opex_total,
                 pretax=pretax, breakeven=breakeven)
 
 def finance_trend():
@@ -490,9 +456,9 @@ def asset_list(as_of_ym=None):
     """固定資產卡 + 到 as_of_ym 為止的累計折舊、帳面淨值。"""
     if not as_of_ym:
         as_of_ym = as_of()[:7]
-    rows = q("""SELECT a.*, g.name pg_name,
+    rows = q("""SELECT a.*,
                        (SELECT COUNT(*) FROM purchase p WHERE p.purchase_id=a.source_purchase_id) from_buy
-                FROM fixed_asset a LEFT JOIN product_group g ON g.pg_id=a.product_group_id
+                FROM fixed_asset a
                 ORDER BY a.acquire_date DESC, a.asset_id DESC""")
     for a in rows:
         base = asset_dep_base(a)
@@ -516,16 +482,16 @@ def _returns_agg(season):
     sc, sp = _S(season, alias="sr")
     r = q1(f"""SELECT COALESCE(SUM(sr.amount),0) gross,
                       COALESCE(SUM(CASE WHEN sr.restock=1
-                           THEN COALESCE(sr.qty,0)*COALESCE(b.unit_cost,0) ELSE 0 END),0) cogs_back
-               FROM sales_return sr LEFT JOIN batch b ON b.batch_id=sr.batch_id
+                           THEN COALESCE(sr.qty,0)*COALESCE(p.unit_cost,0) ELSE 0 END),0) cogs_back
+               FROM sales_return sr LEFT JOIN product p ON p.product_id=sr.product_id
                WHERE {sc}""", sp)
     return r["gross"], r["cogs_back"]
 
 def _returns_month(ym):
     r = q1("""SELECT COALESCE(SUM(sr.amount),0) gross,
                      COALESCE(SUM(CASE WHEN sr.restock=1
-                          THEN COALESCE(sr.qty,0)*COALESCE(b.unit_cost,0) ELSE 0 END),0) cogs_back
-              FROM sales_return sr LEFT JOIN batch b ON b.batch_id=sr.batch_id
+                          THEN COALESCE(sr.qty,0)*COALESCE(p.unit_cost,0) ELSE 0 END),0) cogs_back
+              FROM sales_return sr LEFT JOIN product p ON p.product_id=sr.product_id
               WHERE strftime('%Y-%m', sr.return_date)=?""", (ym,))
     return r["gross"], r["cogs_back"]
 
@@ -534,42 +500,42 @@ def returns_list(order_id=None):
     where = "sr.order_id=?" if order_id else "1=1"
     args = (order_id,) if order_id else ()
     return q(f"""SELECT sr.*, o.order_no, cu.display_name cust,
-                        p.name pname, p.uom, bt.batch_code
+                        p.name pname, p.uom
                  FROM sales_return sr
                  JOIN "order" o ON o.order_id=sr.order_id
                  LEFT JOIN customer cu ON cu.customer_id=o.customer_id
                  LEFT JOIN product p ON p.product_id=sr.product_id
-                 LEFT JOIN batch bt ON bt.batch_id=sr.batch_id
                  WHERE {where}
                  ORDER BY sr.return_date DESC, sr.return_id DESC""", args)
 
 
 def season_finance(season):
-    """整個產季合計:銷售月的營收 − 產季 12 個月(4 月初~隔年 3 月底)的營運費用。
+    """整個產季合計:銷售月的營收 − 已經過去月份的營運費用。
+    產季全長是 4 月初~隔年 3 月底共 12 個月,但還沒發生的月份不預先算進費用裡
+    (進行中的產季只算「已經過去的月份」,不會因為費用先算滿 12 個月而顯得稅前利潤一大包負的)。
     銷貨退回 / 折讓依「發生產季」沖減(cogs 為回沖後淨額)。"""
-    rev = q1("""SELECT COALESCE(SUM(order_total),0) v FROM "order"
-                WHERE season=? AND order_kind='銷售'""", (season,))["v"]
-    cogs = q1("""SELECT COALESCE(SUM(ol.qty*COALESCE(b.unit_cost,0)),0) v
+    rev = q1(f"""SELECT COALESCE(SUM(paid_amount),0) v FROM "order" o
+                WHERE season=? AND order_kind='銷售' AND {PAID_O}""", (season,))["v"]
+    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-                 LEFT JOIN batch b ON b.batch_id=ol.batch_id
-                 WHERE o.season=? AND o.order_kind='銷售'""", (season,))["v"]
-    plat = q1("""SELECT COALESCE(SUM(platform_fee),0) v FROM "order"
-                 WHERE season=? AND order_kind='銷售'""", (season,))["v"]
-    ship = q1("""SELECT COALESCE(SUM(shipping_fee_charged - shipping_cost_actual),0) v
-                 FROM "order" WHERE season=?""", (season,))["v"]
+                 JOIN product p ON p.product_id=ol.product_id
+                 WHERE o.season=? AND o.order_kind='銷售' AND {PAID_O}""", (season,))["v"]
+    ship_cost = q1("""SELECT COALESCE(SUM(shipping_cost_actual),0) v
+                       FROM "order" WHERE season=?""", (season,))["v"]
     ret_gross, ret_cogs = _returns_agg(season)
     cogs_net = cogs - ret_cogs
     net_rev = rev - ret_gross
-    lo, hi = f"{season}-04", f"{season + 1}-03"
+    lo, hi_full = f"{season}-04", f"{season + 1}-03"
+    hi = min(hi_full, dt.date.today().strftime("%Y-%m"))  # 進行中的產季只算到這個月,不預先算未發生的費用
     ox_rows = opex_rows(lo, hi)
     opex_v = sum(r["amt"] for r in ox_rows)
     opex_n = len(set(r["ym"] for r in ox_rows))
     gp = net_rev - cogs_net
-    return dict(season=season, window=f"{lo} ~ {hi}",
+    return dict(season=season, window=f"{lo} ~ {hi_full}",
                 revenue=rev, returns=ret_gross, cogs=cogs_net,
-                gross_profit=gp, platform_fee=plat, ship_pnl=ship,
+                gross_profit=gp, ship_cost=ship_cost,
                 opex=opex_v, opex_months=opex_n,
-                pretax=gp - plat + ship - opex_v,
+                pretax=gp - ship_cost - opex_v,
                 margin=(gp / net_rev if net_rev else 0))
 
 
@@ -592,18 +558,17 @@ def product_line_pnl(season=None, basis="rev"):
                   ORDER BY b.sort, g.sort, g.pg_id""")
     L = {g["pg_id"]: dict(pg_id=g["pg_id"], name=g["name"], bu_name=g["bu_name"],
                           revenue=0.0, qty=0.0, dm_batch=0.0, dm_purchase=0.0,
-                          platform_fee=0.0, ship_pnl=0.0, returns=0.0, returns_cogs=0.0,
+                          ship_cost=0.0, returns=0.0, returns_cogs=0.0,
                           direct_labor=0.0, field=0.0, cert=0.0, rnd=0.0,
                           dep=0.0, other_line=0.0) for g in groups}
 
-    # 營收 / 銷量 / 批次直接材料
+    # 營收 / 銷量 / 直接材料(商品單位成本)
     for r in q(f"""SELECT p.product_group_id pg, ol.qty,
                           ol.line_subtotal sub,
-                          ol.qty * COALESCE(bt.unit_cost,0) bcost
+                          ol.qty * COALESCE(p.unit_cost,0) bcost
                    FROM order_line ol
                    JOIN "order" o ON o.order_id=ol.order_id
                    JOIN product p ON p.product_id=ol.product_id
-                   LEFT JOIN batch bt ON bt.batch_id=ol.batch_id
                    WHERE {sc} AND o.order_kind='銷售'""", sp):
         g = L.get(r["pg"])
         if not g:
@@ -612,15 +577,14 @@ def product_line_pnl(season=None, basis="rev"):
         g["qty"] += r["qty"] or 0
         g["dm_batch"] += r["bcost"] or 0
 
-    # 每張訂單的通路抽成 / 運費賺賠 依該單各線營收佔比分攤
+    # 運費(成本)依該單各線營收佔比分攤
     seg = {}
     for r in q(f"""SELECT ol.order_id oid, p.product_group_id pg, ol.line_subtotal sub
                    FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                    JOIN product p ON p.product_id=ol.product_id
                    WHERE {sc} AND o.order_kind='銷售'""", sp):
         seg.setdefault(r["oid"], []).append((r["pg"], r["sub"] or 0))
-    for o in q(f"""SELECT order_id oid, platform_fee,
-                          (shipping_fee_charged - shipping_cost_actual) ship
+    for o in q(f"""SELECT order_id oid, shipping_cost_actual ship
                    FROM "order" o WHERE {sc} AND order_kind='銷售'""", sp):
         parts = seg.get(o["oid"], [])
         tot = sum(s for _, s in parts) or 1
@@ -628,16 +592,14 @@ def product_line_pnl(season=None, basis="rev"):
             g = L.get(pg)
             if not g:
                 continue
-            g["platform_fee"] += (o["platform_fee"] or 0) * s / tot
-            g["ship_pnl"] += (o["ship"] or 0) * s / tot
+            g["ship_cost"] += (o["ship"] or 0) * s / tot
 
     # 銷貨退回 / 折讓:有 product_id → 歸該線;純折讓(無品項)→ 依原單各線營收佔比分攤(僅金額)
     rc, rp = _S(season, alias="sr")
     for r in q(f"""SELECT sr.order_id oid, sr.amount, sr.qty, sr.restock,
-                          COALESCE(bt.unit_cost,0) ucost, p.product_group_id pg
+                          COALESCE(p.unit_cost,0) ucost, p.product_group_id pg
                    FROM sales_return sr
                    LEFT JOIN product p ON p.product_id=sr.product_id
-                   LEFT JOIN batch bt ON bt.batch_id=sr.batch_id
                    WHERE {rc}""", rp):
         amt = r["amount"] or 0
         back = (r["qty"] or 0) * r["ucost"] if r["restock"] else 0
@@ -676,12 +638,12 @@ def product_line_pnl(season=None, basis="rev"):
     out = list(L.values())
     for g in out:
         g["direct_material"] = g["dm_batch"] if g["dm_batch"] > 0 else g["dm_purchase"]
-        g["dm_from"] = "批次成本" if g["dm_batch"] > 0 else ("進貨估算" if g["dm_purchase"] else "—")
+        g["dm_from"] = "商品單位成本" if g["dm_batch"] > 0 else ("進貨估算" if g["dm_purchase"] else "—")
         g["line_opex"] = (g["direct_labor"] + g["field"] + g["cert"] + g["rnd"]
                           + g["dep"] + g["other_line"])
         g["net_revenue"] = g["revenue"] - g["returns"]
         g["contribution"] = (g["net_revenue"] - (g["direct_material"] - g["returns_cogs"])
-                             - g["platform_fee"] + g["ship_pnl"] - g["line_opex"])
+                             - g["ship_cost"] - g["line_opex"])
 
     if basis == "qty":
         w = {g["pg_id"]: max(g["qty"], 0) for g in out}
@@ -696,7 +658,7 @@ def product_line_pnl(season=None, basis="rev"):
         g["margin"] = g["profit"] / g["net_revenue"] if g["net_revenue"] else 0
 
     keys = ("revenue", "returns", "net_revenue", "direct_material", "returns_cogs",
-            "platform_fee", "ship_pnl", "direct_labor",
+            "ship_cost", "direct_labor",
             "field", "cert", "rnd", "dep", "line_opex", "contribution",
             "shared_alloc", "profit")
     total = {k: sum(g[k] for g in out) for k in keys}
@@ -711,13 +673,13 @@ def finance_summary(season=None):
     ss = _season_list(season)
     if not ss:
         return dict(season=None, window="全部產季", revenue=0, returns=0, cogs=0, gross_profit=0,
-                    platform_fee=0, ship_pnl=0, opex=0, opex_months=0, pretax=0, margin=0)
+                    ship_cost=0, opex=0, opex_months=0, pretax=0, margin=0)
     if len(ss) == 1:
         return season_finance(ss[0])
     parts = [season_finance(s) for s in ss]
     window = "全部產季" if ss == seasons() else "、".join(str(s) for s in ss) + " 產季"
     agg = dict(season=None, window=window)
-    for f in ("revenue", "returns", "cogs", "gross_profit", "platform_fee", "ship_pnl", "opex", "opex_months", "pretax"):
+    for f in ("revenue", "returns", "cogs", "gross_profit", "ship_cost", "opex", "opex_months", "pretax"):
         agg[f] = sum(p[f] for p in parts)
     net = agg["revenue"] - agg["returns"]
     agg["margin"] = agg["gross_profit"] / net if net else 0
@@ -802,16 +764,8 @@ def stock_on_hand():
     for r in rows:
         thr = r["low_stock"] if r["low_stock"] is not None else 0
         r["low"] = r["on_hand"] <= thr
-        # 只列「還有正庫存」的批次,依製造日(舊到新 = 先出)排序
-        r["by_batch"] = q("""SELECT COALESCE(b.batch_code,'(未指定)') batch_code,
-                                    SUM(sm.qty) qty,
-                                    MAX(b.mfg_date) mfg_date
-                             FROM stock_move sm LEFT JOIN batch b ON b.batch_id=sm.batch_id
-                             WHERE sm.product_id=? GROUP BY sm.batch_id
-                             HAVING SUM(sm.qty) > 0.0001
-                             ORDER BY mfg_date""", (r["product_id"],))
-        r["oldest"] = r["by_batch"][0] if r["by_batch"] else None
     return rows
+
 
 def stock_on_hand_map():
     return {r["product_id"]: r["on_hand"]
@@ -826,11 +780,9 @@ def stock_moves(product_id=None, mtype=None, limit=400):
         where.append("sm.product_id=?"); args.append(int(product_id))
     if mtype:
         where.append("sm.move_type=?"); args.append(mtype)
-    return q(f"""SELECT sm.*, p.sku, p.name pname, p.uom,
-                        b.batch_code, o.order_no
+    return q(f"""SELECT sm.*, p.sku, p.name pname, p.uom, o.order_no
                  FROM stock_move sm
                  JOIN product p ON p.product_id=sm.product_id
-                 LEFT JOIN batch b ON b.batch_id=sm.batch_id
                  LEFT JOIN "order" o ON o.order_id=sm.ref_order_id
                  WHERE {' AND '.join(where)}
                  ORDER BY sm.move_date DESC, sm.move_id DESC LIMIT ?""", args + [limit])
@@ -862,9 +814,8 @@ def shipping_orders(scope="pending", date=None):
                    FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
                    WHERE {' AND '.join(where)} ORDER BY o.order_date, o.order_no""", args)
     for o in orders:
-        o["lines"] = q("""SELECT p.name pname, p.uom, p.type_code_raw spec, ol.qty, b.batch_code
+        o["lines"] = q("""SELECT p.name pname, p.uom, p.type_code_raw spec, ol.qty
                           FROM order_line ol JOIN product p ON p.product_id=ol.product_id
-                          LEFT JOIN batch b ON b.batch_id=ol.batch_id
                           WHERE ol.order_id=? ORDER BY ol.line_id""", (o["order_id"],))
     ids = [o["order_id"] for o in orders]
     summary = []
@@ -891,41 +842,51 @@ def food_label(product_id, batch_id=None):
 
 
 # ---------- 定價試算(管理估算,不進帳本;見 docs/定價分析.md) --------
+# 2026-09 改版:鮮果 → 龍眼乾 → 龍眼肉 一路串接成本(上游變,下游自動跟著算),
+# 全程以「台斤」計價,轉換率(幾台斤原料做出 1 台斤下一階段)是可調參數,
+# 運費用固定金額(不用售價比例),最後再加 5% 營業稅算出可售成本。
 # (key, 分組, 標籤, 單位, 預設值, 說明)
 PRICING_FIELDS = [
-    ("field_annual",    "共用",     "全年田間管理費用",   "元/年",   180000, "修枝施肥除草灌溉防治疏果 + 人工"),
-    ("harvest_wage",    "共用",     "鮮果採收工資",       "元/年",   30000,  "9 月採收"),
-    ("fresh_yield",     "共用",     "全年鮮果總產量",     "台斤",    7000,   "建議用近 3 年平均"),
-    ("wage_hr",         "共用",     "人工時薪(含老闆市價)", "元/時",  180,    "老闆自己下田 / 顧爐 / 剝肉也按市價估"),
-    ("overhead_pct",    "共用",     "分攤共同費用",       "% 單位製造成本", 23, "行銷 / 管理人事 / 研發攤提 / 驗證費 / 平台維運"),
-    ("target_margin",   "共用",     "目標毛利率",         "%",       40,     "用來反推建議售價"),
+    ("fresh_yield",  "共用",     "全年鮮果總產量",     "台斤/年", 10000,  "建議用近 3 年平均,三品共用同一批鮮果"),
+    ("tax_rate",     "共用",     "營業稅率",           "%",       5,      ""),
 
-    ("fresh_sort",      "龍眼鮮果", "分級挑選工",         "元/台斤", 5,      ""),
-    ("fresh_pack",      "龍眼鮮果", "包材(簡易)",        "元/台斤", 3,      ""),
-    ("fresh_loss",      "龍眼鮮果", "損耗率",             "%",       15,     "保鮮期僅約 10 天"),
-    ("fresh_price",     "龍眼鮮果", "目前售價",           "元/台斤", 80,     ""),
+    ("mat_fert",     "龍眼鮮果", "肥料資材",           "元/年",   6800,   "台肥1號每包340元,估算需求量"),
+    ("mat_org",      "龍眼鮮果", "有機基肥",           "元/年",   18000,  "每包60元,估算需求量"),
+    ("mat_pest",     "龍眼鮮果", "農藥資材",           "元/年",   1500,   "整年度用量估算"),
+    ("lab_weed",     "龍眼鮮果", "人工除草",           "元/年",   24000,  "平均 1 年需要 6 次,每次 2 天"),
+    ("lab_harvest",  "龍眼鮮果", "人工採摘",           "元/年",   168000, "平均採收期約 28 天,投入基本人力 3 人"),
+    ("lab_spray",    "龍眼鮮果", "噴藥人力",           "元/年",   12000,  "每次噴藥人力 2 人,整年度施藥 3 次"),
+    ("fresh_price",  "龍眼鮮果", "目前售價",           "元/台斤", 25,     ""),
 
-    ("dry_fresh_jin",   "龍眼乾",   "每包耗鮮果",         "台斤/包", 1.9,    ""),
-    ("dry_fuel",        "龍眼乾",   "焙製燃料(柴/電)",   "元/包",   8,      ""),
-    ("dry_batch_labor", "龍眼乾",   "一爐人工總額(顧爐+去殼+篩選)", "元/爐", 3000, ""),
-    ("dry_batch_units", "龍眼乾",   "一爐產出",           "包/爐",   200,    ""),
-    ("dry_kiln_dep",    "龍眼乾",   "焙灶折舊",           "元/包",   5,      "= 焙灶月折舊 ÷ 月產量"),
-    ("dry_loss",        "龍眼乾",   "焙製損耗率",         "%",       3,      ""),
-    ("dry_pack",        "龍眼乾",   "包材(夾鏈袋)",      "元/包",   12,     ""),
-    ("dry_price",       "龍眼乾",   "目前售價(300g)",    "元/包",   175,    ""),
+    ("ratio_fresh_dry", "龍眼乾", "鮮果轉換率",        "台斤鮮果 / 台斤乾", 3, "例:鮮果 3 台斤 焙成 1 台斤龍眼乾"),
+    ("dry_trim",     "龍眼乾",   "① 剪果工費",         "元/台斤", 9,      "加工順序:剪果 → 烘焙 → 後處理"),
+    ("dry_roast",    "龍眼乾",   "② 烘焙工費",         "元/台斤", 45,     ""),
+    ("dry_post",     "龍眼乾",   "③ 後處理工費",       "元/台斤", 10,     ""),
+    ("dry_dep",      "龍眼乾",   "設備攤提",           "元/台斤", 9.6,    "焙灶 / 去殼機等,依設備清冊算"),
+    ("dry_pack",     "龍眼乾",   "包材 / 包裝工費",    "元/台斤", 14.4,   ""),
+    ("dry_freight",  "龍眼乾",   "運費(固定金額)",     "元/台斤", 12,     "不用售價比例,先抓一個固定值"),
+    ("dry_p30",      "龍眼乾",   "#30 售價",           "元/包",   300,    "四種規格加權平均算真實售價"),
+    ("dry_q30",      "龍眼乾",   "#30 銷量",           "包/年",   300,    ""),
+    ("dry_p28",      "龍眼乾",   "#28 售價",           "元/包",   280,    ""),
+    ("dry_q28",      "龍眼乾",   "#28 銷量",           "包/年",   400,    ""),
+    ("dry_p26",      "龍眼乾",   "#26 售價",           "元/包",   230,    ""),
+    ("dry_q26",      "龍眼乾",   "#26 銷量",           "包/年",   500,    ""),
+    ("dry_p24",      "龍眼乾",   "#24 售價",           "元/包",   130,    ""),
+    ("dry_q24",      "龍眼乾",   "#24 銷量",           "包/年",   300,    ""),
 
-    ("meat_material",   "龍眼肉",   "每罐桂圓乾原料成本", "元/罐",   300,    "≈ 數包桂圓乾的製造成本(不含乾的包材)"),
-    ("meat_shell_min",  "龍眼肉",   "每罐剝殼去核工時",   "分鐘/罐", 90,     "★ 關鍵變數,務必拿碼表實測"),
-    ("meat_loss",       "龍眼肉",   "剝肉損耗",           "元/罐",   30,     "殼 + 核佔重"),
-    ("meat_pack",       "龍眼肉",   "包材(罐)",          "元/罐",   30,     ""),
-    ("meat_price",      "龍眼肉",   "目前售價(600g)",    "元/罐",   600,    ""),
+    ("ratio_dry_meat", "龍眼肉", "龍眼乾轉換率",       "台斤龍眼乾 / 台斤肉", 3, "例:龍眼乾 3 台斤 剝成 1 台斤龍眼肉"),
+    ("meat_deshell", "龍眼肉",   "① 剝肉工費",         "元/台斤", 95,     "加工順序:剝肉 → 後處理"),
+    ("meat_post",    "龍眼肉",   "② 後處理工費",       "元/台斤", 10,     ""),
+    ("meat_pack",    "龍眼肉",   "包材 / 包裝工費",    "元/台斤", 30,     ""),
+    ("meat_freight", "龍眼肉",   "運費(固定金額)",     "元/台斤", 25,     "不用售價比例,先抓一個固定值"),
+    ("meat_price",   "龍眼肉",   "目前售價",           "元/台斤", 500,    ""),
 
-    ("honey_feed",      "蜂蜜",     "全年蜂群飼養費",     "元/年",   60000,  "糖 / 藥 / 箱材"),
-    ("honey_jars",      "蜂蜜",     "全年產罐數",         "罐/年",   300,    "用近 3 年平均,不要用豐收年"),
-    ("honey_labor",     "蜂蜜",     "採蜜/搖蜜/濾蜜/裝罐工", "元/罐", 40,     ""),
-    ("honey_dep",       "蜂蜜",     "蜂箱 + 搖蜜機折舊",  "元/罐",   11,     ""),
-    ("honey_jar",       "蜂蜜",     "玻璃罐(420g)",      "元/罐",   25,     ""),
-    ("honey_price",     "蜂蜜",     "目前售價(420g)",    "元/罐",   420,    ""),
+    ("honey_feed",   "蜂蜜",     "全年蜂群飼養費",     "元/年",   60000,  "糖 / 藥 / 箱材"),
+    ("honey_jars",   "蜂蜜",     "全年產罐數",         "罐/年",   300,    "用近 3 年平均,不要用豐收年"),
+    ("honey_labor",  "蜂蜜",     "採蜜/搖蜜/濾蜜/裝罐工", "元/罐", 40,     ""),
+    ("honey_dep",    "蜂蜜",     "蜂箱 + 搖蜜機折舊",  "元/罐",   11,     ""),
+    ("honey_jar",    "蜂蜜",     "玻璃罐(420g)",      "元/罐",   25,     ""),
+    ("honey_price",  "蜂蜜",     "目前售價(420g)",    "元/罐",   420,    ""),
 ]
 PRICING_GROUPS = ["共用", "龍眼鮮果", "龍眼乾", "龍眼肉", "蜂蜜"]
 PRICING_DEFAULTS = {k: d for k, _g, _l, _u, d, _h in PRICING_FIELDS}

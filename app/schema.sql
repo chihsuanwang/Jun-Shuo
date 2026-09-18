@@ -45,6 +45,7 @@ CREATE TABLE product (
   status          TEXT    NOT NULL DEFAULT '在售' CHECK (status IN ('在售','停售')),
   low_stock       INTEGER,              -- 低庫存警戒量;NULL = 不設
   product_group_id INTEGER REFERENCES product_group(pg_id),   -- 歸屬產品群組;NULL = 尚未歸類
+  unit_cost       REAL    NOT NULL DEFAULT 0,   -- 每單位成本(算毛利用,不分批次)
   note            TEXT
 );
 
@@ -147,8 +148,9 @@ CREATE TABLE "order" (
                   CHECK (payment_status IN ('待收款','部分收款','已收款','免收款')),
   paid_date       TEXT,
   paid_amount     REAL,
-  tax_doc_type    TEXT CHECK (tax_doc_type IN ('電子發票二聯','電子發票三聯','農民收據','免開立')),
-  tax_doc_no      TEXT,
+  tax_doc_type    TEXT CHECK (tax_doc_type IN ('電子發票二聯','電子發票三聯','農民收據','免開立')),  -- 舊欄位,畫面已不用
+  invoiced        INTEGER NOT NULL DEFAULT 0 CHECK (invoiced IN (0,1)),  -- 這筆有沒有開發票(單純記錄,不算稅)
+  tax_doc_no      TEXT,                 -- 發票號碼(選填,已開發票才有意義)
   -- 物流
   ship_method     TEXT CHECK (ship_method IN ('自行配送','客戶自取','宅配','超商店到店','超商賣貨便','冷藏宅配')),
   carrier         TEXT,
@@ -157,6 +159,7 @@ CREATE TABLE "order" (
   shipped_date    TEXT,
   delivered_date  TEXT,
   shipping_cost_actual REAL NOT NULL DEFAULT 0,   -- 我方實付運費(費用面)
+  ship_payer      TEXT NOT NULL DEFAULT '店家吸收' CHECK (ship_payer IN ('店家吸收','客戶付')),  -- 單純記錄,不影響金額計算
   packaging_cost  REAL NOT NULL DEFAULT 0,
   ship_status     TEXT NOT NULL DEFAULT '待出貨'
                   CHECK (ship_status IN ('待出貨','已出貨','已送達','退回','遺失','破損')),
@@ -230,6 +233,7 @@ CREATE TABLE op_expense (
   tax_amount       REAL NOT NULL DEFAULT 0,  -- 進項稅額
   tax_deductible   INTEGER NOT NULL DEFAULT 0 CHECK (tax_deductible IN (0,1)),
   doc_type         TEXT CHECK (doc_type IN ('三聯式發票','二聯式發票','收據','農民收據','無憑證')),
+  payment_account  TEXT,               -- 用哪個帳戶付款(自由文字,例:現金 / 合庫);方案B分錄用
   note        TEXT,
   updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))   -- 最後新增 / 修改時間
 );
@@ -273,6 +277,7 @@ CREATE TABLE purchase (
   tax_deductible   INTEGER NOT NULL DEFAULT 1 CHECK (tax_deductible IN (0,1)),
   doc_type         TEXT CHECK (doc_type IN ('三聯式發票','二聯式發票','收據','農民收據','無憑證')),
   is_fixed_asset   INTEGER NOT NULL DEFAULT 0 CHECK (is_fixed_asset IN (0,1)),  -- 打勾標記;固定資產卡回合 3 才建
+  payment_account  TEXT,               -- 用哪個帳戶付款(自由文字,例:現金 / 合庫);方案B分錄用
   note             TEXT,
   created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -326,3 +331,24 @@ CREATE TABLE sales_return (
 CREATE INDEX ix_sret_order ON sales_return(order_id);
 CREATE INDEX ix_sret_date  ON sales_return(return_date);
 CREATE INDEX ix_sret_season ON sales_return(season);
+
+-- 19. 總帳明細(方案 B 試點:進貨 / 營運費用 自動過帳,2026-09) ----
+--     家易照舊填業務表單,系統依 ledger.py 的對照表組出分錄,存檔前在確認畫面
+--     給他看、可微調。同一來源(進貨/費用)重存 = 整張傳票重開(先刪舊列再插新列),
+--     不做部分修改 / 部分刪除。這次只接「進貨」「原料/包材/委外/服務/其他類」與
+--     「營運費用」——設備採購走固定資產,不在這批範圍。
+CREATE TABLE ledger_entry (
+  entry_id     INTEGER PRIMARY KEY,
+  voucher_no   TEXT NOT NULL,          -- 同一張傳票共用,例:P20260917-001
+  entry_date   TEXT NOT NULL,
+  account_code TEXT NOT NULL,
+  account_name TEXT NOT NULL,
+  debit        REAL NOT NULL DEFAULT 0,
+  credit       REAL NOT NULL DEFAULT 0,
+  source_type  TEXT NOT NULL CHECK (source_type IN ('purchase','op_expense')),
+  source_id    INTEGER NOT NULL,       -- 對應 purchase.purchase_id 或 op_expense.expense_id
+  note         TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX ix_ledger_voucher ON ledger_entry(voucher_no);
+CREATE INDEX ix_ledger_source  ON ledger_entry(source_type, source_id);

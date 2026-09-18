@@ -10,7 +10,8 @@ import os, io, csv, json, glob, shutil, sys, runpy, base64, datetime as dt
 import paths
 import queries as Q
 import db as _db
-from db import q, execute
+import ledger
+from db import q, q1, execute
 
 HERE = paths.RES_DIR
 app = FastAPI(title="桂圓帳房")
@@ -94,6 +95,23 @@ def migrate_db():
             execute("ALTER TABLE op_expense ADD COLUMN updated_at TEXT")
             execute("UPDATE op_expense SET updated_at=datetime('now','localtime') WHERE updated_at IS NULL")
             print("[migrate] op_expense.updated_at 已補上")
+        ocols = [r["name"] for r in q('PRAGMA table_info("order")')]
+        if "invoiced" not in ocols:
+            execute('ALTER TABLE "order" ADD COLUMN invoiced INTEGER NOT NULL DEFAULT 0')
+            print("[migrate] order.invoiced 已補上")
+        if "ship_payer" not in ocols:
+            execute('ALTER TABLE "order" ADD COLUMN ship_payer TEXT NOT NULL DEFAULT \'店家吸收\'')
+            print("[migrate] order.ship_payer 已補上")
+        pcols = [r["name"] for r in q("PRAGMA table_info(product)")]
+        if "unit_cost" not in pcols:
+            execute("ALTER TABLE product ADD COLUMN unit_cost REAL NOT NULL DEFAULT 0")
+            # 用舊批次資料的平均單位成本幫忙帶一個初值,之後可在商品目錄手動調整
+            for r in q("""SELECT ol.product_id pid, AVG(b.unit_cost) v
+                          FROM order_line ol JOIN batch b ON b.batch_id=ol.batch_id
+                          WHERE b.unit_cost IS NOT NULL AND b.unit_cost > 0
+                          GROUP BY ol.product_id"""):
+                execute("UPDATE product SET unit_cost=? WHERE product_id=?", (r["v"], r["pid"]))
+            print("[migrate] product.unit_cost 已補上(用舊批次成本帶初值)")
         execute("CREATE TABLE IF NOT EXISTS pricing_param (key TEXT PRIMARY KEY, value REAL NOT NULL)")
         execute("""CREATE TABLE IF NOT EXISTS sales_return (
           return_id    INTEGER PRIMARY KEY,
@@ -156,7 +174,6 @@ def export_order_lines(request: Request):
                         CASE ol.is_gift WHEN 1 THEN '是' ELSE '' END AS c_gift,
                         b.batch_code  AS c_batch,
                         o.discount_total AS c_odisc,
-                        o.shipping_fee_charged AS c_oship,
                         o.order_total AS c_ototal
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
@@ -165,7 +182,7 @@ def export_order_lines(request: Request):
                  LEFT JOIN batch b ON b.batch_id=ol.batch_id
                  WHERE {sc} AND {fc}
                  ORDER BY o.order_date, o.order_no, ol.line_id""", sp + fp)
-    # 訂單層欄位(折扣 / 運費 / 應收合計)只放在每張單的第一列,避免加總時重複計
+    # 訂單層欄位(折扣 / 應收合計)只放在每張單的第一列,避免加總時重複計
     seen, out = set(), []
     for r in rows:
         first = r["c_no"] not in seen
@@ -173,12 +190,12 @@ def export_order_lines(request: Request):
         out.append([r["c_no"], r["c_date"], r["c_season"], r["c_kind"], r["c_cust"],
                     r["c_channel"], r["c_sku"], r["c_product"], r["c_qty"], r["c_price"],
                     r["c_list"], r["c_subtotal"], r["c_gift"], r["c_batch"],
-                    r["c_odisc"] if first else "", r["c_oship"] if first else "",
+                    r["c_odisc"] if first else "",
                     r["c_ototal"] if first else ""])
     return csv_response("訂單明細.csv",
         ["單號","日期","產季","種類","客戶","管道","商品編號","品名",
          "數量","成交單價","定價","小計","贈品","批次",
-         "訂單折扣","訂單運費","訂單應收合計"],
+         "訂單折扣","訂單應收合計"],
         out)
 
 @app.get("/export/orders.csv")
@@ -187,18 +204,19 @@ def export_orders(request: Request):
     fc, fp = Q.orders_filter(*_orders_filter_arg(request))
     rows = q(f"""SELECT o.order_no, o.order_date, o.season, o.order_kind,
                         cu.display_name, ch.name,
-                        o.discount_total, o.shipping_fee_charged, o.platform_fee, o.order_total,
-                        o.payment_method, o.payment_status, o.paid_date,
+                        o.discount_total, o.order_total,
+                        o.payment_method, o.payment_status, o.paid_date, o.paid_amount,
                         o.ship_method, o.carrier, o.tracking_no, o.shipped_date, o.ship_status,
-                        o.shipping_cost_actual, o.tax_doc_type
+                        o.shipping_cost_actual,
+                        CASE o.invoiced WHEN 1 THEN '是' ELSE '否' END, o.tax_doc_no
                  FROM "order" o
                  LEFT JOIN customer cu ON cu.customer_id=o.customer_id
                  LEFT JOIN channel ch ON ch.channel_id=o.channel_id
                  WHERE {sc} AND {fc} ORDER BY o.order_date, o.order_no""", sp + fp)
     return csv_response("訂單.csv",
-        ["單號","日期","產季","種類","客戶","管道","折扣","向客收運費","通路抽成","應收合計",
-         "付款方式","收款狀態","收款日","出貨方式","物流商","物流單號","出貨日","出貨狀態",
-         "我方運費","單據類型"],
+        ["單號","日期","產季","種類","客戶","管道","折扣","應收合計",
+         "付款方式","收款狀態","收款日","實收金額","出貨方式","物流商","物流單號","出貨日","出貨狀態",
+         "運費","已開發票","發票號碼"],
         [list(r.values()) for r in rows])
 
 @app.get("/export/customers.csv")
@@ -281,9 +299,11 @@ def dashboard(request: Request):
     monmax = max([m["rev"] for m in mon] + [1])
     fin = Q.finance_summary(season)
     prog = Q.season_progress(season)
-    pl = Q.product_line_pnl(season, "rev")
+    # 各產品線賺不賺(pl)2026-09 暫時隱藏,先不算 —— 要恢復時把這行打開,
+    # 連同 dashboard.html 裡對應那段一起解除註解。
+    # pl = Q.product_line_pnl(season, "rev")
     return tpl.TemplateResponse("dashboard.html", dict(
-        request=request, active="dash", k=k, fin=fin, prog=prog, pl=pl,
+        request=request, active="dash", k=k, fin=fin, prog=prog,
         mon_json=json.dumps(mon), monmax=monmax,
         alerts=Q.alerts(season, asof), **ctx,
     ))
@@ -326,7 +346,7 @@ TAX_CLASSES = ['待確認', '應稅', '免稅', '零稅率']
 @app.get("/product-lines", response_class=HTMLResponse)
 def product_lines(request: Request):
     bus = q("SELECT bu_id, name, sort FROM business_unit ORDER BY sort, bu_id")
-    groups = q("""SELECT g.pg_id, g.bu_id, g.name, g.tax_class, g.sort,
+    groups = q("""SELECT g.pg_id, g.bu_id, g.name, g.sort,
                     (SELECT COUNT(*) FROM product p WHERE p.product_group_id=g.pg_id) n_sku
                   FROM product_group g ORDER BY g.sort, g.pg_id""")
     skus = q("""SELECT product_id, sku, name, status, product_group_id
@@ -340,7 +360,7 @@ def product_lines(request: Request):
     unassigned = [s for s in skus if s["product_group_id"] is None]
     return tpl.TemplateResponse("product_lines.html", dict(
         request=request, active="prodline",
-        bus=bus, groups=groups, skus=skus, unassigned=unassigned, tax_classes=TAX_CLASSES))
+        bus=bus, groups=groups, skus=skus, unassigned=unassigned))
 
 @app.post("/product-lines/bu")
 async def product_line_bu_save(request: Request):
@@ -371,26 +391,21 @@ async def product_line_group_save(request: Request):
             execute("DELETE FROM product_group WHERE pg_id=?", (int(gid),))
         return RedirectResponse("/product-lines", status_code=303)
     name = (f.get("name") or "").strip()
-    tc = (f.get("tax_class") or "待確認").strip()
-    if tc not in TAX_CLASSES:
-        tc = "待確認"
     if gid:
         row = q("SELECT bu_id FROM product_group WHERE pg_id=?", (int(gid),))
         if not row:
             return RedirectResponse("/product-lines", status_code=303)
         dup = q("SELECT pg_id FROM product_group WHERE bu_id=? AND name=?", (row[0]["bu_id"], name))
         if name and (not dup or dup[0]["pg_id"] == int(gid)):
-            execute("UPDATE product_group SET name=?, tax_class=? WHERE pg_id=?", (name, tc, int(gid)))
-        else:
-            execute("UPDATE product_group SET tax_class=? WHERE pg_id=?", (tc, int(gid)))
+            execute("UPDATE product_group SET name=? WHERE pg_id=?", (name, int(gid)))
     else:
         bu_id = f.get("bu_id")
         if not (name and bu_id):
             return RedirectResponse("/product-lines", status_code=303)
         if not q("SELECT 1 FROM product_group WHERE bu_id=? AND name=?", (int(bu_id), name)):
             n = q("SELECT COALESCE(MAX(sort),0)+1 s FROM product_group")[0]["s"]
-            execute("INSERT INTO product_group(bu_id,name,tax_class,sort) VALUES(?,?,?,?)",
-                    (int(bu_id), name, tc, n))
+            execute("INSERT INTO product_group(bu_id,name,sort) VALUES(?,?,?)",
+                    (int(bu_id), name, n))
     return RedirectResponse("/product-lines", status_code=303)
 
 @app.post("/product-lines/assign")
@@ -456,33 +471,25 @@ async def supplier_save(request: Request):
 def _purchase_form_ctx(request, p):
     return dict(request=request, active="purchase", p=p,
                suppliers=q("SELECT supplier_id, name FROM supplier ORDER BY name"),
-               groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
-               cats=SUP_CATS, docs=DOC_TYPES, today=dt.date.today().isoformat())
+               cats=SUP_CATS, docs=DOC_TYPES,
+               today=dt.date.today().isoformat())
 
 @app.get("/purchases", response_class=HTMLResponse)
 def purchases_page(request: Request):
-    pgv = request.query_params.get("pg") or ""
     ym = request.query_params.get("ym") or ""
     where, args = ["1=1"], []
-    if pgv == "common":
-        where.append("p.product_group_id IS NULL")
-    elif pgv.isdigit():
-        where.append("p.product_group_id=?"); args.append(int(pgv))
     if ym:
         where.append("substr(p.purchase_date,1,7)=?"); args.append(ym)
-    rows = q(f"""SELECT p.*, s.name sup_name, g.name pg_name,
+    rows = q(f"""SELECT p.*, s.name sup_name,
                         (SELECT COUNT(*) FROM fixed_asset fa WHERE fa.source_purchase_id=p.purchase_id) has_card
                  FROM purchase p LEFT JOIN supplier s ON s.supplier_id=p.supplier_id
-                 LEFT JOIN product_group g ON g.pg_id=p.product_group_id
                  WHERE {' AND '.join(where)}
                  ORDER BY p.purchase_date DESC, p.purchase_id DESC""", args)
     total = sum(r["amount"] for r in rows)
-    tax_total = sum(r["tax_amount"] for r in rows if r["tax_deductible"])
     return tpl.TemplateResponse("purchases.html", dict(
-        request=request, active="purchase", rows=rows, total=total, tax_total=tax_total,
-        groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
+        request=request, active="purchase", rows=rows, total=total,
         yms=[r["ym"] for r in q("SELECT DISTINCT substr(purchase_date,1,7) ym FROM purchase ORDER BY ym DESC")],
-        pg_sel=pgv, ym_sel=ym))
+        ym_sel=ym))
 
 @app.get("/purchases/new", response_class=HTMLResponse)
 def purchase_new(request: Request):
@@ -495,6 +502,16 @@ def purchase_edit(request: Request, pid: int):
         return RedirectResponse("/purchases", status_code=303)
     return tpl.TemplateResponse("purchase_form.html", _purchase_form_ctx(request, p[0]))
 
+def _purchase_upsert(cols, pid):
+    """寫入 purchase 主資料(不含分錄),回傳 purchase_id。"""
+    if pid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE purchase SET {sets} WHERE purchase_id=:id", {**cols, "id": int(pid)})
+        return int(pid)
+    keys = ",".join(cols)
+    return execute(f"INSERT INTO purchase({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+
+
 @app.post("/purchases")
 async def purchase_save(request: Request):
     f = await request.form()
@@ -503,27 +520,75 @@ async def purchase_save(request: Request):
     pid = f.get("purchase_id")
     if f.get("_delete") and pid:
         execute("DELETE FROM purchase WHERE purchase_id=?", (int(pid),))
+        ledger.delete_voucher_for("purchase", int(pid))
         return RedirectResponse("/purchases", status_code=303)
     date = (f.get("purchase_date") or "").strip()
     if not date:
         return RedirectResponse("/purchases", status_code=303)
-    pgv = f.get("product_group_id") or ""
+    is_fa = 1 if f.get("is_fixed_asset") else 0
     cols = dict(
         purchase_date=date,
         supplier_id=(int(f.get("supplier_id")) if (f.get("supplier_id") or "").isdigit() else None),
         category=g("category"),
-        product_group_id=(int(pgv) if pgv.isdigit() else None),
-        amount=fl("amount"), tax_amount=fl("tax_amount"),
-        tax_deductible=(1 if f.get("tax_deductible") else 0),
-        doc_type=g("doc_type"),
-        is_fixed_asset=(1 if f.get("is_fixed_asset") else 0),
+        amount=fl("amount"),
+        is_fixed_asset=is_fa,
         note=g("note"))
+    if is_fa:
+        # 設備採購不記分錄(交給固定資產那條路),照舊直接存檔
+        _purchase_upsert(cols, pid)
+        return RedirectResponse("/purchases", status_code=303)
+
+    # 原料/包材/委外/服務/其他 → 先看確認畫面,存檔動作交給 /purchases/confirm
+    existing = q1("SELECT tax_amount, payment_account, doc_type FROM purchase WHERE purchase_id=?",
+                  (int(pid),)) if pid else {}
+    sup_name = None
+    if cols["supplier_id"]:
+        r = q1("SELECT name FROM supplier WHERE supplier_id=?", (cols["supplier_id"],))
+        sup_name = r.get("name")
+    acct_code, acct_name = ledger.PURCHASE_ACCOUNTS.get(cols["category"], ledger.PURCHASE_ACCOUNTS["其他"])
+    hidden = dict(cols)
     if pid:
-        sets = ",".join(f"{k}=:{k}" for k in cols)
-        execute(f"UPDATE purchase SET {sets} WHERE purchase_id=:id", {**cols, "id": int(pid)})
-    else:
-        keys = ",".join(cols)
-        execute(f"INSERT INTO purchase({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+        hidden["purchase_id"] = pid
+    back = f"/purchases/{pid}/edit" if pid else "/purchases/new"
+    return tpl.TemplateResponse("ledger_confirm.html", dict(
+        request=request, active="purchase",
+        source_label="進貨", back_url=back, commit_url="/purchases/confirm",
+        summary=[
+            dict(label="日期", value=date),
+            dict(label="供應商", value=sup_name or "—"),
+            dict(label="類別", value=cols["category"] or "—"),
+            dict(label="金額", value=f"{cols['amount']:,.0f}"),
+        ],
+        hidden=hidden,
+        amount=cols["amount"], primary_account_name=acct_name,
+        tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
+        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES,
+    ))
+
+
+@app.post("/purchases/confirm")
+async def purchase_confirm(request: Request):
+    f = await request.form()
+    g = lambda k: (f.get(k) or "").strip() or None
+    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
+    pid = f.get("purchase_id")
+    tax_amount = fl("tax_amount")
+    payment_account = g("payment_account")
+    cols = dict(
+        purchase_date=(f.get("purchase_date") or "").strip(),
+        supplier_id=(int(f.get("supplier_id")) if (f.get("supplier_id") or "").isdigit() else None),
+        category=g("category"),
+        amount=fl("amount"),
+        is_fixed_asset=0,
+        tax_amount=tax_amount,
+        payment_account=payment_account,
+        doc_type=g("doc_type"),
+        note=g("note"))
+    new_id = _purchase_upsert(cols, pid)
+    legs = ledger.compose_purchase_entries(cols["category"], cols["amount"], tax_amount,
+                                            payment_account, is_fixed_asset=False)
+    ledger.save_voucher("purchase", new_id, cols["purchase_date"], legs, "P",
+                         note=f"進貨:{cols['category'] or ''}")
     return RedirectResponse("/purchases", status_code=303)
 
 
@@ -546,8 +611,7 @@ def assets_page(request: Request):
 
 def _asset_form_ctx(request, a, prefill=None):
     return dict(request=request, active="asset", a=a, prefill=prefill,
-               cats=ASSET_CATS, groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
-               today=dt.date.today().isoformat())
+               cats=ASSET_CATS, today=dt.date.today().isoformat())
 
 @app.get("/assets/new", response_class=HTMLResponse)
 def asset_new(request: Request):
@@ -558,8 +622,7 @@ def asset_new(request: Request):
         if r:
             p = r[0]
             prefill = dict(source_purchase_id=p["purchase_id"], name=(p["note"] or "設備"),
-                           acquire_date=p["purchase_date"], cost=p["amount"],
-                           product_group_id=p["product_group_id"])
+                           acquire_date=p["purchase_date"], cost=p["amount"])
     return tpl.TemplateResponse("asset_form.html", _asset_form_ctx(request, None, prefill))
 
 @app.get("/assets/{aid}/edit", response_class=HTMLResponse)
@@ -587,11 +650,9 @@ async def asset_save(request: Request):
     grant = fl("grant_amount")
     sv = (f.get("salvage") or "").strip()
     salvage = float(sv) if sv else round(max(0.0, cost - grant) / (life + 1))
-    pgv = f.get("product_group_id") or ""
     spv = f.get("source_purchase_id") or ""
     cols = dict(
         name=name, category=g("category"),
-        product_group_id=(int(pgv) if pgv.isdigit() else None),
         acquire_date=date, cost=cost, grant_amount=grant, salvage=salvage,
         life_years=life, method="平均法",
         source_purchase_id=(int(spv) if spv.isdigit() else None),
@@ -630,18 +691,50 @@ def product_new(request: Request):
         request=request, active="prod", p=None, prices={},
         segs=PRICE_SEGS, types=PROD_TYPES, forms=PKG_FORMS, uoms=UOMS, storage=STORAGE))
 
+def _product_delete_block_reason(pid):
+    """商品不能刪除的白話原因;沒有卡住的地方回傳 None。"""
+    n_orders = q("SELECT COUNT(DISTINCT order_id) n FROM order_line WHERE product_id=?", (pid,))[0]["n"]
+    on_hand = q("SELECT COALESCE(SUM(qty),0) v FROM stock_move WHERE product_id=?", (pid,))[0]["v"]
+    n_returns = q("SELECT COUNT(*) n FROM sales_return WHERE product_id=?", (pid,))[0]["n"]
+    n_batch = q("SELECT COUNT(*) n FROM batch WHERE product_id=?", (pid,))[0]["n"]
+    n_target = q("SELECT COUNT(*) n FROM sales_target WHERE product_id=?", (pid,))[0]["n"]
+    uom = (q("SELECT uom FROM product WHERE product_id=?", (pid,)) or [{}])[0].get("uom", "")
+    reasons = []
+    if n_orders:
+        reasons.append(f"有 {n_orders} 張訂單用過這個商品")
+    if on_hand:
+        reasons.append(f"現有庫存還有 {round(on_hand)} {uom}")
+    if n_returns:
+        reasons.append(f"有 {n_returns} 筆退貨紀錄")
+    if n_batch:
+        reasons.append(f"有 {n_batch} 筆舊的焙製批次紀錄")
+    if n_target:
+        reasons.append("設過產季目標")
+    return "、".join(reasons) if reasons else None
+
 @app.get("/products/{pid}/edit", response_class=HTMLResponse)
 def product_edit(request: Request, pid: int):
     p = q("SELECT * FROM product WHERE product_id=?", (pid,))
     if not p:
         return RedirectResponse("/products", status_code=303)
+    block_reason = _product_delete_block_reason(pid) if request.query_params.get("perr") else None
     return tpl.TemplateResponse("product_form.html", dict(
         request=request, active="prod", p=p[0], prices=_price_map(pid),
-        segs=PRICE_SEGS, types=PROD_TYPES, forms=PKG_FORMS, uoms=UOMS, storage=STORAGE))
+        segs=PRICE_SEGS, types=PROD_TYPES, forms=PKG_FORMS, uoms=UOMS, storage=STORAGE,
+        block_reason=block_reason))
 
 @app.post("/products")
 async def product_save(request: Request):
     f = await request.form()
+    if f.get("_delete"):
+        pid = f.get("product_id")
+        if pid:
+            pid = int(pid)
+            if _product_delete_block_reason(pid):
+                return RedirectResponse(f"/products/{pid}/edit?perr=1", status_code=303)
+            execute("DELETE FROM price_list WHERE product_id=?", (pid,))
+            execute("DELETE FROM product WHERE product_id=?", (pid,))
+        return RedirectResponse("/products", status_code=303)
     g = lambda k: (f.get(k) or "").strip() or None
     ig = lambda k: int(f.get(k)) if (f.get(k) or "").strip() else None
     cols = dict(sku=(f.get("sku") or "").strip(), name=(f.get("name") or "").strip(),
@@ -652,6 +745,7 @@ async def product_save(request: Request):
                 storage_condition=g("storage_condition"), ingredients=g("ingredients"),
                 origin=g("origin"), barcode=g("barcode"),
                 gift_only=1 if f.get("gift_only") else 0,
+                unit_cost=(float(f.get("unit_cost")) if (f.get("unit_cost") or "").strip() else 0),
                 status=(f.get("status") or "在售").strip(), note=g("note"))
     pid = f.get("product_id")
     if pid:
@@ -671,51 +765,6 @@ async def product_save(request: Request):
     return RedirectResponse("/products", status_code=303)
 
 
-# ---------- 批次 -------------------------------------------
-@app.get("/batches", response_class=HTMLResponse)
-def batches_page(request: Request):
-    rows = Q.batch_report(None, "latest")
-    rows.sort(key=lambda r: r["batch_code"], reverse=True)
-    return tpl.TemplateResponse("batches.html", dict(request=request, active="batch", rows=rows))
-
-@app.get("/batches/new", response_class=HTMLResponse)
-def batch_new(request: Request):
-    return tpl.TemplateResponse("batch_form.html", dict(
-        request=request, active="batch", b=None,
-        default_season=Q.season_of(dt.date.today().isoformat()),
-        products=q("SELECT product_id,name FROM product ORDER BY name")))
-
-@app.get("/batches/{bid}/edit", response_class=HTMLResponse)
-def batch_edit(request: Request, bid: int):
-    b = q("SELECT * FROM batch WHERE batch_id=?", (bid,))
-    if not b:
-        return RedirectResponse("/batches", status_code=303)
-    return tpl.TemplateResponse("batch_form.html", dict(
-        request=request, active="batch", b=b[0],
-        products=q("SELECT product_id,name FROM product ORDER BY name")))
-
-@app.post("/batches")
-async def batch_save(request: Request):
-    f = await request.form()
-    g = lambda k: (f.get(k) or "").strip() or None
-    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else None
-    cols = dict(batch_code=(f.get("batch_code") or "").strip(),
-                season=int(f.get("season") or Q.season_of(dt.date.today().isoformat())),
-                product_id=(int(f.get("product_id")) if f.get("product_id") else None),
-                roast_start=g("roast_start"), roast_end=g("roast_end"),
-                raw_source=g("raw_source"), raw_input_kg=fl("raw_input_kg"),
-                output_qty=fl("output_qty"), output_uom=(f.get("output_uom") or "份").strip(),
-                mfg_date=g("mfg_date"), unit_cost=fl("unit_cost"), note=g("note"))
-    bid = f.get("batch_id")
-    if bid:
-        sets = ",".join(f"{k}=:{k}" for k in cols)
-        execute(f"UPDATE batch SET {sets} WHERE batch_id=:id", {**cols, "id": int(bid)})
-    else:
-        keys = ",".join(cols)
-        execute(f"INSERT INTO batch({keys}) VALUES({','.join(':'+k for k in cols)})", cols)
-    return RedirectResponse("/batches", status_code=303)
-
-
 # ---------- 通路 -------------------------------------------
 CH_CATS = ['官網', 'LINE社群', '電商平台', '超商賣貨便', '實體寄售', '市集展售', '媒體導流', '批發', '直售']
 
@@ -730,20 +779,43 @@ def channels_page(request: Request):
 def channel_new(request: Request):
     return tpl.TemplateResponse("channel_form.html", dict(request=request, active="chan", c=None, cats=CH_CATS))
 
+def _channel_delete_block_reason(chid):
+    """通路不能刪除的白話原因;沒有卡住的地方回傳 None。"""
+    n_orders = q('SELECT COUNT(*) n FROM "order" WHERE channel_id=?', (chid,))[0]["n"]
+    n_cust = q("SELECT COUNT(*) n FROM customer WHERE primary_channel_id=?", (chid,))[0]["n"]
+    n_price = q("SELECT COUNT(*) n FROM price_list WHERE channel_id=?", (chid,))[0]["n"]
+    reasons = []
+    if n_orders:
+        reasons.append(f"有 {n_orders} 張訂單用這個管道")
+    if n_cust:
+        reasons.append(f"有 {n_cust} 位客戶的主要管道是它")
+    if n_price:
+        reasons.append(f"有 {n_price} 筆這個管道的專屬定價")
+    return "、".join(reasons) if reasons else None
+
 @app.get("/channels/{chid}/edit", response_class=HTMLResponse)
 def channel_edit(request: Request, chid: int):
     c = q("SELECT * FROM channel WHERE channel_id=?", (chid,))
     if not c:
         return RedirectResponse("/channels", status_code=303)
-    return tpl.TemplateResponse("channel_form.html", dict(request=request, active="chan", c=c[0], cats=CH_CATS))
+    block_reason = _channel_delete_block_reason(chid) if request.query_params.get("perr") else None
+    return tpl.TemplateResponse("channel_form.html", dict(
+        request=request, active="chan", c=c[0], cats=CH_CATS, block_reason=block_reason))
 
 @app.post("/channels")
 async def channel_save(request: Request):
     f = await request.form()
+    if f.get("_delete"):
+        chid = f.get("channel_id")
+        if chid:
+            chid = int(chid)
+            if _channel_delete_block_reason(chid):
+                return RedirectResponse(f"/channels/{chid}/edit?perr=1", status_code=303)
+            execute("DELETE FROM channel WHERE channel_id=?", (chid,))
+        return RedirectResponse("/channels", status_code=303)
     g = lambda k: (f.get(k) or "").strip() or None
     cols = dict(code=(f.get("code") or "").strip(), name=(f.get("name") or "").strip(),
                 category=g("category"),
-                commission_pct=float(f.get("commission_pct") or 0),
                 settlement_lag_days=int(f.get("settlement_lag_days") or 0), note=g("note"))
     chid = f.get("channel_id")
     if chid:
@@ -848,9 +920,10 @@ def customer_edit(request: Request, cid: int, next: str = ""):
     if not cust:
         return RedirectResponse("/customers", status_code=303)
     addr = q("SELECT * FROM address WHERE customer_id=? ORDER BY is_default DESC LIMIT 1", (cid,))
+    n_orders = q('SELECT COUNT(*) n FROM "order" WHERE customer_id=?', (cid,))[0]["n"] if request.query_params.get("perr") else 0
     return tpl.TemplateResponse("customer_form.html", dict(
         request=request, active="cust", cust=cust[0], addr=(addr[0] if addr else None),
-        next=next or f"/customers/{cid}", dups=None,
+        next=next or f"/customers/{cid}", dups=None, n_orders=n_orders,
         aliases=q("SELECT alias_text FROM customer_alias WHERE customer_id=? ORDER BY alias_id", (cid,)),
         channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id"),
         types=CUST_TYPES, segs=CUST_SEGS, docs=DOC_PREFS))
@@ -858,10 +931,24 @@ def customer_edit(request: Request, cid: int, next: str = ""):
 @app.post("/customers")
 async def customer_save(request: Request):
     f = await request.form()
+    if f.get("_delete"):
+        cid = f.get("customer_id")
+        if cid:
+            cid = int(cid)
+            used = q('SELECT 1 FROM "order" WHERE customer_id=? LIMIT 1', (cid,))
+            if used:
+                return RedirectResponse(f"/customers/{cid}/edit?perr=1", status_code=303)
+            execute("DELETE FROM address WHERE customer_id=?", (cid,))
+            execute("DELETE FROM customer_alias WHERE customer_id=?", (cid,))
+            execute("DELETE FROM customer WHERE customer_id=?", (cid,))
+        return RedirectResponse("/customers", status_code=303)
     g = lambda k: (f.get(k) or "").strip() or None
     ch = int(f.get("primary_channel_id")) if f.get("primary_channel_id") else None
     name = (f.get("display_name") or "").strip()
     cid = f.get("customer_id")
+    if not name:
+        back = f"/customers/{cid}/edit" if cid else "/customers/new"
+        return RedirectResponse(back, status_code=303)
     cols = dict(display_name=name, customer_type=g("customer_type"), segment=g("segment"),
                 primary_channel_id=ch, phone=g("phone"), email=g("email"),
                 contact_person=g("contact_person"), invoice_title=g("invoice_title"),
@@ -947,6 +1034,13 @@ async def customer_merge(request: Request, cid: int):
     return RedirectResponse(f"/customers/{tgt}?merged=1", status_code=303)
 
 
+def next_order_no():
+    """依現有單號最大編號 +1(不是用筆數算,避免刪過訂單後編號撞號)。"""
+    row = q("SELECT MAX(CAST(SUBSTR(order_no,2) AS INTEGER)) m FROM \"order\" WHERE order_no LIKE 'S%'")
+    m = (row[0]["m"] or 0) + 1
+    return f"S{m:04d}"
+
+
 # ---------- 新增訂單 -------------------------------------------
 @app.get("/orders/new", response_class=HTMLResponse)
 def order_new(request: Request):
@@ -959,10 +1053,9 @@ def order_new(request: Request):
         request=request, active="order", customers=customers,
         channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id"),
         products=q("SELECT product_id,sku,name,uom FROM product WHERE status='在售' ORDER BY sku"),
-        batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code"),
         today=dt.date.today().isoformat(),
         prices_json=json.dumps(prices), cust_seg_json=json.dumps(cust_seg),
-        stock_json=json.dumps(Q.stock_on_hand_map()),
+        stock_json=json.dumps(Q.stock_on_hand_map()), ship_payers=SHIP_PAYERS,
     ))
 
 
@@ -989,7 +1082,7 @@ async def order_create(request: Request):
                 for r in q("SELECT product_id,unit_price FROM price_list WHERE customer_segment=? AND channel_id IS NULL", (pseg,))}
 
     prods = f.getlist("product_id"); qtys = f.getlist("qty")
-    ups   = f.getlist("unit_price"); bats = f.getlist("batch_id")
+    ups   = f.getlist("unit_price")
     lines = []
     for i, p in enumerate(prods):
         if not p:
@@ -1008,24 +1101,24 @@ async def order_create(request: Request):
             up = None
         if up is None:                       # 沒填單價 -> 帶標準價
             up = lp if (lp is not None and order_kind == "銷售") else 0
-        b = bats[i] if i < len(bats) and bats[i] else None
-        lines.append((pid, qv, up, int(b) if b else None, lp))
+        lines.append((pid, qv, up, None, lp))
 
     discount_total = flt("discount_total")
-    shipping_fee_charged = flt("shipping_fee_charged")
     subtotal = sum(qv * up for _, qv, up, _, _ in lines)
     # 每列的成交價已是實收價;discount_total 只放使用者另外填的整單折讓。
     # 「賣得比定價低」的差額改由 list_price 於報表即時計算,不重複扣。
-    total = subtotal - discount_total + shipping_fee_charged
-    n = q("SELECT COUNT(*) c FROM \"order\"")[0]["c"] + 1
+    # 應收金額不含運費(運費只是家易花多少錢的紀錄,不跟客人收的部分另外拆帳)。
+    total = subtotal - discount_total
+    invoiced = 1 if one("invoiced") else 0
     oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
-                     discount_total,shipping_fee_charged,order_total,payment_method,payment_status,
-                     shipping_cost_actual,ship_method,ship_status)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨')""",
-                  (f"S{n:04d}", order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
-                   discount_total, shipping_fee_charged, total,
+                     discount_total,order_total,payment_method,payment_status,
+                     shipping_cost_actual,ship_payer,ship_method,ship_status,invoiced,tax_doc_no)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
+                  (next_order_no(), order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
+                   discount_total, total,
                    one("payment_method") or None, one("payment_status", "待收款"),
-                   flt("shipping_cost_actual"), one("ship_method") or None))
+                   flt("shipping_cost_actual"), one("ship_payer", "店家吸收"), one("ship_method") or None,
+                   invoiced, one("tax_doc_no") or None))
     for p, qv, up, b, lp in lines:
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal)
                    VALUES(?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up))
@@ -1052,6 +1145,7 @@ PAY_METHODS  = ['現金', '銀行匯款', '貨到付款', '行動支付', '信�
 PAY_STATUS   = ['待收款', '部分收款', '已收款', '免收款']
 SHIP_METHODS = ['自行配送', '客戶自取', '宅配', '超商店到店', '超商賣貨便', '冷藏宅配']
 SHIP_STATUS  = ['待出貨', '已出貨', '已送達', '退回', '遺失', '破損']
+SHIP_PAYERS  = ['店家吸收', '客戶付']
 ORDER_KINDS  = ['銷售', '贈送-公關', '贈送-捐贈', '樣品', '理賠重寄', '換貨補出', '內部領用']
 FILTERS = {"all": "全部", "overdue": "貨款逾期", "unpaid": "未收款", "unshipped": "超過 3 天未出貨"}
 
@@ -1071,10 +1165,10 @@ def order_detail(request: Request, oid: int):
     return tpl.TemplateResponse("order_detail.html", dict(
         request=request, active="order", o=o, lines=lines,
         products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
-        batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code"),
         pay_methods=PAY_METHODS, pay_status=PAY_STATUS,
-        ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, kinds=ORDER_KINDS,
+        ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, ship_payers=SHIP_PAYERS, kinds=ORDER_KINDS,
         returns=Q.returns_list(oid), return_kinds=RETURN_KINDS,
+        stock_json=json.dumps(Q.stock_on_hand_map()),
         today=dt.date.today().isoformat()))
 
 
@@ -1123,6 +1217,28 @@ async def order_return_create(request: Request, oid: int):
                  f"退貨單#{rid}"))
     return RedirectResponse(f"/orders/{oid}?rok=1", status_code=303)
 
+@app.post("/orders/{oid}/return_all")
+async def order_return_all(request: Request, oid: int):
+    o, lines = Q.order_get(oid)
+    if not o:
+        return RedirectResponse("/orders", status_code=303)
+    date = dt.date.today().isoformat()
+    season = Q.season_of(date)
+    for ln in lines:
+        if ln["is_gift"] or not ln["line_subtotal"]:
+            continue
+        rid = execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,
+                     product_id,qty,batch_id,restock,reason)
+                     VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (oid, date, season, "退貨", ln["line_subtotal"],
+                 ln["product_id"], ln["qty"], ln["batch_id"], 1, "整筆退單"))
+        execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,ref_order_id,note)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (date, ln["product_id"], ln["batch_id"], abs(ln["qty"]), "退貨入庫", oid,
+                 f"退貨單#{rid}"))
+    return RedirectResponse(f"/orders/{oid}?rok=1", status_code=303)
+
+
 @app.post("/returns/{rid}/delete")
 async def order_return_delete(request: Request, rid: int):
     r = q("SELECT order_id FROM sales_return WHERE return_id=?", (rid,))
@@ -1145,7 +1261,7 @@ async def order_update(request: Request, oid: int):
 
     # --- 重建訂單明細 ---
     prods, qtys = f.getlist("product_id"), f.getlist("qty")
-    ups, bats, gl = f.getlist("unit_price"), f.getlist("batch_id"), f.getlist("is_gift")
+    ups, gl = f.getlist("unit_price"), f.getlist("is_gift")
     new_lines = []
     for i, p in enumerate(prods):
         if not p:
@@ -1160,28 +1276,29 @@ async def order_update(request: Request, oid: int):
             up = float(ups[i]) if (i < len(ups) and str(ups[i]).strip()) else 0
         except (ValueError, IndexError):
             up = 0
-        b = bats[i] if i < len(bats) and bats[i] else None
+        pid = int(p)
         is_gift = 1 if (i < len(gl) and gl[i] == "是") else 0
-        new_lines.append((int(p), qv, up if not is_gift else 0,
-                          int(b) if b else None, is_gift))
+        new_lines.append((pid, qv, up if not is_gift else 0, None, is_gift))
     execute("DELETE FROM order_line WHERE order_id=?", (oid,))
     for p, qv, up, b, gf in new_lines:
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift)
                    VALUES(?,?,?,?,?,?,?)""", (oid, p, b, qv, up, qv * up, gf))
 
     subtotal = sum(qv * up for _, qv, up, _, gf in new_lines if not gf)
-    disc = flt("discount_total"); fee = flt("shipping_fee_charged")
-    total = subtotal - disc + fee
+    disc = o["discount_total"] or 0  # 折扣欄位已不開放編輯,沿用原值(通常是 0)
+    total = subtotal - disc
 
     cust_id = f.get("customer_id")
     cols = dict(order_date=g("order_date"), order_kind=g("order_kind"),
                 payment_method=g("payment_method"), payment_status=g("payment_status") or "待收款",
                 paid_date=g("paid_date"), paid_amount=(flt("paid_amount") or None),
-                discount_total=disc, shipping_fee_charged=fee, order_total=total,
+                order_total=total,
                 ship_method=g("ship_method"), carrier=g("carrier"), tracking_no=g("tracking_no"),
                 shipped_date=g("shipped_date"), delivered_date=g("delivered_date"),
                 ship_status=g("ship_status") or "待出貨",
-                shipping_cost_actual=flt("shipping_cost_actual"), note=g("note"))
+                shipping_cost_actual=flt("shipping_cost_actual"),
+                ship_payer=g("ship_payer") or "店家吸收", note=g("note"),
+                invoiced=(1 if f.get("invoiced") else 0), tax_doc_no=g("tax_doc_no"))
     if cust_id and cust_id.isdigit():
         cols["customer_id"] = int(cust_id)
     if cols.get("order_date"):
@@ -1196,11 +1313,10 @@ def order_copy(oid: int):
     o, lines = Q.order_get(oid)
     if not o:
         return RedirectResponse("/orders", status_code=303)
-    n = q("SELECT COUNT(*) c FROM \"order\"")[0]["c"] + 1
     noid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
                       order_total,payment_method,payment_status,ship_method,ship_status,note)
                       VALUES(?,?,?,?,?,?,?,?, '待收款', ?, '待出貨', ?)""",
-                   (f"S{n:04d}", dt.date.today().isoformat(), o["season"], o["customer_id"],
+                   (next_order_no(), dt.date.today().isoformat(), o["season"], o["customer_id"],
                     o["channel_id"], o["order_kind"], 0, o["payment_method"],
                     o["ship_method"], f"複製自 {o['order_no']}"))
     subtotal = 0
@@ -1214,12 +1330,35 @@ def order_copy(oid: int):
     sync_order_stock(noid)
     return RedirectResponse(f"/orders/{noid}?ok=1", status_code=303)
 
+@app.post("/orders/{oid}/delete")
+def order_delete(oid: int):
+    o = q('SELECT order_id FROM "order" WHERE order_id=?', (oid,))
+    if not o:
+        return RedirectResponse("/orders", status_code=303)
+    execute("DELETE FROM stock_move WHERE ref_order_id=?", (oid,))
+    execute("DELETE FROM shipment_issue WHERE order_id=?", (oid,))
+    execute("UPDATE shipment_issue SET linked_reship_order_id=NULL WHERE linked_reship_order_id=?", (oid,))
+    execute("UPDATE review_queue SET resolved_order_id=NULL WHERE resolved_order_id=?", (oid,))
+    execute('DELETE FROM "order" WHERE order_id=?', (oid,))  # order_line / sales_return 靠 ON DELETE CASCADE 一起清掉
+    return RedirectResponse("/orders?deleted=1", status_code=303)
+
 @app.post("/orders/{oid}/paid")
-def order_mark_paid(oid: int):
+async def order_mark_paid(request: Request, oid: int):
+    f = await request.form()
     o, _ = Q.order_get(oid)
-    if o:
-        execute("""UPDATE "order" SET payment_status='已收款', paid_date=?, paid_amount=?
-                   WHERE order_id=?""", (dt.date.today().isoformat(), o["order_total"], oid))
+    if not o:
+        return RedirectResponse("/orders", status_code=303)
+    try:
+        amt = float(f.get("paid_amount") or 0)
+    except ValueError:
+        amt = 0.0
+    if amt <= 0:
+        return RedirectResponse(f"/orders/{oid}?perr=1", status_code=303)
+    pdate = (f.get("paid_date") or "").strip() or dt.date.today().isoformat()
+    # 實收 >= 應收(差一點四捨五入誤差也算)→ 已收款;不足 → 部分收款
+    status = "已收款" if amt >= (o["order_total"] or 0) - 0.5 else "部分收款"
+    execute("""UPDATE "order" SET payment_status=?, paid_date=?, paid_amount=?
+               WHERE order_id=?""", (status, pdate, amt, oid))
     return RedirectResponse(f"/orders/{oid}?done=paid", status_code=303)
 
 @app.post("/orders/{oid}/shipped")
@@ -1262,13 +1401,12 @@ async def issue_update(request: Request, iid: int):
             (resolution, (f.get("reason_note") or "").strip() or si["reason_note"], iid))
     if f.get("make_reship") == "1" and not si["linked_reship_order_id"]:
         o, lines = Q.order_get(si["order_id"])
-        n = q("SELECT COUNT(*) c FROM \"order\"")[0]["c"] + 1
         noid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,
                           order_kind,order_total,payment_method,payment_status,
                           ship_method,ship_status,note)
                           VALUES(?,?,?,?,?, '理賠重寄', 0, '未收款', '免收款',
                                  '自行配送', '待出貨', ?)""",
-                       (f"S{n:04d}", dt.date.today().isoformat(), o["season"], o["customer_id"],
+                       (next_order_no(), dt.date.today().isoformat(), o["season"], o["customer_id"],
                         o["channel_id"], f"由 {o['order_no']} 的{si['issue_type']}理賠重寄"))
         for l in lines:
             execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift)
@@ -1301,8 +1439,8 @@ def finance_page(request: Request):
     for ym in Q.finance_months(season):
         d = Q.finance_month(ym)
         fin.append(dict(ym=ym, revenue=d["revenue"], returns=d["returns"], cogs=d["cogs"],
-                        gross_profit=d["gross_profit"], platform_fee=d["platform_fee"],
-                        ship_pnl=d["ship_pnl"], opex_total=d["opex_total"], pretax=d["pretax"],
+                        gross_profit=d["gross_profit"], ship_cost=d["ship_cost"],
+                        opex_total=d["opex_total"], pretax=d["pretax"],
                         opex={r["category"]: r["amt"] for r in d["opex"]}))
     return tpl.TemplateResponse("finance.html", dict(
         request=request, active="finance",
@@ -1311,16 +1449,13 @@ def finance_page(request: Request):
 
 @app.get("/finance/expenses", response_class=HTMLResponse)
 def finance_expenses(request: Request):
-    rows = q("""SELECT e.*, g.name pg_name
-                FROM op_expense e LEFT JOIN product_group g ON g.pg_id=e.product_group_id
-                ORDER BY e.ym DESC, e.category""")
+    rows = q("SELECT * FROM op_expense ORDER BY ym DESC, category")
     return tpl.TemplateResponse("finance_expenses.html", dict(
-        request=request, active="finance", rows=rows))
+        request=request, active="expenses", rows=rows))
 
 def _expense_form_ctx(request, e):
     months = Q.months_with_data()
-    return dict(request=request, active="finance", e=e, cats=Q.OPEX_CATS,
-               groups=q("SELECT pg_id, name FROM product_group ORDER BY sort, pg_id"),
+    return dict(request=request, active="expenses", e=e, cats=Q.OPEX_CATS,
                docs=DOC_TYPES,
                ym_default=(months[-1] if months else dt.date.today().strftime("%Y-%m")))
 
@@ -1335,6 +1470,18 @@ def finance_expense_edit(request: Request, eid: int):
         return RedirectResponse("/finance/expenses", status_code=303)
     return tpl.TemplateResponse("finance_expense_form.html", _expense_form_ctx(request, e[0]))
 
+def _expense_upsert(cols, eid):
+    """寫入 op_expense 主資料(不含分錄),回傳 expense_id。"""
+    if eid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE op_expense SET {sets}, updated_at=datetime('now','localtime') WHERE expense_id=:id",
+                {**cols, "id": int(eid)})
+        return int(eid)
+    keys = ",".join(cols)
+    return execute(f"INSERT INTO op_expense({keys}, updated_at) "
+                   f"VALUES({','.join(':' + k for k in cols)}, datetime('now','localtime'))", cols)
+
+
 @app.post("/finance/expenses")
 async def finance_expense_save(request: Request):
     f = await request.form()
@@ -1343,29 +1490,86 @@ async def finance_expense_save(request: Request):
     eid = f.get("expense_id")
     if f.get("_delete") and eid:
         execute("DELETE FROM op_expense WHERE expense_id=?", (int(eid),))
+        ledger.delete_voucher_for("op_expense", int(eid))
         return RedirectResponse("/finance/expenses", status_code=303)
     ym = (f.get("ym") or "").strip()
     cat = (f.get("category") or "").strip()
     if not (ym and cat):
         return RedirectResponse("/finance/expenses", status_code=303)
-    pgv = f.get("product_group_id") or ""
     am = f.get("amortize_months") or ""
     cols = dict(
         ym=ym, category=cat, amount=fl("amount"),
-        product_group_id=(int(pgv) if pgv.isdigit() else None),
         amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
-        tax_amount=fl("tax_amount"),
-        tax_deductible=(1 if f.get("tax_deductible") else 0),
-        doc_type=g("doc_type"), note=g("note"))
+        note=g("note"))
+
+    # 走確認畫面,存檔動作交給 /finance/expenses/confirm
+    existing = q1("SELECT tax_amount, payment_account, doc_type FROM op_expense WHERE expense_id=?",
+                  (int(eid),)) if eid else {}
+    acct_code, acct_name = ledger.EXPENSE_ACCOUNTS.get(cat, ledger.EXPENSE_ACCOUNTS["其他"])
+    hidden = dict(cols)
     if eid:
-        sets = ",".join(f"{k}=:{k}" for k in cols)
-        execute(f"UPDATE op_expense SET {sets}, updated_at=datetime('now','localtime') WHERE expense_id=:id",
-                {**cols, "id": int(eid)})
-    else:
-        keys = ",".join(cols)
-        execute(f"INSERT INTO op_expense({keys}, updated_at) "
-                f"VALUES({','.join(':' + k for k in cols)}, datetime('now','localtime'))", cols)
+        hidden["expense_id"] = eid
+    back = f"/finance/expenses/{eid}/edit" if eid else "/finance/expenses/new"
+    return tpl.TemplateResponse("ledger_confirm.html", dict(
+        request=request, active="expenses",
+        source_label="營運費用", back_url=back, commit_url="/finance/expenses/confirm",
+        summary=[
+            dict(label="月份", value=ym),
+            dict(label="項目", value=cat),
+            dict(label="金額", value=f"{cols['amount']:,.0f}"),
+        ],
+        hidden=hidden,
+        amount=cols["amount"], primary_account_name=acct_name,
+        tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
+        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES,
+    ))
+
+
+@app.post("/finance/expenses/confirm")
+async def finance_expense_confirm(request: Request):
+    f = await request.form()
+    g = lambda k: (f.get(k) or "").strip() or None
+    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
+    eid = f.get("expense_id")
+    tax_amount = fl("tax_amount")
+    payment_account = g("payment_account")
+    am = f.get("amortize_months") or ""
+    ym = (f.get("ym") or "").strip()
+    cat = (f.get("category") or "").strip()
+    cols = dict(
+        ym=ym, category=cat, amount=fl("amount"),
+        amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
+        tax_amount=tax_amount, payment_account=payment_account, doc_type=g("doc_type"),
+        note=g("note"))
+    new_id = _expense_upsert(cols, eid)
+    legs = ledger.compose_expense_entries(cat, cols["amount"], tax_amount, payment_account)
+    ledger.save_voucher("op_expense", new_id, f"{ym}-01", legs, "E", note=f"營運費用:{cat}")
     return RedirectResponse("/finance/expenses", status_code=303)
+
+
+# ---------- 總帳(方案B試點:進貨/營運費用自動過帳)-------------
+@app.get("/ledger", response_class=HTMLResponse)
+def ledger_page(request: Request):
+    src = request.query_params.get("source") or ""
+    where, args = ["1=1"], []
+    if src in ("purchase", "op_expense"):
+        where.append("source_type=?"); args.append(src)
+    rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
+                 ORDER BY voucher_no DESC, entry_id""", args)
+    vouchers = []
+    seen = {}
+    for r in rows:
+        if r["voucher_no"] not in seen:
+            seen[r["voucher_no"]] = dict(voucher_no=r["voucher_no"], entry_date=r["entry_date"],
+                                          source_type=r["source_type"], note=r["note"], lines=[],
+                                          total_debit=0, total_credit=0)
+            vouchers.append(seen[r["voucher_no"]])
+        v = seen[r["voucher_no"]]
+        v["lines"].append(r)
+        v["total_debit"] += r["debit"] or 0
+        v["total_credit"] += r["credit"] or 0
+    return tpl.TemplateResponse("ledger.html", dict(
+        request=request, active="ledger", vouchers=vouchers, src=src))
 
 
 # ---------- 定價試算(管理估算,不進帳本) --------------------
@@ -1446,7 +1650,6 @@ def stock_page(request: Request):
         request=request, active="stock",
         rows=Q.stock_on_hand(),
         products=q("SELECT product_id,sku,name FROM product WHERE status='在售' ORDER BY sku"),
-        batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code DESC"),
         in_types=STOCK_IN_TYPES, adj_types=STOCK_ADJ_TYPES))
 
 @app.get("/stock/moves", response_class=HTMLResponse)
@@ -1467,8 +1670,6 @@ async def stock_move_add(request: Request):
     except (TypeError, ValueError):
         return RedirectResponse("/stock", status_code=303)
     mtype = (f.get("move_type") or "分裝入庫").strip()
-    bid = f.get("batch_id")
-    bid = int(bid) if bid and bid.isdigit() else None
     if qty == 0:
         return RedirectResponse("/stock", status_code=303)
     # 入庫類一律記正,調整類依使用者填的正負,損耗報廢一律記負
@@ -1476,11 +1677,22 @@ async def stock_move_add(request: Request):
         qty = abs(qty)
     elif mtype == "損耗報廢":
         qty = -abs(qty)
-    execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,note)
-               VALUES(?,?,?,?,?,?)""",
-            (f.get("move_date") or dt.date.today().isoformat(), pid, bid, qty, mtype,
+    execute("""INSERT INTO stock_move(move_date,product_id,qty,move_type,note)
+               VALUES(?,?,?,?,?)""",
+            (f.get("move_date") or dt.date.today().isoformat(), pid, qty, mtype,
              (f.get("note") or "").strip() or None))
     return RedirectResponse("/stock", status_code=303)
+
+@app.post("/stock/moves/{mid}/delete")
+async def stock_move_delete(request: Request, mid: int):
+    r = q("SELECT ref_order_id FROM stock_move WHERE move_id=?", (mid,))
+    if not r:
+        return RedirectResponse("/stock/moves", status_code=303)
+    if r[0]["ref_order_id"]:
+        return RedirectResponse("/stock/moves?perr=1", status_code=303)
+    execute("DELETE FROM stock_move WHERE move_id=?", (mid,))
+    f = await request.form()
+    return RedirectResponse(f.get("next") or "/stock/moves", status_code=303)
 
 
 # ---------- 出貨作業:揀貨單 / 標籤 / 食品標示 ---------------
@@ -1493,8 +1705,7 @@ def shipping_hub(request: Request):
                                   WHERE ship_status='待出貨' ORDER BY d DESC LIMIT 20""")]
     return tpl.TemplateResponse("shipping.html", dict(
         request=request, active="ship", pending=pending, dates=dates,
-        products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
-        batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code DESC")))
+        products=q("SELECT product_id,sku,name FROM product ORDER BY sku")))
 
 def _ship_scope(request):
     d = request.query_params.get("date")
@@ -1518,14 +1729,12 @@ def shipping_labels(request: Request):
 @app.get("/shipping/foodlabel", response_class=HTMLResponse)
 def shipping_foodlabel(request: Request):
     pid = request.query_params.get("product_id")
-    bid = request.query_params.get("batch_id")
     try:
         copies = max(1, min(60, int(request.query_params.get("copies", 8))))
     except ValueError:
         copies = 8
-    data = Q.food_label(int(pid), int(bid) if bid else None) if pid else None
+    data = Q.food_label(int(pid)) if pid else None
     return tpl.TemplateResponse("foodlabel.html", dict(
         request=request, active="ship", data=data, copies=copies, sender=SENDER,
         products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
-        batches=q("SELECT batch_id,batch_code FROM batch ORDER BY batch_code DESC"),
-        pid=pid or "", bid=bid or ""))
+        pid=pid or ""))

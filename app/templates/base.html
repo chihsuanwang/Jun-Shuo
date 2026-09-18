@@ -11,13 +11,13 @@
 <meta name="apple-mobile-web-app-title" content="桂圓帳房">
 <link rel="apple-touch-icon" href="/static/icon-180.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=15">
+<link rel="stylesheet" href="/static/app.css?v=18">
 </head>
 <body>
 <div class="shell">
   <aside class="side">
     <div class="brand">
-      <div class="seal serif">郡</div>
+      <div class="seal"><img src="/static/brand-icon.png" alt="郡碩農創"></div>
       <div><div class="serif bname">桂圓帳房</div><div class="bsub">郡碩農創 · 中寮</div></div>
     </div>
     <nav>
@@ -28,24 +28,22 @@
       <a href="/shipping"  class="{{ 'on' if active=='ship' }}">出貨作業</a>
       <a href="/purchases" class="{{ 'on' if active=='purchase' }}">進貨</a>
       <a href="/returns"   class="{{ 'on' if active=='returns' }}">退貨 / 折讓</a>
+      <a href="/finance/expenses" class="{{ 'on' if active=='expenses' }}">營運費用</a>
 
       <div class="navgroup">看數字</div>
-      <a href="/lines"     class="{{ 'on' if active=='lines' }}">各產品線賺不賺</a>
       <a href="/finance"   class="{{ 'on' if active=='finance' }}">財務健康</a>
       <a href="/reports"   class="{{ 'on' if active=='report' }}">獲利報表</a>
       <a href="/pricing"   class="{{ 'on' if active=='pricing' }}">定價試算</a>
+      <a href="/ledger"    class="{{ 'on' if active=='ledger' }}">總帳</a>
 
       <div class="navgroup">設定一次的</div>
-      <a href="/product-lines" class="{{ 'on' if active=='prodline' }}">產品線</a>
       <a href="/customers" class="{{ 'on' if active=='cust' }}">客戶資料庫</a>
       <a href="/products"  class="{{ 'on' if active=='prod' }}">商品目錄</a>
       <a href="/suppliers" class="{{ 'on' if active=='supplier' }}">供應商</a>
       <a href="/channels"  class="{{ 'on' if active=='chan' }}">銷售管道</a>
-      <a href="/batches"   class="{{ 'on' if active=='batch' }}">焙製批次</a>
       <a href="/stock"     class="{{ 'on' if active=='stock' }}">庫存</a>
       <a href="/assets"    class="{{ 'on' if active=='asset' }}">固定資產</a>
     </nav>
-    <div class="foot">本機資料庫<br>郡碩銷售.db</div>
   </aside>
   <main class="main">
     {% block body %}{% endblock %}

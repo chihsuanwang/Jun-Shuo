@@ -6,15 +6,46 @@
 </div>
 <hr class="rule">
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">
-  把材料 + 人工 + 製造費用往上堆,算出每個產品的<b>單位總成本</b>,對照目前售價看毛利率、反推建議售價。
-  這是<b>管理估算</b>,不進帳本(工時 × 時薪、老闆的工按市價都只在這裡試算)。詳細說明見 <code>app/docs/定價分析.md</code>。
+  鮮果 → 龍眼乾 → 龍眼肉,成本一路往下串(上游數字變,下游自動跟著重算),全程以<b>台斤</b>計價。
+  這是<b>管理估算</b>,不進帳本。詳細說明見 <code>app/docs/定價分析.md</code>。
 </p>
+
+<style>
+  .pc-cascade{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:0 14px;align-items:stretch;margin-bottom:8px}
+  @media (max-width:980px){
+    .pc-cascade{grid-template-columns:1fr}
+    .pc-connector{flex-direction:row;justify-content:flex-start;padding:10px 2px}
+    .pc-connector .pc-line{width:36px;height:2px}
+  }
+  .pc-stage{background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column}
+  .pc-kicker{font-size:11px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:2px}
+  .pc-stage h3{font-size:16px;margin:0 0 2px}
+  .pc-unit{font-size:11px;color:var(--ink-3);margin-bottom:12px}
+  .pc-rows{border-top:1px solid var(--rule-2)}
+  .pc-row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--rule-2);font-size:13px}
+  .pc-row.carry{color:var(--gold);font-weight:600}
+  .pc-row .v{font-weight:600;font-variant-numeric:tabular-nums}
+  .pc-row.total{border-top:1px solid var(--ink-3);border-bottom:none;margin-top:2px;padding-top:8px;font-weight:700}
+  .pc-compare{margin-top:12px;padding-top:10px;border-top:2px solid var(--rule);font-size:13px;color:var(--ink-2);display:flex;justify-content:space-between}
+  .pc-compare b{color:var(--ink);font-variant-numeric:tabular-nums}
+  .pc-verdict{margin-top:8px;display:flex;align-items:center;justify-content:space-between;border-radius:9px;padding:8px 12px}
+  .pc-verdict.good{background:#E7EBDC;border:1px solid #C7D3AE}
+  .pc-verdict.bad{background:var(--warn-bg);border:1px solid #E4B79C}
+  .pc-verdict .pct{font-size:18px;font-weight:900;font-variant-numeric:tabular-nums}
+  .pc-verdict.good .pct,.pc-verdict.good .lbl{color:var(--good)}
+  .pc-verdict.bad .pct,.pc-verdict.bad .lbl{color:var(--seal)}
+  .pc-verdict .lbl{font-size:11px;font-weight:700}
+  .pc-connector{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--ink-2)}
+  .pc-connector .pc-line{width:2px;flex:1;min-height:18px;background:linear-gradient(var(--rule),var(--gold),var(--rule))}
+  .pc-connector .pc-ratio{font-size:11px;font-weight:700;color:var(--gold);white-space:nowrap;background:var(--paper-2);border:1px solid var(--rule);border-radius:999px;padding:4px 8px}
+  .pc-connector .pc-arrow{font-size:14px;color:var(--gold)}
+</style>
 
 <form method="post" action="/pricing" id="pf">
   {% for grp, items in grouped %}
   <div class="card" style="margin-bottom:14px">
     <h3 class="serif">{{ grp }}</h3>
-    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(210px,1fr))">
       {% for it in items %}
       <div>
         <label>{{ it.label }}{% if it.unit %} <span class="muted">（{{ it.unit }}）</span>{% endif %}</label>
@@ -26,7 +57,7 @@
   </div>
   {% endfor %}
 
-  <div style="display:flex;gap:10px;align-items:center;margin-bottom:20px">
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:24px">
     <button type="submit">儲存參數</button>
     <button type="submit" name="_reset" value="1" class="ghost"
       onclick="return confirm('把所有參數還原成預設值?')">還原預設值</button>
@@ -34,13 +65,18 @@
   </div>
 </form>
 
-<div class="card" id="freshline" style="margin-bottom:14px;font-size:13px"></div>
-<div class="grid" id="results" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr))"></div>
+<h3 class="serif" style="margin-bottom:10px">龍眼鏈 · 成本一路串下去</h3>
+<div class="pc-cascade" id="cascade"></div>
+<p class="muted" style="font-size:11px;margin:10px 0 26px">金色行 = 從上一階段自動帶下來的成本。</p>
+
+<h3 class="serif" style="margin-bottom:10px">蜂蜜(獨立,不接入龍眼鏈)</h3>
+<div style="max-width:340px" id="honey"></div>
 
 <script>
 (function () {
   var form = document.getElementById('pf');
-  var money = function (v) { return Math.round(v).toLocaleString('en-US'); };
+  var money = function (v) { return '$' + Math.round(v).toLocaleString('en-US'); };
+  var money2 = function (v) { return '$' + v.toFixed(2); };
   var pctd = function (v) { return (v * 100).toFixed(0) + '%'; };
 
   function read() {
@@ -51,79 +87,105 @@
     return p;
   }
 
-  function calc(p) {
-    var n = function (k) { return parseFloat(p[k]) || 0; };
-    var freshUnit = n('fresh_yield') ? (n('field_annual') + n('harvest_wage')) / n('fresh_yield') : 0;
-    var oh = n('overhead_pct') / 100, tm = n('target_margin') / 100;
+  function row(label, val, cls) {
+    return '<div class="pc-row' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span><span class="v">' + money2(val) + '</span></div>';
+  }
 
-    function pack(name, price, rows, mfg) {
-      var overhead = mfg * oh, total = mfg + overhead;
-      return {
-        name: name, price: price, rows: rows, mfg: mfg, overhead: overhead, total: total,
-        suggest: tm < 1 ? total / (1 - tm) : null,
-        margin: price ? (price - total) / price : 0,
-        ok: price ? (price - total) / price >= tm : false
-      };
-    }
-    var out = [];
+  function stageCard(kicker, title, unit, rowsHtml, compareLabel, compareVal, marginOrDiff, isMoney, lossLabel, goodLabel) {
+    var ok = marginOrDiff >= 0;
+    var pct = isMoney
+      ? (ok ? '' : '−') + '$' + Math.abs(marginOrDiff).toFixed(2)
+      : pctd(marginOrDiff);
+    return '<div class="pc-stage">'
+      + '<div class="pc-kicker">' + kicker + '</div>'
+      + '<h3 class="serif">' + title + '</h3>'
+      + '<div class="pc-unit">' + unit + '</div>'
+      + '<div class="pc-rows">' + rowsHtml + '</div>'
+      + '<div class="pc-compare"><span>' + compareLabel + '</span><b>' + money2(compareVal) + '</b></div>'
+      + '<div class="pc-verdict ' + (ok ? 'good' : 'bad') + '">'
+      + '<span class="lbl">' + (ok ? goodLabel : lossLabel) + '</span><span class="pct">' + pct + '</span>'
+      + '</div></div>';
+  }
 
-    var m = freshUnit;
-    var base = m + n('fresh_sort') + n('fresh_pack');
-    var loss = base * n('fresh_loss') / 100;
-    out.push(pack('龍眼鮮果 · 台斤', n('fresh_price'), [
-      ['鮮果成本', m], ['分級挑選工', n('fresh_sort')], ['包材', n('fresh_pack')],
-      ['損耗 ' + n('fresh_loss') + '%', loss]], base + loss));
-
-    var mat = n('dry_fresh_jin') * freshUnit;
-    var lab = n('dry_batch_units') ? n('dry_batch_labor') / n('dry_batch_units') : 0;
-    base = mat + n('dry_fuel') + lab + n('dry_kiln_dep') + n('dry_pack');
-    loss = base * n('dry_loss') / 100;
-    out.push(pack('龍眼乾 · 300g/包', n('dry_price'), [
-      ['鮮果投入', mat], ['焙製燃料', n('dry_fuel')], ['顧爐+去殼+篩選工', lab],
-      ['焙灶折舊', n('dry_kiln_dep')], ['包材', n('dry_pack')],
-      ['焙製損耗 ' + n('dry_loss') + '%', loss]], base + loss));
-
-    var shell = n('meat_shell_min') / 60 * n('wage_hr');
-    out.push(pack('龍眼肉 · 600g/罐', n('meat_price'), [
-      ['桂圓乾原料', n('meat_material')],
-      ['剝殼去核工（' + n('meat_shell_min') + ' 分/罐）', shell],
-      ['剝肉損耗', n('meat_loss')], ['包材（罐）', n('meat_pack')]],
-      n('meat_material') + shell + n('meat_loss') + n('meat_pack')));
-
-    var feed = n('honey_jars') ? n('honey_feed') / n('honey_jars') : 0;
-    out.push(pack('蜂蜜 · 420g/罐', n('honey_price'), [
-      ['蜂群飼養分攤', feed], ['採蜜/搖蜜/濾蜜/裝罐工', n('honey_labor')],
-      ['蜂箱+搖蜜機折舊', n('honey_dep')], ['玻璃罐', n('honey_jar')]],
-      feed + n('honey_labor') + n('honey_dep') + n('honey_jar')));
-
-    return { freshUnit: freshUnit, target: n('target_margin'), products: out };
+  function connector(label) {
+    return '<div class="pc-connector"><div class="pc-line"></div>'
+      + '<div class="pc-ratio">' + label + '</div>'
+      + '<div class="pc-arrow">↓</div><div class="pc-line"></div></div>';
   }
 
   function render() {
-    var r = calc(read());
-    document.getElementById('freshline').innerHTML =
-      '單位鮮果成本 <b>$ ' + money(r.freshUnit) + '</b> / 台斤 　'
-      + '<span class="muted">＝（全年田間管理 ＋ 採收工資）÷ 全年鮮果產量,龍眼三品共用</span>';
+    var p = read();
+    var n = function (k) { return parseFloat(p[k]) || 0; };
+    var taxRate = n('tax_rate') / 100;
 
-    document.getElementById('results').innerHTML = r.products.map(function (d) {
-      var body = d.rows.map(function (x) {
-        return '<tr><td>' + x[0] + '</td><td class="r">' + money(x[1]) + '</td></tr>';
-      }).join('');
-      var col = d.ok ? 'var(--good)' : 'var(--seal)';
-      return '<div class="card">'
-        + '<h3 class="serif" style="font-size:14px">' + d.name + '</h3>'
-        + '<table class="pnl">' + body
-        + '<tr class="sum"><td>= 單位製造成本</td><td class="r">' + money(d.mfg) + '</td></tr>'
-        + '<tr><td>+ 分攤共同費用</td><td class="r">' + money(d.overhead) + '</td></tr>'
-        + '<tr class="sum"><td>= 單位總成本</td><td class="r">' + money(d.total) + '</td></tr>'
-        + '<tr><td>目前售價</td><td class="r">' + money(d.price) + '</td></tr>'
-        + '<tr><td>建議售價（毛利 ' + r.target + '%）</td><td class="r">' + (d.suggest ? money(d.suggest) : '—') + '</td></tr>'
-        + '</table>'
-        + '<div style="margin-top:8px;font-size:13px">實際毛利率 '
-        + '<b style="font-size:18px;color:' + col + '">' + pctd(d.margin) + '</b>'
-        + (d.ok ? '' : ' <span style="color:var(--seal)">✗ 未達目標</span>') + '</div>'
-        + '</div>';
-    }).join('');
+    // ---- 第一階段:原料鮮果 ----
+    var freshTotal = n('mat_fert') + n('mat_org') + n('mat_pest') + n('lab_weed') + n('lab_harvest') + n('lab_spray');
+    var freshUnit = n('fresh_yield') ? freshTotal / n('fresh_yield') : 0;
+    var margin1 = n('fresh_price') ? (n('fresh_price') - freshUnit) / n('fresh_price') : 0;
+    var rows1 = row('肥料資材', n('mat_fert') / (n('fresh_yield') || 1))
+      + row('有機基肥', n('mat_org') / (n('fresh_yield') || 1))
+      + row('農藥資材', n('mat_pest') / (n('fresh_yield') || 1))
+      + row('人工除草', n('lab_weed') / (n('fresh_yield') || 1))
+      + row('人工採摘', n('lab_harvest') / (n('fresh_yield') || 1))
+      + row('噴藥人力', n('lab_spray') / (n('fresh_yield') || 1))
+      + row('= 原料成本', freshUnit, 'total');
+
+    // ---- 第二階段:在製品龍眼乾 ----
+    var carry1 = freshUnit * n('ratio_fresh_dry');
+    var mfg2 = carry1 + n('dry_trim') + n('dry_roast') + n('dry_post') + n('dry_dep');
+    var preTax2 = mfg2 + n('dry_pack') + n('dry_freight');
+    var tax2 = preTax2 * taxRate;
+    var sell2 = preTax2 + tax2;
+    var dryQty = n('dry_q30') + n('dry_q28') + n('dry_q26') + n('dry_q24');
+    var dryPrice = dryQty
+      ? (n('dry_p30') * n('dry_q30') + n('dry_p28') * n('dry_q28') + n('dry_p26') * n('dry_q26') + n('dry_p24') * n('dry_q24')) / dryQty
+      : 0;
+    var margin2 = dryPrice ? (dryPrice - sell2) / dryPrice : 0;
+    var rows2 = row('↳ 鮮果成本轉入', carry1, 'carry')
+      + row('① 剪果工費', n('dry_trim'))
+      + row('② 烘焙工費', n('dry_roast'))
+      + row('③ 後處理工費', n('dry_post'))
+      + row('設備攤提', n('dry_dep'))
+      + row('= 製造成本', mfg2, 'total')
+      + row('包材 / 包裝工費', n('dry_pack'))
+      + row('運費(固定金額)', n('dry_freight'))
+      + row('營業稅（' + n('tax_rate') + '%）', tax2)
+      + row('= 可售成本(含稅)', sell2, 'total');
+
+    // ---- 第三階段:製成品龍眼肉 ----
+    var carry2 = mfg2 * n('ratio_dry_meat');
+    var mfg3 = carry2 + n('meat_deshell') + n('meat_post');
+    var preTax3 = mfg3 + n('meat_pack') + n('meat_freight');
+    var tax3 = preTax3 * taxRate;
+    var sell3 = preTax3 + tax3;
+    var diff3 = n('meat_price') - sell3;
+    var rows3 = row('↳ 龍眼乾成本轉入', carry2, 'carry')
+      + row('① 剝肉工費', n('meat_deshell'))
+      + row('② 後處理工費', n('meat_post'))
+      + row('= 製造成本', mfg3, 'total')
+      + row('包材 / 包裝工費', n('meat_pack'))
+      + row('運費(固定金額)', n('meat_freight'))
+      + row('營業稅（' + n('tax_rate') + '%）', tax3)
+      + row('= 可售成本(含稅)', sell3, 'total');
+
+    document.getElementById('cascade').innerHTML =
+      stageCard('第一階段', '原料 · 鮮果', '每台斤', rows1, '目前售價', n('fresh_price'), margin1, false, '毛利率', '毛利率')
+      + connector('鮮果 ' + n('ratio_fresh_dry') + ' 台斤 → 1 台斤')
+      + stageCard('第二階段', '在製品 · 龍眼乾', '每台斤', rows2, '售價(規格加權平均)', dryPrice, margin2, false, '毛利率', '毛利率')
+      + connector('龍眼乾 ' + n('ratio_dry_meat') + ' 台斤 → 1 台斤')
+      + stageCard('第三階段', '製成品 · 龍眼肉', '每台斤', rows3, '目前售價', n('meat_price'), diff3, true, '賣一台斤,虧', '賣一台斤,賺');
+
+    // ---- 蜂蜜(獨立) ----
+    var feed = n('honey_jars') ? n('honey_feed') / n('honey_jars') : 0;
+    var honeyTotal = feed + n('honey_labor') + n('honey_dep') + n('honey_jar');
+    var honeyMargin = n('honey_price') ? (n('honey_price') - honeyTotal) / n('honey_price') : 0;
+    var rowsH = row('蜂群飼養分攤', feed)
+      + row('採蜜 / 搖蜜 / 裝罐工', n('honey_labor'))
+      + row('蜂箱 / 搖蜜機折舊', n('honey_dep'))
+      + row('玻璃罐', n('honey_jar'))
+      + row('= 單位總成本', honeyTotal, 'total');
+    document.getElementById('honey').innerHTML =
+      stageCard('獨立品項', '蜂蜜', '每罐(420g)', rowsH, '目前售價', n('honey_price'), honeyMargin, false, '毛利率', '毛利率');
   }
 
   form.addEventListener('input', render);

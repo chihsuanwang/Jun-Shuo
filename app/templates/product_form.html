@@ -6,6 +6,7 @@
   <h1 class="serif">{{ p.name if p else '新增商品' }}</h1>
 </div></div>
 <hr class="rule">
+{% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這個商品沒辦法刪除,因為{{ block_reason }}。可以改成「停售」,商品目錄還看得到,但新訂單不會再選到它。</div>{% endif %}
 
 <form method="post" action="/products">
 {% if p %}<input type="hidden" name="product_id" value="{{ p.product_id }}">{% endif %}
@@ -17,7 +18,7 @@
     <div><label>品名</label><input name="name" value="{{ p.name if p else '' }}" required></div>
     <div><label>型態</label><select name="product_type"><option value="">—</option>
       {% for t in types %}<option {{ 'selected' if p and p.product_type==t }}>{{ t }}</option>{% endfor %}</select></div>
-    <div><label>舊稱呼 / 原代號</label><input name="type_code_raw" value="{{ p.type_code_raw if p else '' }}" placeholder="例:#26"></div>
+    <div><label>舊稱呼 / 原代號</label><input name="type_code_raw" value="{{ (p.type_code_raw or '') if p else '' }}" placeholder="例:#26"></div>
     <div><label>內容量(克,秤重品留空)</label><input name="net_weight_g" type="number" value="{{ p.net_weight_g if p and p.net_weight_g is not none else '' }}"></div>
     <div><label>每單位克數(換算用)</label><input name="grams_per_uom" type="number" value="{{ p.grams_per_uom if p and p.grams_per_uom is not none else '' }}"></div>
     <div><label>計價單位</label><select name="uom">
@@ -27,14 +28,15 @@
     <div><label>保存天數</label><input name="shelf_life_days" type="number" value="{{ p.shelf_life_days if p and p.shelf_life_days is not none else '' }}"></div>
     <div><label>保存條件</label><select name="storage_condition">
       {% for s in storage %}<option {{ 'selected' if p and p.storage_condition==s }}>{{ s }}</option>{% endfor %}</select></div>
-    <div><label>原料成分</label><input name="ingredients" value="{{ p.ingredients if p else '龍眼(南投中寮)' }}"></div>
-    <div><label>國際條碼</label><input name="barcode" value="{{ p.barcode if p else '' }}"></div>
+    <div><label>原料成分</label><input name="ingredients" value="{{ (p.ingredients or '') if p else '龍眼(南投中寮)' }}"></div>
+    <div><label>國際條碼</label><input name="barcode" value="{{ (p.barcode or '') if p else '' }}"></div>
+    <div><label>單位成本(算毛利用)</label><input name="unit_cost" type="number" step="1" min="0" value="{{ p.unit_cost|round(0) if p and p.unit_cost else 0 }}"></div>
     <div><label>狀態</label><select name="status">
       <option {{ 'selected' if p and p.status=='在售' }}>在售</option>
       <option {{ 'selected' if p and p.status=='停售' }}>停售</option></select></div>
     <div style="display:flex;align-items:end;gap:8px"><label style="margin:0"><input type="checkbox" name="gift_only" value="1" {{ 'checked' if p and p.gift_only }} style="width:auto"> 僅供贈品(不販售)</label></div>
   </div>
-  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ p.note if p else '' }}"></div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (p.note or '') if p else '' }}"></div>
 </div>
 
 <div class="card" style="max-width:820px;margin-bottom:16px">
@@ -49,5 +51,9 @@
 
 <button type="submit">儲存</button>
 <a href="/products" style="margin-left:12px">取消</a>
+{% if p %}
+<button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
+        onclick="return confirm('刪除商品「{{ p.name }}」?已經有訂單、進出貨紀錄的商品沒辦法刪除,只能改「停售」。')">刪除</button>
+{% endif %}
 </form>
 {% endblock %}
