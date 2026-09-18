@@ -10,7 +10,8 @@ import os, io, csv, json, glob, shutil, sys, runpy, base64, datetime as dt
 import paths
 import queries as Q
 import db as _db
-from db import q, execute
+import ledger
+from db import q, q1, execute
 
 HERE = paths.RES_DIR
 app = FastAPI(title="桂圓帳房")
@@ -501,6 +502,16 @@ def purchase_edit(request: Request, pid: int):
         return RedirectResponse("/purchases", status_code=303)
     return tpl.TemplateResponse("purchase_form.html", _purchase_form_ctx(request, p[0]))
 
+def _purchase_upsert(cols, pid):
+    """寫入 purchase 主資料(不含分錄),回傳 purchase_id。"""
+    if pid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE purchase SET {sets} WHERE purchase_id=:id", {**cols, "id": int(pid)})
+        return int(pid)
+    keys = ",".join(cols)
+    return execute(f"INSERT INTO purchase({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+
+
 @app.post("/purchases")
 async def purchase_save(request: Request):
     f = await request.form()
@@ -509,23 +520,75 @@ async def purchase_save(request: Request):
     pid = f.get("purchase_id")
     if f.get("_delete") and pid:
         execute("DELETE FROM purchase WHERE purchase_id=?", (int(pid),))
+        ledger.delete_voucher_for("purchase", int(pid))
         return RedirectResponse("/purchases", status_code=303)
     date = (f.get("purchase_date") or "").strip()
     if not date:
         return RedirectResponse("/purchases", status_code=303)
+    is_fa = 1 if f.get("is_fixed_asset") else 0
     cols = dict(
         purchase_date=date,
         supplier_id=(int(f.get("supplier_id")) if (f.get("supplier_id") or "").isdigit() else None),
         category=g("category"),
         amount=fl("amount"),
-        is_fixed_asset=(1 if f.get("is_fixed_asset") else 0),
+        is_fixed_asset=is_fa,
         note=g("note"))
+    if is_fa:
+        # 設備採購不記分錄(交給固定資產那條路),照舊直接存檔
+        _purchase_upsert(cols, pid)
+        return RedirectResponse("/purchases", status_code=303)
+
+    # 原料/包材/委外/服務/其他 → 先看確認畫面,存檔動作交給 /purchases/confirm
+    existing = q1("SELECT tax_amount, payment_account, doc_type FROM purchase WHERE purchase_id=?",
+                  (int(pid),)) if pid else {}
+    sup_name = None
+    if cols["supplier_id"]:
+        r = q1("SELECT name FROM supplier WHERE supplier_id=?", (cols["supplier_id"],))
+        sup_name = r.get("name")
+    acct_code, acct_name = ledger.PURCHASE_ACCOUNTS.get(cols["category"], ledger.PURCHASE_ACCOUNTS["其他"])
+    hidden = dict(cols)
     if pid:
-        sets = ",".join(f"{k}=:{k}" for k in cols)
-        execute(f"UPDATE purchase SET {sets} WHERE purchase_id=:id", {**cols, "id": int(pid)})
-    else:
-        keys = ",".join(cols)
-        execute(f"INSERT INTO purchase({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+        hidden["purchase_id"] = pid
+    back = f"/purchases/{pid}/edit" if pid else "/purchases/new"
+    return tpl.TemplateResponse("ledger_confirm.html", dict(
+        request=request, active="purchase",
+        source_label="進貨", back_url=back, commit_url="/purchases/confirm",
+        summary=[
+            dict(label="日期", value=date),
+            dict(label="供應商", value=sup_name or "—"),
+            dict(label="類別", value=cols["category"] or "—"),
+            dict(label="金額", value=f"{cols['amount']:,.0f}"),
+        ],
+        hidden=hidden,
+        amount=cols["amount"], primary_account_name=acct_name,
+        tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
+        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES,
+    ))
+
+
+@app.post("/purchases/confirm")
+async def purchase_confirm(request: Request):
+    f = await request.form()
+    g = lambda k: (f.get(k) or "").strip() or None
+    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
+    pid = f.get("purchase_id")
+    tax_amount = fl("tax_amount")
+    payment_account = g("payment_account")
+    cols = dict(
+        purchase_date=(f.get("purchase_date") or "").strip(),
+        supplier_id=(int(f.get("supplier_id")) if (f.get("supplier_id") or "").isdigit() else None),
+        category=g("category"),
+        amount=fl("amount"),
+        is_fixed_asset=0,
+        tax_amount=tax_amount,
+        payment_account=payment_account,
+        doc_type=g("doc_type"),
+        note=g("note"))
+    new_id = _purchase_upsert(cols, pid)
+    legs = ledger.compose_purchase_entries(cols["category"], cols["amount"], tax_amount,
+                                            payment_account, is_fixed_asset=False)
+    ledger.save_voucher("purchase", new_id, cols["purchase_date"], legs, "P",
+                         note=f"進貨:{cols['category'] or ''}")
     return RedirectResponse("/purchases", status_code=303)
 
 
@@ -1407,6 +1470,18 @@ def finance_expense_edit(request: Request, eid: int):
         return RedirectResponse("/finance/expenses", status_code=303)
     return tpl.TemplateResponse("finance_expense_form.html", _expense_form_ctx(request, e[0]))
 
+def _expense_upsert(cols, eid):
+    """寫入 op_expense 主資料(不含分錄),回傳 expense_id。"""
+    if eid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE op_expense SET {sets}, updated_at=datetime('now','localtime') WHERE expense_id=:id",
+                {**cols, "id": int(eid)})
+        return int(eid)
+    keys = ",".join(cols)
+    return execute(f"INSERT INTO op_expense({keys}, updated_at) "
+                   f"VALUES({','.join(':' + k for k in cols)}, datetime('now','localtime'))", cols)
+
+
 @app.post("/finance/expenses")
 async def finance_expense_save(request: Request):
     f = await request.form()
@@ -1415,6 +1490,7 @@ async def finance_expense_save(request: Request):
     eid = f.get("expense_id")
     if f.get("_delete") and eid:
         execute("DELETE FROM op_expense WHERE expense_id=?", (int(eid),))
+        ledger.delete_voucher_for("op_expense", int(eid))
         return RedirectResponse("/finance/expenses", status_code=303)
     ym = (f.get("ym") or "").strip()
     cat = (f.get("category") or "").strip()
@@ -1425,15 +1501,75 @@ async def finance_expense_save(request: Request):
         ym=ym, category=cat, amount=fl("amount"),
         amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
         note=g("note"))
+
+    # 走確認畫面,存檔動作交給 /finance/expenses/confirm
+    existing = q1("SELECT tax_amount, payment_account, doc_type FROM op_expense WHERE expense_id=?",
+                  (int(eid),)) if eid else {}
+    acct_code, acct_name = ledger.EXPENSE_ACCOUNTS.get(cat, ledger.EXPENSE_ACCOUNTS["其他"])
+    hidden = dict(cols)
     if eid:
-        sets = ",".join(f"{k}=:{k}" for k in cols)
-        execute(f"UPDATE op_expense SET {sets}, updated_at=datetime('now','localtime') WHERE expense_id=:id",
-                {**cols, "id": int(eid)})
-    else:
-        keys = ",".join(cols)
-        execute(f"INSERT INTO op_expense({keys}, updated_at) "
-                f"VALUES({','.join(':' + k for k in cols)}, datetime('now','localtime'))", cols)
+        hidden["expense_id"] = eid
+    back = f"/finance/expenses/{eid}/edit" if eid else "/finance/expenses/new"
+    return tpl.TemplateResponse("ledger_confirm.html", dict(
+        request=request, active="expenses",
+        source_label="營運費用", back_url=back, commit_url="/finance/expenses/confirm",
+        summary=[
+            dict(label="月份", value=ym),
+            dict(label="項目", value=cat),
+            dict(label="金額", value=f"{cols['amount']:,.0f}"),
+        ],
+        hidden=hidden,
+        amount=cols["amount"], primary_account_name=acct_name,
+        tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
+        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES,
+    ))
+
+
+@app.post("/finance/expenses/confirm")
+async def finance_expense_confirm(request: Request):
+    f = await request.form()
+    g = lambda k: (f.get(k) or "").strip() or None
+    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
+    eid = f.get("expense_id")
+    tax_amount = fl("tax_amount")
+    payment_account = g("payment_account")
+    am = f.get("amortize_months") or ""
+    ym = (f.get("ym") or "").strip()
+    cat = (f.get("category") or "").strip()
+    cols = dict(
+        ym=ym, category=cat, amount=fl("amount"),
+        amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
+        tax_amount=tax_amount, payment_account=payment_account, doc_type=g("doc_type"),
+        note=g("note"))
+    new_id = _expense_upsert(cols, eid)
+    legs = ledger.compose_expense_entries(cat, cols["amount"], tax_amount, payment_account)
+    ledger.save_voucher("op_expense", new_id, f"{ym}-01", legs, "E", note=f"營運費用:{cat}")
     return RedirectResponse("/finance/expenses", status_code=303)
+
+
+# ---------- 總帳(方案B試點:進貨/營運費用自動過帳)-------------
+@app.get("/ledger", response_class=HTMLResponse)
+def ledger_page(request: Request):
+    src = request.query_params.get("source") or ""
+    where, args = ["1=1"], []
+    if src in ("purchase", "op_expense"):
+        where.append("source_type=?"); args.append(src)
+    rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
+                 ORDER BY voucher_no DESC, entry_id""", args)
+    vouchers = []
+    seen = {}
+    for r in rows:
+        if r["voucher_no"] not in seen:
+            seen[r["voucher_no"]] = dict(voucher_no=r["voucher_no"], entry_date=r["entry_date"],
+                                          source_type=r["source_type"], note=r["note"], lines=[],
+                                          total_debit=0, total_credit=0)
+            vouchers.append(seen[r["voucher_no"]])
+        v = seen[r["voucher_no"]]
+        v["lines"].append(r)
+        v["total_debit"] += r["debit"] or 0
+        v["total_credit"] += r["credit"] or 0
+    return tpl.TemplateResponse("ledger.html", dict(
+        request=request, active="ledger", vouchers=vouchers, src=src))
 
 
 # ---------- 定價試算(管理估算,不進帳本) --------------------
