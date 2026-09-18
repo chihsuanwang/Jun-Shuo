@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}確認分錄 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup"><a href="{{ back_url }}">{{ source_label }}</a> / 確認分錄</div>
+  <h1 class="serif">確認這筆{{ source_label }}要記的分錄</h1>
+</div></div>
+<hr class="rule">
+
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">
+  下面是系統依你剛剛填的內容自動組出來的分錄草稿。看一眼「付款帳戶」「進項稅額」對不對,
+  不確定就留預設值 → 按「確認存檔」才會真的存進去;不想存就按「返回修改」。
+</p>
+
+<div class="card" style="max-width:640px;margin-bottom:16px">
+  <h3 class="serif" style="font-size:15px">{{ source_label }}內容</h3>
+  <table style="margin-top:8px">
+    {% for row in summary %}
+    <tr><td class="muted" style="width:110px">{{ row.label }}</td><td>{{ row.value }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<form method="post" action="{{ commit_url }}" id="ledgerForm">
+{% for k, v in hidden.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+
+<div class="card" style="max-width:640px;margin-bottom:16px">
+  <h3 class="serif" style="font-size:15px">分錄草稿</h3>
+  <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:8px">
+    <div><label>付款帳戶</label>
+      <input name="payment_account" id="payAcct" value="{{ payment_account or '' }}" placeholder="現金">
+      <div class="muted" style="font-size:11px;margin-top:3px">留白 = 現金;要記銀行帳戶就打帳戶名(例:合庫)</div>
+    </div>
+    <div><label>進項稅額(沒有留 0)</label>
+      <input name="tax_amount" id="taxAmt" type="number" step="1" min="0" value="{{ tax_amount|round(0) if tax_amount else 0 }}"></div>
+    <div><label>憑證類型</label>
+      <select name="doc_type"><option value="">—</option>
+        {% for d in doc_types %}<option {{ 'selected' if doc_type == d }}>{{ d }}</option>{% endfor %}
+      </select></div>
+  </div>
+
+  <table style="margin-top:14px">
+    <thead><tr><th>科目</th><th data-num>借方</th><th data-num>貸方</th></tr></thead>
+    <tbody>
+      <tr><td>{{ primary_account_name }}</td><td class="r">{{ amount|money }}</td><td class="r">—</td></tr>
+      <tr id="taxRow" hidden><td>進項稅額</td><td class="r" id="taxDebit"></td><td class="r">—</td></tr>
+      <tr><td id="cashName">現金</td><td class="r">—</td><td class="r" id="cashCredit">{{ amount|money }}</td></tr>
+    </tbody>
+  </table>
+  <div class="muted" style="font-size:12px;margin-top:8px">借貸合計:<span id="balCheck"></span></div>
+</div>
+
+<button type="submit">確認存檔</button>
+<a href="{{ back_url }}" style="margin-left:12px">返回修改</a>
+</form>
+
+<script>
+(function () {
+  var amount = {{ amount or 0 }};
+  var taxAmt = document.getElementById('taxAmt'), payAcct = document.getElementById('payAcct');
+  var taxRow = document.getElementById('taxRow'), taxDebit = document.getElementById('taxDebit');
+  var cashName = document.getElementById('cashName'), cashCredit = document.getElementById('cashCredit');
+  var balCheck = document.getElementById('balCheck');
+  function money(n) { return Math.round(n).toLocaleString(); }
+  function recalc() {
+    var tax = +taxAmt.value || 0;
+    taxRow.hidden = tax <= 0;
+    taxDebit.textContent = money(tax);
+    var acct = (payAcct.value || '').trim();
+    cashName.textContent = (!acct || acct === '現金') ? '現金' : ('銀行存款-' + acct);
+    var total = amount + tax;
+    cashCredit.textContent = money(total);
+    balCheck.textContent = money(amount) + ' + ' + money(tax) + ' = ' + money(total) + '(借貸平衡)';
+  }
+  taxAmt.addEventListener('input', recalc);
+  payAcct.addEventListener('input', recalc);
+  recalc();
+})();
+</script>
+{% endblock %}
