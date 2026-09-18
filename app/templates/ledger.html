@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}總帳 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup">桂圓帳房 / 總帳</div>
+  <h1 class="serif">總帳明細</h1>
+</div></div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 14px">
+  進貨、營運費用存檔時,依對照表自動組出的分錄(方案 B 試點,目前只接這兩種)。
+  同一張傳票代表同一筆進貨/費用;要改分錄,回去編輯來源那筆進貨/費用重新確認一次即可,
+  這裡不能直接改。
+</p>
+
+<form method="get" action="/ledger" style="display:flex;gap:10px;margin-bottom:14px">
+  <select name="source" onchange="this.form.submit()">
+    <option value="" {{ 'selected' if not src }}>全部來源</option>
+    <option value="purchase" {{ 'selected' if src == 'purchase' }}>進貨</option>
+    <option value="op_expense" {{ 'selected' if src == 'op_expense' }}>營運費用</option>
+  </select>
+</form>
+
+{% for v in vouchers %}
+<div class="card" style="max-width:680px;margin-bottom:14px">
+  <div style="display:flex;justify-content:space-between;align-items:baseline">
+    <div><b>{{ v.voucher_no }}</b>
+      <span class="muted" style="font-size:12px;margin-left:8px">
+        {{ '進貨' if v.source_type == 'purchase' else '營運費用' }} · {{ v.entry_date }}
+      </span></div>
+    <div class="muted" style="font-size:12px">{{ v.note or '' }}</div>
+  </div>
+  <table style="margin-top:8px">
+    <thead><tr><th>科目</th><th data-num>借方</th><th data-num>貸方</th></tr></thead>
+    <tbody>
+      {% for l in v.lines %}
+      <tr><td>{{ l.account_code }} {{ l.account_name }}</td>
+        <td class="r">{{ l.debit|money if l.debit else '—' }}</td>
+        <td class="r">{{ l.credit|money if l.credit else '—' }}</td></tr>
+      {% endfor %}
+      <tr class="sum"><td>合計</td><td class="r">{{ v.total_debit|money }}</td><td class="r">{{ v.total_credit|money }}</td></tr>
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="muted">還沒有分錄。記一筆進貨或營運費用,存檔確認後就會出現在這裡。</p>
+{% endfor %}
+{% endblock %}
