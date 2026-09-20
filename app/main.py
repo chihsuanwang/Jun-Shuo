@@ -1579,12 +1579,175 @@ async def finance_expense_confirm(request: Request):
     return RedirectResponse("/finance/expenses", status_code=303)
 
 
-# ---------- 總帳(進貨/營運費用/訂單 自動過帳)-------------
+# ---------- 9 宮格 B 類:首頁入口 ----------------------------
+ENTRY_CARDS = [
+    dict(tag="A類・既有", title="銷售 / 出貨", href="/orders/new", desc="開一張訂單,存檔就自動記應收帳款/銷貨收入。"),
+    dict(tag="A類・既有", title="採購物料", href="/purchases/new", desc="原料/包材/委外/服務進貨,存檔前會給你看一次分錄。"),
+    dict(tag="A類・既有", title="營運支出", href="/finance/expenses/new", desc="逐月費用登記,存檔前會給你看一次分錄。"),
+    dict(tag="A類・既有", title="設備相關", href="/assets/new", desc="機器/器具採購,建固定資產卡(這批還不記分錄)。"),
+    dict(tag="B類・新", title="生產入庫", href="/stock#produce", desc="農產品/蜂蜜做好入庫,登記數量+價值。"),
+    dict(tag="B類・新", title="其他收益", href="/other-income/new", desc="利息收入、政府補助等非銷售的進帳。"),
+    dict(tag="B類・併入營運支出", title="其他費用", href="/finance/expenses/new", desc="勞務費/檢驗費/規費等雜項費用,類別選單裡挑。"),
+    dict(tag="B類・新", title="資本異動", href="/equity/new", desc="現金增資、盈餘轉列公積。"),
+    dict(tag="B類・新", title="帳務調整", href="/adjustments/new", desc="其他 8 類都套不上時,手動指定一組借/貸科目。"),
+]
+
+@app.get("/entry", response_class=HTMLResponse)
+def entry_page(request: Request):
+    return tpl.TemplateResponse("entry.html", dict(request=request, active="entry", cards=ENTRY_CARDS))
+
+
+# ---------- 9 宮格 B 類:其他收益 ----------------------------
+OTHER_INCOME_CATS = list(ledger.OTHER_INCOME_ACCOUNTS.keys())
+
+@app.get("/other-income", response_class=HTMLResponse)
+def other_income_list(request: Request):
+    rows = q("SELECT * FROM other_income ORDER BY income_date DESC, income_id DESC")
+    return tpl.TemplateResponse("other_income_list.html", dict(
+        request=request, active="other_income", rows=rows))
+
+def _other_income_form_ctx(request, r):
+    return dict(request=request, active="other_income", r=r, cats=OTHER_INCOME_CATS)
+
+@app.get("/other-income/new", response_class=HTMLResponse)
+def other_income_new(request: Request):
+    return tpl.TemplateResponse("other_income_form.html", _other_income_form_ctx(request, None))
+
+@app.get("/other-income/{iid}/edit", response_class=HTMLResponse)
+def other_income_edit(request: Request, iid: int):
+    r = q("SELECT * FROM other_income WHERE income_id=?", (iid,))
+    if not r:
+        return RedirectResponse("/other-income", status_code=303)
+    return tpl.TemplateResponse("other_income_form.html", _other_income_form_ctx(request, r[0]))
+
+@app.post("/other-income")
+async def other_income_save(request: Request):
+    f = await request.form()
+    g = lambda k: (f.get(k) or "").strip() or None
+    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
+    iid = f.get("income_id")
+    if f.get("_delete") and iid:
+        execute("DELETE FROM other_income WHERE income_id=?", (int(iid),))
+        ledger.delete_voucher_for("other_income", int(iid))
+        return RedirectResponse("/other-income", status_code=303)
+    date = (f.get("income_date") or "").strip()
+    cat = g("category")
+    if not (date and cat):
+        return RedirectResponse("/other-income", status_code=303)
+    cols = dict(income_date=date, category=cat, amount=fl("amount"), tax_amount=fl("tax_amount"),
+                payment_account=g("payment_account"), note=g("note"))
+    if iid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE other_income SET {sets} WHERE income_id=:id", {**cols, "id": int(iid)})
+        new_id = int(iid)
+    else:
+        keys = ",".join(cols)
+        new_id = execute(f"INSERT INTO other_income({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+    legs = ledger.compose_other_income_entries(cat, cols["amount"], cols["tax_amount"], cols["payment_account"])
+    ledger.save_voucher("other_income", new_id, date, legs, "I", note=f"其他收益:{cat}")
+    return RedirectResponse("/other-income", status_code=303)
+
+
+# ---------- 9 宮格 B 類:資本異動 ----------------------------
+@app.get("/equity", response_class=HTMLResponse)
+def equity_list(request: Request):
+    rows = q("SELECT * FROM equity_txn ORDER BY txn_date DESC, txn_id DESC")
+    return tpl.TemplateResponse("equity_list.html", dict(request=request, active="equity", rows=rows))
+
+@app.get("/equity/new", response_class=HTMLResponse)
+def equity_new(request: Request):
+    return tpl.TemplateResponse("equity_form.html", dict(request=request, active="equity", r=None))
+
+@app.get("/equity/{tid}/edit", response_class=HTMLResponse)
+def equity_edit(request: Request, tid: int):
+    r = q("SELECT * FROM equity_txn WHERE txn_id=?", (tid,))
+    if not r:
+        return RedirectResponse("/equity", status_code=303)
+    return tpl.TemplateResponse("equity_form.html", dict(request=request, active="equity", r=r[0]))
+
+@app.post("/equity")
+async def equity_save(request: Request):
+    f = await request.form()
+    g = lambda k: (f.get(k) or "").strip() or None
+    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
+    tid = f.get("txn_id")
+    if f.get("_delete") and tid:
+        execute("DELETE FROM equity_txn WHERE txn_id=?", (int(tid),))
+        ledger.delete_voucher_for("equity", int(tid))
+        return RedirectResponse("/equity", status_code=303)
+    date = (f.get("txn_date") or "").strip()
+    ttype = g("txn_type")
+    if not (date and ttype):
+        return RedirectResponse("/equity", status_code=303)
+    cols = dict(txn_date=date, txn_type=ttype, amount=fl("amount"), payment_account=g("payment_account"),
+                note=g("note"))
+    if tid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE equity_txn SET {sets} WHERE txn_id=:id", {**cols, "id": int(tid)})
+        new_id = int(tid)
+    else:
+        keys = ",".join(cols)
+        new_id = execute(f"INSERT INTO equity_txn({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+    legs = ledger.compose_equity_entries(ttype, cols["amount"], cols["payment_account"])
+    ledger.save_voucher("equity", new_id, date, legs, "Q", note=f"資本異動:{ttype}")
+    return RedirectResponse("/equity", status_code=303)
+
+
+# ---------- 9 宮格 B 類:帳務調整(手動指定借/貸科目)---------
+@app.get("/adjustments", response_class=HTMLResponse)
+def adjustment_list(request: Request):
+    rows = q("SELECT * FROM manual_entry ORDER BY entry_date DESC, entry_id DESC")
+    return tpl.TemplateResponse("adjustment_list.html", dict(request=request, active="adjust", rows=rows))
+
+@app.get("/adjustments/new", response_class=HTMLResponse)
+def adjustment_new(request: Request):
+    return tpl.TemplateResponse("adjustment_form.html", dict(
+        request=request, active="adjust", r=None, accounts=ledger.ALL_ACCOUNTS))
+
+@app.get("/adjustments/{mid}/edit", response_class=HTMLResponse)
+def adjustment_edit(request: Request, mid: int):
+    r = q("SELECT * FROM manual_entry WHERE entry_id=?", (mid,))
+    if not r:
+        return RedirectResponse("/adjustments", status_code=303)
+    return tpl.TemplateResponse("adjustment_form.html", dict(
+        request=request, active="adjust", r=r[0], accounts=ledger.ALL_ACCOUNTS))
+
+@app.post("/adjustments")
+async def adjustment_save(request: Request):
+    f = await request.form()
+    g = lambda k: (f.get(k) or "").strip() or None
+    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
+    mid = f.get("entry_id")
+    if f.get("_delete") and mid:
+        execute("DELETE FROM manual_entry WHERE entry_id=?", (int(mid),))
+        ledger.delete_voucher_for("manual_adjustment", int(mid))
+        return RedirectResponse("/adjustments", status_code=303)
+    date = (f.get("entry_date") or "").strip()
+    debit_code, _, debit_name = (f.get("debit_account") or "").partition("|")
+    credit_code, _, credit_name = (f.get("credit_account") or "").partition("|")
+    if not (date and debit_code and credit_code):
+        return RedirectResponse("/adjustments", status_code=303)
+    cols = dict(entry_date=date, debit_code=debit_code, debit_name=debit_name,
+                credit_code=credit_code, credit_name=credit_name, amount=fl("amount"), note=g("note"))
+    if mid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE manual_entry SET {sets} WHERE entry_id=:id", {**cols, "id": int(mid)})
+        new_id = int(mid)
+    else:
+        keys = ",".join(cols)
+        new_id = execute(f"INSERT INTO manual_entry({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+    legs = ledger.compose_manual_entries(debit_code, debit_name, credit_code, credit_name, cols["amount"])
+    ledger.save_voucher("manual_adjustment", new_id, date, legs, "M", note=g("note"))
+    return RedirectResponse("/adjustments", status_code=303)
+
+
+# ---------- 總帳(進貨/營運費用/訂單/9宮格B類 自動過帳)-------
 @app.get("/ledger", response_class=HTMLResponse)
 def ledger_page(request: Request):
     src = request.query_params.get("source") or ""
     where, args = ["1=1"], []
-    if src in ("purchase", "op_expense", "order_sale", "order_payment"):
+    if src in ("purchase", "op_expense", "order_sale", "order_payment",
+               "production_in", "other_income", "equity", "manual_adjustment"):
         where.append("source_type=?"); args.append(src)
     rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
                  ORDER BY voucher_no DESC, entry_id""", args)
@@ -1723,8 +1886,33 @@ async def stock_move_delete(request: Request, mid: int):
     if r[0]["ref_order_id"]:
         return RedirectResponse("/stock/moves?perr=1", status_code=303)
     execute("DELETE FROM stock_move WHERE move_id=?", (mid,))
+    ledger.delete_voucher_for("production_in", mid)
     f = await request.form()
     return RedirectResponse(f.get("next") or "/stock/moves", status_code=303)
+
+
+# ---------- 9 宮格 B 類:生產入庫(有價值,會記分錄)---------
+@app.post("/stock/produce")
+async def stock_produce(request: Request):
+    f = await request.form()
+    try:
+        pid = int(f.get("product_id"))
+        qty = abs(float(f.get("qty") or 0))
+        amount = float(f.get("amount") or 0)
+    except (TypeError, ValueError):
+        return RedirectResponse("/stock", status_code=303)
+    if qty <= 0 or amount <= 0:
+        return RedirectResponse("/stock", status_code=303)
+    date = (f.get("move_date") or dt.date.today().isoformat()).strip()
+    note = (f.get("note") or "").strip() or None
+    move_id = execute("""INSERT INTO stock_move(move_date,product_id,qty,move_type,note)
+               VALUES(?,?,?,'生產入庫',?)""", (date, pid, qty, note))
+    pg = q1("""SELECT pg.name pg_name FROM product p
+               LEFT JOIN product_group pg ON pg.pg_id = p.product_group_id
+               WHERE p.product_id=?""", (pid,))
+    legs = ledger.compose_production_in_entries(pg.get("pg_name") if pg else None, amount)
+    ledger.save_voucher("production_in", move_id, date, legs, "F", note=note)
+    return RedirectResponse("/stock", status_code=303)
 
 
 # ---------- 出貨作業:揀貨單 / 標籤 / 食品標示 ---------------
