@@ -1123,6 +1123,7 @@ async def order_create(request: Request):
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal)
                    VALUES(?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up))
     sync_order_stock(oid)
+    _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
 
 
@@ -1138,6 +1139,23 @@ def sync_order_stock(oid):
         execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,ref_order_id)
                    VALUES(?,?,?,?,?,?)""",
                 (d, l["product_id"], l["batch_id"], -abs(l["qty"] or 0), mtype, oid))
+
+
+def _post_order_ledger(oid):
+    """訂單存檔/標記已收款後呼叫:重開 order_sale(成立分錄)+ order_payment(收款分錄)。
+    贈送/樣品等非「銷售」訂單、或還沒收到錢,對應那張就不會產生(ledger.save_voucher
+    在 legs 為空時只清空、不新增)。"""
+    o, lines = Q.order_get(oid)
+    if not o:
+        return
+    sale_lines = [(l["pg_name"], l["line_subtotal"] or 0, (l["qty"] or 0) * (l["unit_cost"] or 0))
+                  for l in lines if not l["is_gift"]]
+    sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"])
+    ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, "S", note=f"訂單 {o['order_no']}")
+
+    pay_legs = ledger.compose_order_payment_entries(o["paid_amount"], o["payment_account"])
+    pay_date = o["paid_date"] or o["order_date"]
+    ledger.save_voucher("order_payment", oid, pay_date, pay_legs, "R", note=f"訂單 {o['order_no']} 收款")
 
 
 # ---------- 訂單管理:清單 / 明細 / 更新 -----------------------
@@ -1306,6 +1324,7 @@ async def order_update(request: Request, oid: int):
     sets = ",".join(f'{k}=:{k}' for k in cols)
     execute(f'UPDATE "order" SET {sets} WHERE order_id=:id', {**cols, "id": oid})
     sync_order_stock(oid)
+    _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
 
 @app.post("/orders/{oid}/copy")
@@ -1328,6 +1347,7 @@ def order_copy(oid: int):
                  l["list_price"], 0 if l["is_gift"] else l["qty"] * l["unit_price"], l["is_gift"]))
     execute('UPDATE "order" SET order_total=? WHERE order_id=?', (subtotal, noid))
     sync_order_stock(noid)
+    _post_order_ledger(noid)
     return RedirectResponse(f"/orders/{noid}?ok=1", status_code=303)
 
 @app.post("/orders/{oid}/delete")
@@ -1339,6 +1359,8 @@ def order_delete(oid: int):
     execute("DELETE FROM shipment_issue WHERE order_id=?", (oid,))
     execute("UPDATE shipment_issue SET linked_reship_order_id=NULL WHERE linked_reship_order_id=?", (oid,))
     execute("UPDATE review_queue SET resolved_order_id=NULL WHERE resolved_order_id=?", (oid,))
+    ledger.delete_voucher_for("order_sale", oid)
+    ledger.delete_voucher_for("order_payment", oid)
     execute('DELETE FROM "order" WHERE order_id=?', (oid,))  # order_line / sales_return 靠 ON DELETE CASCADE 一起清掉
     return RedirectResponse("/orders?deleted=1", status_code=303)
 
@@ -1359,6 +1381,7 @@ async def order_mark_paid(request: Request, oid: int):
     status = "已收款" if amt >= (o["order_total"] or 0) - 0.5 else "部分收款"
     execute("""UPDATE "order" SET payment_status=?, paid_date=?, paid_amount=?
                WHERE order_id=?""", (status, pdate, amt, oid))
+    _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?done=paid", status_code=303)
 
 @app.post("/orders/{oid}/shipped")
