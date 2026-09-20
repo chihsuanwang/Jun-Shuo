@@ -19,9 +19,20 @@ h1,h2,h3,.serif{font-family:"Noto Serif TC","Noto Sans TC",serif}
 .bname{font-weight:900;font-size:16px;letter-spacing:1px}
 .bsub{font-size:11px;color:var(--ink-3);letter-spacing:2px}
 .side nav{display:flex;flex-direction:column;gap:1px;font-size:13px}
-.side nav a{padding:7px 11px;border-radius:7px;color:var(--ink-2)}
+.side nav a{display:block;padding:7px 11px;border-radius:7px;color:var(--ink-2)}
 .side nav a.on{background:var(--seal);color:#FBF6EA;font-weight:700}
 .navgroup{font-size:10px;color:var(--ink-3);letter-spacing:2px;margin:10px 0 2px;padding-left:11px}
+.side nav details{margin-top:4px;display:flex;flex-direction:column;gap:1px}
+.side nav details > summary{list-style:none;cursor:pointer;font-size:10px;color:var(--ink-3);
+  letter-spacing:2px;margin:10px 0 2px;padding:2px 11px;display:flex;align-items:center;gap:5px;
+  border-radius:6px}
+.side nav details > summary:hover{color:var(--ink-2)}
+.side nav details > summary::-webkit-details-marker{display:none}
+.side nav details > summary::before{content:'▸';font-size:9px;width:9px}
+.side nav details[open] > summary::before{content:'▾'}
+.side nav .hub{display:flex;align-items:center;gap:7px;font-weight:700;color:var(--seal);
+  border:1px dashed var(--seal)}
+.side nav .hub:hover{background:var(--warn-bg)}
 .foot{margin-top:auto;border-top:1px solid var(--rule);padding-top:14px;font-size:11px;color:var(--ink-3);line-height:1.7}
 .main{flex:1;padding:28px 36px 40px;min-width:0}
 .stamp{margin-top:26px;text-align:center;font-size:11px;color:var(--ink-3);letter-spacing:2px}
@@ -106,6 +117,9 @@ button.ghost{background:none;color:var(--ink-2);border:1px solid var(--rule)}
   .side nav { flex-direction: row; flex-wrap: wrap; gap: 6px; }
   .side nav a { padding: 8px 12px; }
   .navgroup { width: 100%; margin: 6px 0 0; padding: 0; }
+  .side nav details { width: 100%; }
+  .side nav details > summary { padding-left: 0; }
+  .side nav .hub { width: 100%; justify-content: center; }
   .side .foot { display: none; }
   .main { padding: 20px 18px 32px; }
   .head { flex-wrap: wrap; gap: 12px; }

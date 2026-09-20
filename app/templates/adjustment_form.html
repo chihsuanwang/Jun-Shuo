@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ '編輯帳務調整' if r else '新增帳務調整' }} · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup"><a href="/adjustments">帳務調整</a> / {{ '編輯' if r else '新增' }}</div>
+  <h1 class="serif">{{ '編輯帳務調整' if r else '新增一筆帳務調整' }}</h1>
+</div></div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">
+  挑一個借方科目、一個貸方科目、填金額——系統直接記這一借一貸,不會另外加稅額或現金腳。
+</p>
+
+<form method="post" action="/adjustments">
+{% if r %}<input type="hidden" name="entry_id" value="{{ r.entry_id }}">{% endif %}
+<div class="card" style="max-width:680px">
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div><label>日期</label><input type="date" name="entry_date" value="{{ r.entry_date if r else '' }}" required></div>
+    <div><label>金額</label><input name="amount" type="number" step="1" value="{{ r.amount|round(0) if r else '' }}" required></div>
+    <div><label>借方科目</label><select name="debit_account" required>
+      <option value="">—</option>
+      {% for code, name in accounts %}
+      <option value="{{ code }}|{{ name }}" {{ 'selected' if r and r.debit_code == code }}>{{ code }} {{ name }}</option>
+      {% endfor %}
+    </select></div>
+    <div><label>貸方科目</label><select name="credit_account" required>
+      <option value="">—</option>
+      {% for code, name in accounts %}
+      <option value="{{ code }}|{{ name }}" {{ 'selected' if r and r.credit_code == code }}>{{ code }} {{ name }}</option>
+      {% endfor %}
+    </select></div>
+  </div>
+  <div style="margin-top:12px"><label>備註(建議寫清楚為什麼要調整)</label><input name="note" value="{{ (r.note or '') if r else '' }}"></div>
+  <div style="margin-top:16px">
+    <button type="submit">儲存</button>
+    <a href="/adjustments" style="margin-left:12px">取消</a>
+    {% if r %}
+    <button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
+            onclick="return confirm('刪除這筆帳務調整?')">刪除</button>
+    {% endif %}
+  </div>
+</div>
+</form>
+{% endblock %}

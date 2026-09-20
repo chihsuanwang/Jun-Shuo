@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ '編輯資本異動' if r else '新增資本異動' }} · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup"><a href="/equity">資本異動</a> / {{ '編輯' if r else '新增' }}</div>
+  <h1 class="serif">{{ '編輯資本異動' if r else '新增一筆資本異動' }}</h1>
+</div></div>
+<hr class="rule">
+
+<form method="post" action="/equity">
+{% if r %}<input type="hidden" name="txn_id" value="{{ r.txn_id }}">{% endif %}
+<div class="card" style="max-width:680px">
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div><label>日期</label><input type="date" name="txn_date" value="{{ r.txn_date if r else '' }}" required></div>
+    <div><label>類型</label><select name="txn_type" required>
+      <option value="現金增資" {{ 'selected' if r and r.txn_type=='現金增資' }}>現金增資(借現金 / 貸股本)</option>
+      <option value="盈餘轉列公積" {{ 'selected' if r and r.txn_type=='盈餘轉列公積' }}>盈餘轉列公積(借累積盈虧 / 貸法定盈餘公積)</option>
+    </select></div>
+    <div><label>金額</label><input name="amount" type="number" step="1" value="{{ r.amount|round(0) if r else '' }}" required></div>
+    <div><label>付款帳戶(現金增資才有意義)</label>
+      <input name="payment_account" value="{{ (r.payment_account or '') if r else '' }}" placeholder="現金">
+    </div>
+  </div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (r.note or '') if r else '' }}"></div>
+  <div style="margin-top:16px">
+    <button type="submit">儲存</button>
+    <a href="/equity" style="margin-left:12px">取消</a>
+    {% if r %}
+    <button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
+            onclick="return confirm('刪除這筆資本異動?')">刪除</button>
+    {% endif %}
+  </div>
+</div>
+</form>
+{% endblock %}

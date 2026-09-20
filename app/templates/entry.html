@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}記一筆 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 記一筆</div><h1 class="serif">要記哪一種?</h1></div>
+</div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 18px">
+  9 種交易類型,點進去照原本的畫面填就好,系統會自動記進<a href="/ledger">總帳</a>。
+</p>
+
+<div class="grid" style="grid-template-columns:repeat(3,1fr)">
+  {% for c in cards %}
+  <a href="{{ c.href }}" class="card" style="display:block;text-decoration:none;min-height:96px">
+    <div style="font-size:11px;letter-spacing:2px;color:var(--ink-3)">{{ c.tag }}</div>
+    <h3 class="serif" style="margin:6px 0 5px;color:var(--ink)">{{ c.title }}</h3>
+    <div class="muted" style="font-size:12px;line-height:1.5">{{ c.desc }}</div>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

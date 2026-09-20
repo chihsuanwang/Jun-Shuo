@@ -26,6 +26,23 @@
 </div>
 
 <div class="grid" style="grid-template-columns:1fr 1fr">
+  <div class="card" id="produce">
+    <h3 class="serif">生產入庫(登記價值,會記分錄)</h3>
+    <form method="post" action="/stock/produce">
+      <div class="grid" style="grid-template-columns:1fr 1fr">
+        <div><label>日期</label><input type="date" name="move_date"></div>
+        <div><label>商品</label><select name="product_id" required>
+          {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
+        </select></div>
+        <div><label>數量(入庫,正數)</label><input name="qty" type="number" step="1" min="0" required></div>
+        <div><label>入庫總價值</label><input name="amount" type="number" step="1" min="0" required></div>
+        <div style="grid-column:1/-1"><label>備註</label><input name="note" placeholder="例:9 月第一批龍眼乾"></div>
+      </div>
+      <p class="muted" style="font-size:11px;margin-top:8px">借:存貨(依商品的產品線)/貸:其他利益。總帳看得到這筆分錄。</p>
+      <div style="margin-top:6px"><button type="submit">登錄生產入庫</button></div>
+    </form>
+  </div>
+
   <div class="card">
     <h3 class="serif">分裝入庫 / 期初 / 退貨入庫</h3>
     <form method="post" action="/stock/move">

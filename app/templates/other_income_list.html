@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}其他收益 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/entry">記一筆</a> / 其他收益</div><h1 class="serif">其他收益</h1></div>
+  <a href="/other-income/new"><button>＋ 新增一筆</button></a>
+</div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">不屬於訂單銷售的進帳,例如利息收入、政府補助款。</p>
+
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead><tr><th>日期</th><th>項目</th><th data-num>金額</th><th data-num>稅額</th><th>收款帳戶</th><th>備註</th><th></th></tr></thead>
+    <tbody>{% for r in rows %}
+    <tr>
+      <td>{{ r.income_date }}</td>
+      <td>{{ r.category }}</td>
+      <td>{{ r.amount|money }}</td>
+      <td>{{ r.tax_amount|money if r.tax_amount else '—' }}</td>
+      <td class="muted">{{ r.payment_account or '現金' }}</td>
+      <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
+      <td><a href="/other-income/{{ r.income_id }}/edit">編輯</a></td>
+    </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endblock %}

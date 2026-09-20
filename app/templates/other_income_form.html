@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ '編輯其他收益' if r else '新增其他收益' }} · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup"><a href="/other-income">其他收益</a> / {{ '編輯' if r else '新增' }}</div>
+  <h1 class="serif">{{ '編輯其他收益' if r else '新增一筆其他收益' }}</h1>
+</div></div>
+<hr class="rule">
+
+<form method="post" action="/other-income">
+{% if r %}<input type="hidden" name="income_id" value="{{ r.income_id }}">{% endif %}
+<div class="card" style="max-width:680px">
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div><label>日期</label><input type="date" name="income_date" value="{{ r.income_date if r else '' }}" required></div>
+    <div><label>項目</label><select name="category" required>
+      {% for c in cats %}<option {{ 'selected' if r and r.category == c }}>{{ c }}</option>{% endfor %}
+    </select></div>
+    <div><label>金額</label><input name="amount" type="number" step="1" value="{{ r.amount|round(0) if r else '' }}" required></div>
+    <div><label>銷項稅額(沒有留 0)</label>
+      <input name="tax_amount" type="number" step="1" min="0" value="{{ r.tax_amount|round(0) if r and r.tax_amount else 0 }}"></div>
+    <div><label>收款帳戶</label>
+      <input name="payment_account" value="{{ (r.payment_account or '') if r else '' }}" placeholder="現金">
+      <div class="muted" style="font-size:11px;margin-top:3px">留白 = 現金;要記銀行帳戶就打帳戶名(例:合庫)</div>
+    </div>
+  </div>
+  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (r.note or '') if r else '' }}"></div>
+  <div style="margin-top:16px">
+    <button type="submit">儲存</button>
+    <a href="/other-income" style="margin-left:12px">取消</a>
+    {% if r %}
+    <button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
+            onclick="return confirm('刪除這筆其他收益?')">刪除</button>
+    {% endif %}
+  </div>
+</div>
+</form>
+{% endblock %}

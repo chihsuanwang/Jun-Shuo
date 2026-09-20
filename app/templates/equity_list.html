@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}資本異動 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/entry">記一筆</a> / 資本異動</div><h1 class="serif">資本異動</h1></div>
+  <a href="/equity/new"><button>＋ 新增一筆</button></a>
+</div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">現金增資、盈餘轉列法定盈餘公積這類股東權益異動,很少發生才會用到。</p>
+
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead><tr><th>日期</th><th>類型</th><th data-num>金額</th><th>帳戶</th><th>備註</th><th></th></tr></thead>
+    <tbody>{% for r in rows %}
+    <tr>
+      <td>{{ r.txn_date }}</td>
+      <td>{{ r.txn_type }}</td>
+      <td>{{ r.amount|money }}</td>
+      <td class="muted">{{ r.payment_account or '—' }}</td>
+      <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
+      <td><a href="/equity/{{ r.txn_id }}/edit">編輯</a></td>
+    </tr>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endblock %}

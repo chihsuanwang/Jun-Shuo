@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="桂圓帳房">
 <link rel="apple-touch-icon" href="/static/icon-180.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="/static/app.css?v=18">
+<link rel="stylesheet" href="/static/app.css?v=21">
 </head>
 <body>
 <div class="shell">
@@ -21,28 +21,39 @@
       <div><div class="serif bname">桂圓帳房</div><div class="bsub">郡碩農創 · 中寮</div></div>
     </div>
     <nav>
-      <a href="/"          class="{{ 'on' if active=='dash' }}">儀表板</a>
+      <a href="/"       class="{{ 'on' if active=='dash' }}">儀表板</a>
+      <a href="/entry"  class="hub {{ 'on' if active=='entry' }}">＋ 記一筆(九宮格)</a>
 
-      <div class="navgroup">每天做的</div>
-      <a href="/orders"    class="{{ 'on' if active=='order' }}">訂單</a>
-      <a href="/shipping"  class="{{ 'on' if active=='ship' }}">出貨作業</a>
-      <a href="/purchases" class="{{ 'on' if active=='purchase' }}">進貨</a>
-      <a href="/returns"   class="{{ 'on' if active=='returns' }}">退貨 / 折讓</a>
-      <a href="/finance/expenses" class="{{ 'on' if active=='expenses' }}">營運費用</a>
+      <details open data-key="daily">
+        <summary>每天做的</summary>
+        <a href="/orders"    class="{{ 'on' if active=='order' }}">訂單</a>
+        <a href="/purchases" class="{{ 'on' if active=='purchase' }}">進貨</a>
+        <a href="/finance/expenses" class="{{ 'on' if active=='expenses' }}">營運費用</a>
+      </details>
 
-      <div class="navgroup">看數字</div>
-      <a href="/finance"   class="{{ 'on' if active=='finance' }}">財務健康</a>
-      <a href="/reports"   class="{{ 'on' if active=='report' }}">獲利報表</a>
-      <a href="/pricing"   class="{{ 'on' if active=='pricing' }}">定價試算</a>
-      <a href="/ledger"    class="{{ 'on' if active=='ledger' }}">總帳</a>
+      <details open data-key="ship">
+        <summary>出貨 / 退貨</summary>
+        <a href="/shipping"  class="{{ 'on' if active=='ship' }}">出貨作業</a>
+        <a href="/returns"   class="{{ 'on' if active=='returns' }}">退貨 / 折讓</a>
+      </details>
 
-      <div class="navgroup">設定一次的</div>
-      <a href="/customers" class="{{ 'on' if active=='cust' }}">客戶資料庫</a>
-      <a href="/products"  class="{{ 'on' if active=='prod' }}">商品目錄</a>
-      <a href="/suppliers" class="{{ 'on' if active=='supplier' }}">供應商</a>
-      <a href="/channels"  class="{{ 'on' if active=='chan' }}">銷售管道</a>
-      <a href="/stock"     class="{{ 'on' if active=='stock' }}">庫存</a>
-      <a href="/assets"    class="{{ 'on' if active=='asset' }}">固定資產</a>
+      <details data-key="numbers">
+        <summary>看數字</summary>
+        <a href="/finance"   class="{{ 'on' if active=='finance' }}">財務健康</a>
+        <a href="/reports"   class="{{ 'on' if active=='report' }}">獲利報表</a>
+        <a href="/pricing"   class="{{ 'on' if active=='pricing' }}">定價試算</a>
+        <a href="/ledger"    class="{{ 'on' if active=='ledger' }}">總帳</a>
+      </details>
+
+      <details data-key="setup">
+        <summary>設定一次的</summary>
+        <a href="/customers" class="{{ 'on' if active=='cust' }}">客戶資料庫</a>
+        <a href="/products"  class="{{ 'on' if active=='prod' }}">商品目錄</a>
+        <a href="/suppliers" class="{{ 'on' if active=='supplier' }}">供應商</a>
+        <a href="/channels"  class="{{ 'on' if active=='chan' }}">銷售管道</a>
+        <a href="/stock"     class="{{ 'on' if active=='stock' }}">庫存</a>
+        <a href="/assets"    class="{{ 'on' if active=='asset' }}">固定資產</a>
+      </details>
     </nav>
   </aside>
   <main class="main">
@@ -50,5 +61,19 @@
     <div class="stamp">桂圓帳房 · 測試版 · 畫面數字目前為示範假資料</div>
   </main>
 </div>
+<script>
+(function () {
+  document.querySelectorAll('nav details[data-key]').forEach(function (d) {
+    var key = 'navopen:' + d.dataset.key;
+    try {
+      var saved = localStorage.getItem(key);
+      if (saved !== null) d.open = saved === '1';
+    } catch (e) {}
+    d.addEventListener('toggle', function () {
+      try { localStorage.setItem(key, d.open ? '1' : '0'); } catch (e) {}
+    });
+  });
+})();
+</script>
 </body>
 </html>

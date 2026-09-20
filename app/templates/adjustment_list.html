@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}帳務調整 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/entry">記一筆</a> / 帳務調整</div><h1 class="serif">帳務調整</h1></div>
+  <a href="/adjustments/new"><button>＋ 新增一筆</button></a>
+</div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">
+  其他 8 類都套不上的例外狀況,直接指定一組借/貸科目手動記一筆。用不到就不用管這頁。
+</p>
+
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead><tr><th>日期</th><th>借方</th><th>貸方</th><th data-num>金額</th><th>備註</th><th></th></tr></thead>
+    <tbody>{% for r in rows %}
+    <tr>
+      <td>{{ r.entry_date }}</td>
+      <td>{{ r.debit_code }} {{ r.debit_name }}</td>
+      <td>{{ r.credit_code }} {{ r.credit_name }}</td>
+      <td>{{ r.amount|money }}</td>
+      <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
+      <td><a href="/adjustments/{{ r.entry_id }}/edit">編輯</a></td>
+    </tr>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endblock %}

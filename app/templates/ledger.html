@@ -7,9 +7,9 @@
 </div></div>
 <hr class="rule">
 <p class="muted" style="font-size:13px;margin:-4px 0 14px">
-  進貨、營運費用、訂單存檔時,依對照表自動組出的分錄。進貨/費用要改分錄,回去編輯來源那筆
-  重新確認一次即可;訂單的分錄是背景自動記的,改訂單內容或標記已收款就會自動更新。
-  這裡都不能直接改。
+  進貨、營運費用、訂單、以及生產入庫/其他收益/資本異動/帳務調整這幾個新畫面存檔時,依對照表
+  自動組出的分錄。進貨/費用要改分錄,回去編輯來源那筆重新確認一次即可;其他都是背景自動記的,
+  改來源內容就會自動更新。這裡都不能直接改。
 </p>
 
 <form method="get" action="/ledger" style="display:flex;gap:10px;margin-bottom:14px">
@@ -19,6 +19,10 @@
     <option value="op_expense" {{ 'selected' if src == 'op_expense' }}>營運費用</option>
     <option value="order_sale" {{ 'selected' if src == 'order_sale' }}>訂單成立</option>
     <option value="order_payment" {{ 'selected' if src == 'order_payment' }}>訂單收款</option>
+    <option value="production_in" {{ 'selected' if src == 'production_in' }}>生產入庫</option>
+    <option value="other_income" {{ 'selected' if src == 'other_income' }}>其他收益</option>
+    <option value="equity" {{ 'selected' if src == 'equity' }}>資本異動</option>
+    <option value="manual_adjustment" {{ 'selected' if src == 'manual_adjustment' }}>帳務調整</option>
   </select>
 </form>
 
@@ -27,7 +31,9 @@
   <div style="display:flex;justify-content:space-between;align-items:baseline">
     <div><b>{{ v.voucher_no }}</b>
       <span class="muted" style="font-size:12px;margin-left:8px">
-        {{ {'purchase':'進貨','op_expense':'營運費用','order_sale':'訂單成立','order_payment':'訂單收款'}[v.source_type] }}
+        {{ {'purchase':'進貨','op_expense':'營運費用','order_sale':'訂單成立','order_payment':'訂單收款',
+            'production_in':'生產入庫','other_income':'其他收益','equity':'資本異動',
+            'manual_adjustment':'帳務調整'}[v.source_type] }}
         · {{ v.entry_date }}
       </span></div>
     <div class="muted" style="font-size:12px">{{ v.note or '' }}</div>
