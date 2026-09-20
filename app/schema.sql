@@ -345,10 +345,52 @@ CREATE TABLE ledger_entry (
   account_name TEXT NOT NULL,
   debit        REAL NOT NULL DEFAULT 0,
   credit       REAL NOT NULL DEFAULT 0,
-  source_type  TEXT NOT NULL CHECK (source_type IN ('purchase','op_expense','order_sale','order_payment')),
+  source_type  TEXT NOT NULL CHECK (source_type IN ('purchase','op_expense','order_sale','order_payment',
+                 'production_in','other_income','equity','manual_adjustment')),
   source_id    INTEGER NOT NULL,       -- 對應 purchase.purchase_id 或 op_expense.expense_id
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX ix_ledger_voucher ON ledger_entry(voucher_no);
 CREATE INDEX ix_ledger_source  ON ledger_entry(source_type, source_id);
+
+-- 20. 其他收益(9 宮格 B 類,2026-09) ---------------------------------
+--     不屬於訂單銷售的現金收入,例:利息收入、政府補助收入。
+CREATE TABLE other_income (
+  income_id       INTEGER PRIMARY KEY,
+  income_date     TEXT NOT NULL,
+  category        TEXT NOT NULL,          -- 利息收入 / 政府補助收入 / 其他
+  amount          REAL NOT NULL DEFAULT 0,
+  tax_amount      REAL NOT NULL DEFAULT 0,   -- 銷項稅額(通常沒有,留 0)
+  payment_account TEXT,                    -- 用哪個帳戶收款(自由文字,例:現金 / 合庫)
+  note            TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX ix_oinc_date ON other_income(income_date);
+
+-- 21. 資本異動(9 宮格 B 類,2026-09) ---------------------------------
+CREATE TABLE equity_txn (
+  txn_id          INTEGER PRIMARY KEY,
+  txn_date        TEXT NOT NULL,
+  txn_type        TEXT NOT NULL CHECK (txn_type IN ('現金增資','盈餘轉列公積')),
+  amount          REAL NOT NULL DEFAULT 0,
+  payment_account TEXT,                    -- 現金增資才有意義
+  note            TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX ix_equity_date ON equity_txn(txn_date);
+
+-- 22. 帳務調整(9 宮格 B 類,2026-09) ---------------------------------
+--     其他 8 類都涵蓋不到的例外狀況,直接指定一組借/貸科目手動記一筆。
+CREATE TABLE manual_entry (
+  entry_id     INTEGER PRIMARY KEY,
+  entry_date   TEXT NOT NULL,
+  debit_code   TEXT NOT NULL,
+  debit_name   TEXT NOT NULL,
+  credit_code  TEXT NOT NULL,
+  credit_name  TEXT NOT NULL,
+  amount       REAL NOT NULL DEFAULT 0,
+  note         TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX ix_manual_date ON manual_entry(entry_date);

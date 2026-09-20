@@ -6,11 +6,15 @@ app/schema.sql 的 ledger_entry(總帳)。
 - 訂單 / 銷售(回合二):不經過確認畫面,存檔時背景自動記——訂單是最高頻操作,
   不想多插一個步驟。一張訂單對到兩張獨立傳票:成立時記的 order_sale(應收帳款/
   銷貨收入/銷貨成本/存貨,不管收沒收到錢)、收款時記的 order_payment(現金/應收帳款,
-  只在有實收金額時才有)。固定資產購入、折舊、銷貨退回這幾類還沒接,留到之後。
+  只在有實收金額時才有)。
+- 9 宮格 B 類(回合三):生產入庫 / 其他收益 / 資本異動 / 帳務調整,一樣不經過確認畫面
+  ——這批是從零蓋的新畫面,欄位直接放在同一張表單裡,存檔即過帳。「其他費用」沒有另開
+  畫面,併進「營運費用」既有畫面的類別下拉(EXPENSE_ACCOUNTS 補了對應子科目)。
+  固定資產購入、折舊、銷貨退回這幾類還沒接,留到之後。
 
-對照表(PURCHASE_ACCOUNTS / EXPENSE_ACCOUNTS / REVENUE_ACCOUNTS / COGS_INVENTORY_ACCOUNTS)
-是第一版、可調整的猜測,不是跟會計師/同事對過的正式科目表,之後要改直接改這個檔案的
-常數就好,比照 queries.OPEX_CATS 也是這樣讓人直接改的做法。
+對照表(PURCHASE_ACCOUNTS / EXPENSE_ACCOUNTS / REVENUE_ACCOUNTS / COGS_INVENTORY_ACCOUNTS /
+OTHER_INCOME_ACCOUNTS / EQUITY_* 等)是第一版、可調整的猜測,不是跟會計師/同事對過的正式
+科目表,之後要改直接改這個檔案的常數就好,比照 queries.OPEX_CATS 也是這樣讓人直接改的做法。
 """
 from db import q, execute
 
@@ -40,6 +44,17 @@ EXPENSE_ACCOUNTS = {
     "設備維護":   ("6160", "設備維護費"),
     "培訓":       ("6170", "培訓費"),
     "其他":       ("6190", "其他費用"),
+    # 9 宮格「其他費用」併進來的子科目(同事會計科目表 6188-01~10)
+    "其他費用-什項購置": ("6188-01", "其他費用-什項購置"),
+    "其他費用-勞務費":   ("6188-02", "其他費用-勞務費"),
+    "其他費用-設計費":   ("6188-03", "其他費用-設計費"),
+    "其他費用-手續費":   ("6188-04", "其他費用-手續費"),
+    "其他費用-交通費":   ("6188-05", "其他費用-交通費"),
+    "其他費用-包裝費":   ("6188-06", "其他費用-包裝費"),
+    "其他費用-檢驗費":   ("6188-07", "其他費用-檢驗費"),
+    "其他費用-印刷費":   ("6188-08", "其他費用-印刷費"),
+    "其他費用-規費":     ("6188-09", "其他費用-規費"),
+    "其他費用-燃料費":   ("6188-10", "其他費用-燃料費"),
 }
 
 # 應收帳款(訂單成立時的借方、收款時的貸方)
@@ -147,6 +162,112 @@ def compose_order_payment_entries(paid_amount, payment_account=None):
         dict(account_code=cash_code, account_name=cash_name, debit=paid_amount, credit=0),
         dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=0, credit=paid_amount),
     ]
+
+
+# ---------- 9 宮格 B 類(生產入庫 / 其他收益 / 資本異動 / 帳務調整)------
+
+# 生產入庫的貸方——同事表裡叫「淨FV利益」,會計科目表沒有專門科目,先掛在既有的「其他利益」
+PRODUCTION_GAIN_ACCOUNT = ("6498", "其他利益")
+
+# 其他收益的銷項稅額(貸方)——跟進貨/費用的進項稅額(借方)相對
+SALES_TAX_OUTPUT_ACCOUNT = ("2214", "銷項稅額")
+
+# 其他收益類別 -> 貸方收入科目
+OTHER_INCOME_ACCOUNTS = {
+    "利息收入":     ("4881-01", "其他營業收入-利息收入"),
+    "政府補助收入": ("4881-02", "其他營業收入-政府補助收入"),
+    "其他":         ("4881-09", "其他營業收入"),
+}
+
+# 資本異動科目
+EQUITY_STOCK_ACCOUNT    = ("3110", "普通股股本")
+EQUITY_RESERVE_ACCOUNT  = ("3310", "法定盈餘公積")   # 同事草稿有、正式科目表沒列,先照草稿放
+EQUITY_RETAINED_ACCOUNT = ("3351", "累積盈虧")
+
+
+def compose_production_in_entries(pg_name, amount):
+    """生產入庫:借存貨(依產品線)/貸其他利益。amount<=0 回傳空 list。"""
+    amount = amount or 0
+    if amount <= 0:
+        return []
+    code, name = COGS_INVENTORY_ACCOUNTS.get(pg_name, COGS_INVENTORY_DEFAULT)
+    return [
+        dict(account_code=code, account_name=name, debit=amount, credit=0),
+        dict(account_code=PRODUCTION_GAIN_ACCOUNT[0], account_name=PRODUCTION_GAIN_ACCOUNT[1],
+             debit=0, credit=amount),
+    ]
+
+
+def compose_other_income_entries(category, amount, tax_amount=0, payment_account=None):
+    """其他收益:借現金(含稅)/貸收入 + 貸銷項稅額(有稅才加)。"""
+    amount = amount or 0
+    tax_amount = tax_amount or 0
+    if amount <= 0 and tax_amount <= 0:
+        return []
+    code, name = OTHER_INCOME_ACCOUNTS.get(category, OTHER_INCOME_ACCOUNTS["其他"])
+    cash_code, cash_name = _cash_account(payment_account)
+    legs = [dict(account_code=cash_code, account_name=cash_name, debit=amount + tax_amount, credit=0),
+            dict(account_code=code, account_name=name, debit=0, credit=amount)]
+    if tax_amount:
+        legs.append(dict(account_code=SALES_TAX_OUTPUT_ACCOUNT[0], account_name=SALES_TAX_OUTPUT_ACCOUNT[1],
+                          debit=0, credit=tax_amount))
+    return legs
+
+
+def compose_equity_entries(txn_type, amount, payment_account=None):
+    """資本異動:現金增資(借現金/貸股本)、盈餘轉列公積(借累積盈虧/貸法定盈餘公積,
+    不涉及現金)。"""
+    amount = amount or 0
+    if amount <= 0:
+        return []
+    if txn_type == "現金增資":
+        cash_code, cash_name = _cash_account(payment_account)
+        return [
+            dict(account_code=cash_code, account_name=cash_name, debit=amount, credit=0),
+            dict(account_code=EQUITY_STOCK_ACCOUNT[0], account_name=EQUITY_STOCK_ACCOUNT[1],
+                 debit=0, credit=amount),
+        ]
+    if txn_type == "盈餘轉列公積":
+        return [
+            dict(account_code=EQUITY_RETAINED_ACCOUNT[0], account_name=EQUITY_RETAINED_ACCOUNT[1],
+                 debit=amount, credit=0),
+            dict(account_code=EQUITY_RESERVE_ACCOUNT[0], account_name=EQUITY_RESERVE_ACCOUNT[1],
+                 debit=0, credit=amount),
+        ]
+    return []
+
+
+def compose_manual_entries(debit_code, debit_name, credit_code, credit_name, amount):
+    """帳務調整:其他 8 類都涵蓋不到時,直接指定一組借/貸科目手動記一筆。"""
+    amount = amount or 0
+    if amount <= 0 or not (debit_code and credit_code):
+        return []
+    return [
+        dict(account_code=debit_code, account_name=debit_name, debit=amount, credit=0),
+        dict(account_code=credit_code, account_name=credit_name, debit=0, credit=amount),
+    ]
+
+
+def _all_accounts():
+    """攤平現有所有科目常數,去重、依代碼排序,給「帳務調整」畫面的科目下拉用。"""
+    pairs = [CASH_ACCOUNT, TAX_INPUT_ACCOUNT, AR_ACCOUNT, COGS_EXPENSE_ACCOUNT,
+             REVENUE_DEFAULT, COGS_INVENTORY_DEFAULT, PRODUCTION_GAIN_ACCOUNT,
+             SALES_TAX_OUTPUT_ACCOUNT, EQUITY_STOCK_ACCOUNT, EQUITY_RESERVE_ACCOUNT,
+             EQUITY_RETAINED_ACCOUNT]
+    for d in (PURCHASE_ACCOUNTS, EXPENSE_ACCOUNTS, REVENUE_ACCOUNTS,
+              COGS_INVENTORY_ACCOUNTS, OTHER_INCOME_ACCOUNTS):
+        pairs.extend(d.values())
+    seen, out = set(), []
+    for code, name in pairs:
+        if code in seen:
+            continue
+        seen.add(code)
+        out.append((code, name))
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+ALL_ACCOUNTS = _all_accounts()
 
 
 def next_voucher_no(prefix, date):
