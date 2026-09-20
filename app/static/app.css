@@ -112,6 +112,28 @@ button.ghost{background:none;color:var(--ink-2);border:1px solid var(--rule)}
   .main .grid { grid-template-columns: 1fr !important; }
 }
 
+/* --- 手機(直式) --- */
+@media (max-width: 640px) {
+  .main { padding: 14px 11px 28px; }
+  .card { padding: 13px 12px; border-radius: 8px; }
+  .head h1 { font-size: 20px; }
+  .head .sup { font-size: 11px; letter-spacing: 2px; }
+  .side { padding: 11px 12px; gap: 10px; }
+  .side nav { gap: 5px; }
+  .side nav a { padding: 6px 10px; font-size: 12px; }
+  .brand .bsub { display: none; }
+
+  /* 表格:欄位多時在卡片內橫向捲動,不要把欄位擠爆換行 */
+  .main table { width: auto; min-width: 100%; }
+  .main table th, .main table td { white-space: nowrap; padding: 8px 9px; }
+  .main table th:first-child, .main table td:first-child { white-space: normal; }
+  table.pnl td { padding: 5px 0; }
+
+  /* 產季多選面板不要被切到螢幕外 */
+  .msel-panel { right: auto; left: 0; }
+  .filterbar { flex-wrap: wrap; row-gap: 6px; }
+}
+
 /* --- 列印(揀貨單 / 標籤 / 食品標示) --- */
 @media print {
   .side, .print-hide, .head a, .head button, nav { display: none !important; }
