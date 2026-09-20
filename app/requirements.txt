@@ -2,4 +2,4 @@ fastapi==0.115.6
 uvicorn==0.34.0
 jinja2==3.1.5
 python-multipart==0.0.20
-a2wsgi==1.10.8          # 只有用 WSGI 主機部署(PythonAnywhere 等)時才需要;本機 / exe 用不到。pip 找不到此版就裝最新的 1.x
+a2wsgi==1.10.8          # only needed for WSGI hosting (e.g. PythonAnywhere); not used for local/exe. pip installs latest 1.x if this exact version is unavailable
