@@ -679,16 +679,24 @@ SEG_MAP = {'零售': '零售', '批發': '批發', '團購主': '團購', '機�
 def products(request: Request):
     return tpl.TemplateResponse("products.html", dict(
         request=request, active="prod",
-        rows=q("SELECT * FROM product ORDER BY status, sku")))
+        rows=q("""SELECT p.*, pg.name pg_name FROM product p
+                  LEFT JOIN product_group pg ON pg.pg_id=p.product_group_id
+                  ORDER BY p.status, p.sku""")))
 
 def _price_map(pid):
     rows = q("SELECT customer_segment, unit_price FROM price_list WHERE product_id=? AND channel_id IS NULL", (pid,))
     return {r["customer_segment"]: r["unit_price"] for r in rows}
 
+def _pg_options():
+    """產品線下拉選項(事業 → 產品群組),給商品目錄表單挑「歸屬產品線」用。"""
+    return q("""SELECT g.pg_id, g.name, b.name bu_name
+                FROM product_group g JOIN business_unit b ON b.bu_id=g.bu_id
+                ORDER BY b.sort, g.sort, g.pg_id""")
+
 @app.get("/products/new", response_class=HTMLResponse)
 def product_new(request: Request):
     return tpl.TemplateResponse("product_form.html", dict(
-        request=request, active="prod", p=None, prices={},
+        request=request, active="prod", p=None, prices={}, groups=_pg_options(),
         segs=PRICE_SEGS, types=PROD_TYPES, forms=PKG_FORMS, uoms=UOMS, storage=STORAGE))
 
 def _product_delete_block_reason(pid):
@@ -719,7 +727,7 @@ def product_edit(request: Request, pid: int):
         return RedirectResponse("/products", status_code=303)
     block_reason = _product_delete_block_reason(pid) if request.query_params.get("perr") else None
     return tpl.TemplateResponse("product_form.html", dict(
-        request=request, active="prod", p=p[0], prices=_price_map(pid),
+        request=request, active="prod", p=p[0], prices=_price_map(pid), groups=_pg_options(),
         segs=PRICE_SEGS, types=PROD_TYPES, forms=PKG_FORMS, uoms=UOMS, storage=STORAGE,
         block_reason=block_reason))
 
@@ -739,6 +747,7 @@ async def product_save(request: Request):
     ig = lambda k: int(f.get(k)) if (f.get(k) or "").strip() else None
     cols = dict(sku=(f.get("sku") or "").strip(), name=(f.get("name") or "").strip(),
                 product_type=g("product_type"), type_code_raw=g("type_code_raw"),
+                product_group_id=ig("product_group_id"),
                 net_weight_g=ig("net_weight_g"), gross_weight_g=ig("gross_weight_g"),
                 package_form=g("package_form"), uom=(f.get("uom") or "包").strip(),
                 grams_per_uom=ig("grams_per_uom"), shelf_life_days=ig("shelf_life_days"),
@@ -1570,12 +1579,12 @@ async def finance_expense_confirm(request: Request):
     return RedirectResponse("/finance/expenses", status_code=303)
 
 
-# ---------- 總帳(方案B試點:進貨/營運費用自動過帳)-------------
+# ---------- 總帳(進貨/營運費用/訂單 自動過帳)-------------
 @app.get("/ledger", response_class=HTMLResponse)
 def ledger_page(request: Request):
     src = request.query_params.get("source") or ""
     where, args = ["1=1"], []
-    if src in ("purchase", "op_expense"):
+    if src in ("purchase", "op_expense", "order_sale", "order_payment"):
         where.append("source_type=?"); args.append(src)
     rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
                  ORDER BY voucher_no DESC, entry_id""", args)
