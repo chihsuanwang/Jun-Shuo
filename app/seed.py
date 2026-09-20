@@ -87,7 +87,7 @@ for p in products:
               (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10],
                ingredients, "南投中寮", status, low, pg[p[13]], p[14]))
     pid = c.lastrowid
-    prod[sku] = dict(id=pid, retail=p[11], wholesale=p[12], unit_cost=p[14], uom=p[7])
+    prod[sku] = dict(id=pid, retail=p[11], wholesale=p[12], unit_cost=p[14], uom=p[7], pg_name=p[13])
     for seg, price in (("零售", p[11]), ("批發", p[12]), ("團購", round(p[11] * 0.95)),
                        ("機構", p[11]), ("內部", 0)):
         c.execute("INSERT INTO price_list(product_id,customer_segment,unit_price) VALUES(?,?,?)",
@@ -180,6 +180,15 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
         c.execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,
                      line_discount,line_subtotal,is_gift) VALUES(?,?,?,?,?,?,?,?,?)""",
                   (oid, prod[sku]["id"], bid, qty, tier, tier, 0, sub, 1 if gift else 0))
+
+    # 記帳:訂單成立分錄 + 收款分錄(邏輯跟 main.py 的 _post_order_ledger 一致)
+    sale_lines = [(prod[sku]["pg_name"], 0 if gift else round(qty * price_of(sku, seg)),
+                   qty * prod[sku]["unit_cost"])
+                  for sku, qty, gift in lines if not gift]
+    sale_legs = ledger.compose_order_sale_entries(sale_lines, kind)
+    add_voucher("S", d.isoformat(), sale_legs, "order_sale", oid, f"訂單 S{order_no:04d}")
+    pay_legs = ledger.compose_order_payment_entries(paid_amount, "郵局" if pm == "銀行匯款" else None)
+    add_voucher("R", d.isoformat(), pay_legs, "order_payment", oid, f"訂單 S{order_no:04d} 收款")
     return oid
 
 # d, 客戶, 種類, 明細[(sku,數量,贈品)], 出貨方式, 收款狀態, 出貨狀態, 產季
