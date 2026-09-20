@@ -1,13 +1,16 @@
-"""方案 B 試點:進貨 / 營運費用 自動過帳。
+"""家易照舊填熟悉的業務表單,這裡依對照表把送出的內容組成一組複式分錄,自動記進
+app/schema.sql 的 ledger_entry(總帳)。
 
-家易照舊填熟悉的業務表單,這裡依對照表把送出的內容組成一組複式分錄草稿,
-存檔前在確認畫面給他看、可微調(app/templates/ledger_confirm.html)。
-只接「進貨」(排除設備採購,那走固定資產)跟「營運費用」——訂單、固定資產購入、
-折舊、退貨這批先不做。
+- 進貨 / 營運費用(方案 B 試點):存檔前在確認畫面給他看、可微調
+  (app/templates/ledger_confirm.html)。排除設備採購,那走固定資產,這批不記分錄。
+- 訂單 / 銷售(回合二):不經過確認畫面,存檔時背景自動記——訂單是最高頻操作,
+  不想多插一個步驟。一張訂單對到兩張獨立傳票:成立時記的 order_sale(應收帳款/
+  銷貨收入/銷貨成本/存貨,不管收沒收到錢)、收款時記的 order_payment(現金/應收帳款,
+  只在有實收金額時才有)。固定資產購入、折舊、銷貨退回這幾類還沒接,留到之後。
 
-對照表(PURCHASE_ACCOUNTS / EXPENSE_ACCOUNTS)是第一版、可調整的猜測,
-不是跟會計師/同事對過的正式科目表,之後要改直接改這個檔案的常數就好,
-比照 queries.OPEX_CATS 也是這樣讓人直接改的做法。
+對照表(PURCHASE_ACCOUNTS / EXPENSE_ACCOUNTS / REVENUE_ACCOUNTS / COGS_INVENTORY_ACCOUNTS)
+是第一版、可調整的猜測,不是跟會計師/同事對過的正式科目表,之後要改直接改這個檔案的
+常數就好,比照 queries.OPEX_CATS 也是這樣讓人直接改的做法。
 """
 from db import q, execute
 
@@ -38,6 +41,30 @@ EXPENSE_ACCOUNTS = {
     "培訓":       ("6170", "培訓費"),
     "其他":       ("6190", "其他費用"),
 }
+
+# 應收帳款(訂單成立時的借方、收款時的貸方)
+AR_ACCOUNT = ("1172", "應收帳款")
+
+# 銷貨成本(COGS 借方)——不依產品線拆,同事「會計科目表」正式版裡只有一條
+COGS_EXPENSE_ACCOUNT = ("5111", "銷貨成本")
+
+# 產品線 -> 銷貨收入科目(貸方)。沒歸屬產品線的商品用 REVENUE_DEFAULT。
+REVENUE_ACCOUNTS = {
+    "龍眼鮮果": ("4111-01", "銷貨收入-龍眼鮮果"),
+    "龍眼乾":   ("4111-02", "銷貨收入-龍眼乾"),
+    "龍眼肉":   ("4111-03", "銷貨收入-龍眼肉"),
+    "蜂蜜":     ("4111-04", "銷貨收入-蜂蜜"),
+}
+REVENUE_DEFAULT = ("4110", "銷貨收入")
+
+# 產品線 -> 存貨科目(COGS 貸方,對應同事「F存貨管理」那張的科目系列)
+COGS_INVENTORY_ACCOUNTS = {
+    "龍眼鮮果": ("1315-01", "原料-龍眼鮮果"),
+    "龍眼乾":   ("1311-01", "製成品-龍眼乾"),
+    "龍眼肉":   ("1311-02", "製成品-龍眼肉"),
+    "蜂蜜":     ("1301-01", "商品-蜂蜜"),
+}
+COGS_INVENTORY_DEFAULT = ("1300", "存貨")
 
 
 def _cash_account(payment_account):
@@ -75,6 +102,51 @@ def compose_expense_entries(category, amount, tax_amount=0, payment_account=None
                           debit=tax_amount, credit=0))
     legs.append(dict(account_code=cash_code, account_name=cash_name, debit=0, credit=amount + tax_amount))
     return legs
+
+
+def compose_order_sale_entries(lines, order_kind):
+    """訂單成立分錄:不管收沒收到錢都記。lines 是每個訂單明細的
+    (product_group_name 或 None, revenue, cogs) 三元組列表。
+    order_kind 不是「銷售」(贈送/樣品/內部領用等)回傳空 list,不記這筆。"""
+    if order_kind != "銷售":
+        return []
+    rev_by_line, cogs_by_line = {}, {}
+    total_rev, total_cogs = 0.0, 0.0
+    for pg_name, revenue, cogs in lines:
+        revenue, cogs = revenue or 0, cogs or 0
+        rev_by_line[pg_name] = rev_by_line.get(pg_name, 0) + revenue
+        cogs_by_line[pg_name] = cogs_by_line.get(pg_name, 0) + cogs
+        total_rev += revenue
+        total_cogs += cogs
+    if total_rev == 0 and total_cogs == 0:
+        return []
+    legs = [dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=total_rev, credit=0)]
+    for pg_name, amt in rev_by_line.items():
+        if amt == 0:
+            continue
+        code, name = REVENUE_ACCOUNTS.get(pg_name, REVENUE_DEFAULT)
+        legs.append(dict(account_code=code, account_name=name, debit=0, credit=amt))
+    if total_cogs:
+        legs.append(dict(account_code=COGS_EXPENSE_ACCOUNT[0], account_name=COGS_EXPENSE_ACCOUNT[1],
+                          debit=total_cogs, credit=0))
+        for pg_name, amt in cogs_by_line.items():
+            if amt == 0:
+                continue
+            code, name = COGS_INVENTORY_ACCOUNTS.get(pg_name, COGS_INVENTORY_DEFAULT)
+            legs.append(dict(account_code=code, account_name=name, debit=0, credit=amt))
+    return legs
+
+
+def compose_order_payment_entries(paid_amount, payment_account=None):
+    """收款分錄:現金(依訂單的付款帳戶)/ 應收帳款。沒收到錢(paid_amount<=0)回傳空 list。"""
+    paid_amount = paid_amount or 0
+    if paid_amount <= 0:
+        return []
+    cash_code, cash_name = _cash_account(payment_account)
+    return [
+        dict(account_code=cash_code, account_name=cash_name, debit=paid_amount, credit=0),
+        dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=0, credit=paid_amount),
+    ]
 
 
 def next_voucher_no(prefix, date):

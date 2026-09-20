@@ -18,6 +18,15 @@
     <div><label>品名</label><input name="name" value="{{ p.name if p else '' }}" required></div>
     <div><label>型態</label><select name="product_type"><option value="">—</option>
       {% for t in types %}<option {{ 'selected' if p and p.product_type==t }}>{{ t }}</option>{% endfor %}</select></div>
+    <div><label>產品線</label>
+      <select name="product_group_id">
+        <option value="" {{ 'selected' if not (p and p.product_group_id) }}>未分類</option>
+        {% for grp in groups %}
+        <option value="{{ grp.pg_id }}" {{ 'selected' if p and p.product_group_id == grp.pg_id }}>{{ grp.bu_name }}・{{ grp.name }}</option>
+        {% endfor %}
+      </select>
+      <div class="muted" style="font-size:11px;margin-top:3px">賣這個商品時,銷貨收入/成本要記到哪條產品線,靠這個欄位判斷</div>
+    </div>
     <div><label>舊稱呼 / 原代號</label><input name="type_code_raw" value="{{ (p.type_code_raw or '') if p else '' }}" placeholder="例:#26"></div>
     <div><label>內容量(克,秤重品留空)</label><input name="net_weight_g" type="number" value="{{ p.net_weight_g if p and p.net_weight_g is not none else '' }}"></div>
     <div><label>每單位克數(換算用)</label><input name="grams_per_uom" type="number" value="{{ p.grams_per_uom if p and p.grams_per_uom is not none else '' }}"></div>

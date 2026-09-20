@@ -7,9 +7,9 @@
 </div></div>
 <hr class="rule">
 <p class="muted" style="font-size:13px;margin:-4px 0 14px">
-  進貨、營運費用存檔時,依對照表自動組出的分錄(方案 B 試點,目前只接這兩種)。
-  同一張傳票代表同一筆進貨/費用;要改分錄,回去編輯來源那筆進貨/費用重新確認一次即可,
-  這裡不能直接改。
+  進貨、營運費用、訂單存檔時,依對照表自動組出的分錄。進貨/費用要改分錄,回去編輯來源那筆
+  重新確認一次即可;訂單的分錄是背景自動記的,改訂單內容或標記已收款就會自動更新。
+  這裡都不能直接改。
 </p>
 
 <form method="get" action="/ledger" style="display:flex;gap:10px;margin-bottom:14px">
@@ -17,6 +17,8 @@
     <option value="" {{ 'selected' if not src }}>全部來源</option>
     <option value="purchase" {{ 'selected' if src == 'purchase' }}>進貨</option>
     <option value="op_expense" {{ 'selected' if src == 'op_expense' }}>營運費用</option>
+    <option value="order_sale" {{ 'selected' if src == 'order_sale' }}>訂單成立</option>
+    <option value="order_payment" {{ 'selected' if src == 'order_payment' }}>訂單收款</option>
   </select>
 </form>
 
@@ -25,7 +27,8 @@
   <div style="display:flex;justify-content:space-between;align-items:baseline">
     <div><b>{{ v.voucher_no }}</b>
       <span class="muted" style="font-size:12px;margin-left:8px">
-        {{ '進貨' if v.source_type == 'purchase' else '營運費用' }} · {{ v.entry_date }}
+        {{ {'purchase':'進貨','op_expense':'營運費用','order_sale':'訂單成立','order_payment':'訂單收款'}[v.source_type] }}
+        · {{ v.entry_date }}
       </span></div>
     <div class="muted" style="font-size:12px">{{ v.note or '' }}</div>
   </div>
