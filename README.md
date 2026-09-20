@@ -31,6 +31,18 @@ REM 啟動(或直接雙擊 啟動.bat)
 
 > 換電腦只帶程式碼、不帶資料。`*.db` / `*.xlsx` / `*.csv` / `app/備份/` 都在 `.gitignore` 裡。
 
+### Claude Code 用的 Skills
+
+這些是裝在 Windows 帳號個人目錄(`C:\Users\<你>\.agents\skills\`)的 Claude Code 工具設定,
+**不隨 git clone 帶過去**,換電腦要另外裝。這裡只記錄「有裝什麼、怎麼裝」,方便兩台電腦對齊,
+不是每次都要真的裝——只有真的要用某個功能時才裝那一個。
+
+| Skill | 用途 | 怎麼裝 |
+|---|---|---|
+| **agent-browser** | 瀏覽器自動化(dogfood 探索式測試、走位截圖、示意圖 Artifact 發布前預覽)—— 這個專案主要在用的就是這個 | `npm i -g agent-browser && agent-browser install`(會另外裝 Chrome,~50MB,每台電腦分開裝) |
+| find-skills | 幫忙找/裝其他 skill 的 meta skill | 通常內建或用它裝別的 skill 時順便有 |
+| pdf | PDF 讀取 / 合併 / 填表等操作 | 目前這個專案還沒實際用過 |
+
 ## 打包成免安裝 exe(給郡碩)
 
 `app` 目錄下跑 **`打包.bat`**(需先跑過一次 `啟動.bat` 建好 `.venv`)→ 產生 `app/dist/桂圓帳房/`。
@@ -60,7 +72,11 @@ REM 啟動(或直接雙擊 啟動.bat)
 
 ## 版控慣例
 
-- **每個施工回合** = 功能 → 冒煙測試(全路由 200)→ commit → `git push`
-- commit 訊息用中文,說清楚「這回合動了什麼、沒動什麼」
-- 動大結構前先 commit 存檢查點;`app/備份/` 另有每日資料庫自動備份(啟動時)
+- **每個施工回合** = 功能 → 冒煙測試(全路由 200)→ commit,**直接在 `main` 上做**,不另外開
+  feature branch、不必每回合都推。
+- commit 訊息用中文,說清楚「這回合動了什麼、沒動什麼」。
+- **`git push` 等使用者明確說「推上 GitHub」才推**——先在本機做到一個段落,累積幾個 commit
+  再一次推,不是每個 commit 都要推。使用者自己另外有整個專案資料夾的本機備份當保險,
+  不靠 git branch 隔離風險。
+- `app/備份/` 另有每日資料庫自動備份(啟動時)。
 - 分支 `main`;遠端 `origin` = <https://github.com/chihsuanwang/Jun-Shuo>
