@@ -345,7 +345,7 @@ CREATE TABLE ledger_entry (
   account_name TEXT NOT NULL,
   debit        REAL NOT NULL DEFAULT 0,
   credit       REAL NOT NULL DEFAULT 0,
-  source_type  TEXT NOT NULL CHECK (source_type IN ('purchase','op_expense')),
+  source_type  TEXT NOT NULL CHECK (source_type IN ('purchase','op_expense','order_sale','order_payment')),
   source_id    INTEGER NOT NULL,       -- 對應 purchase.purchase_id 或 op_expense.expense_id
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))

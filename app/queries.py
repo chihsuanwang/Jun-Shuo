@@ -276,8 +276,9 @@ def order_get(oid):
                      (SELECT name FROM channel WHERE channel_id=o.channel_id) chan
               FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
               WHERE o.order_id=?""", (oid,))
-    lines = q("""SELECT ol.*, p.name pname, p.uom
+    lines = q("""SELECT ol.*, p.name pname, p.uom, p.unit_cost, pg.name pg_name
                  FROM order_line ol JOIN product p ON p.product_id=ol.product_id
+                 LEFT JOIN product_group pg ON pg.pg_id=p.product_group_id
                  WHERE ol.order_id=? ORDER BY ol.line_id""", (oid,))
     return o, lines
 
