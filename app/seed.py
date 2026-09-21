@@ -214,18 +214,38 @@ c.execute("""INSERT INTO shipment_issue(order_id,issue_type,issue_date,qty_affec
 c.execute("UPDATE \"order\" SET ship_status='破損' WHERE order_id=?", (issue_oid,))
 
 # ---- 銷貨退回 / 折讓(v2 回合 8 示範:一筆折讓、一筆退貨進庫)----
+#      技術債 #2(2026-09-21):兩筆也補上總帳分錄,跟其他示範資料一樣的做法。
 gift_pid = prod["GY-GIFT"]["id"]
 b2025 = bat["2025-A"]
+
+def _return_ledger(rid, oid, date, kind, amount, pid=None, qty=None, restock=0):
+    o = c.execute('SELECT payment_status, payment_account FROM "order" WHERE order_id=?', (oid,)).fetchone()
+    already_paid = o[0] == "已收款"
+    cogs_amount, pgn = 0, None
+    if restock and pid and qty:
+        pr = c.execute("""SELECT p.unit_cost, pg.name pg_name FROM product p
+                           LEFT JOIN product_group pg ON pg.pg_id=p.product_group_id
+                           WHERE p.product_id=?""", (pid,)).fetchone()
+        cogs_amount = abs(qty) * (pr[0] or 0)
+        pgn = pr[1]
+    legs = ledger.compose_sales_return_entries(kind, amount, already_paid, o[1],
+                                                cogs_amount, pgn)
+    add_voucher("T", date, legs, "sales_return", rid, f"{kind}:訂單#{oid}")
+
 c.execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,restock,reason)
              VALUES(?,?,?,?,?,?,?)""",
           (issue_oid, "2026-05-25", 2026, "折讓", 150, 0, "破損客訴,折讓不退貨"))
+_sr1 = c.lastrowid
+_return_ledger(_sr1, issue_oid, "2026-05-25", "折讓", 150)
+
 c.execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,product_id,qty,batch_id,restock,reason)
              VALUES(?,?,?,?,?,?,?,?,?,?)""",
           (oids[9], "2026-01-05", 2025, "退貨", 600, gift_pid, 2, b2025, 1, "客戶多訂,退 2 盒"))
-_sr = c.execute("SELECT return_id FROM sales_return WHERE restock=1 ORDER BY return_id DESC LIMIT 1").fetchone()[0]
+_sr2 = c.lastrowid
 c.execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,ref_order_id,note)
              VALUES(?,?,?,?,?,?,?)""",
-          ("2026-01-05", gift_pid, b2025, 2, "退貨入庫", oids[9], f"退貨單#{_sr}"))
+          ("2026-01-05", gift_pid, b2025, 2, "退貨入庫", oids[9], f"退貨單#{_sr2}"))
+_return_ledger(_sr2, oids[9], "2026-01-05", "退貨", 600, gift_pid, 2, 1)
 
 # ---- 產季目標 --------------------------------------------------
 c.execute("INSERT INTO sales_target(season,product_id,target_qty,target_amount) VALUES(2025,NULL,NULL,300000)")

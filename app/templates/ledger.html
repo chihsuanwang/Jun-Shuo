@@ -29,6 +29,7 @@
       <option value="manual_adjustment" {{ 'selected' if src == 'manual_adjustment' }}>帳務調整</option>
       <option value="asset_acquire" {{ 'selected' if src == 'asset_acquire' }}>設備取得</option>
       <option value="asset_depreciation" {{ 'selected' if src == 'asset_depreciation' }}>折舊</option>
+      <option value="sales_return" {{ 'selected' if src == 'sales_return' }}>退貨/折讓</option>
     </select>
   </form>
   <input id="fDate1" type="date" style="width:auto">
@@ -59,7 +60,8 @@
       <span class="muted" style="font-size:12px;margin-left:8px">
         {{ {'purchase':'進貨','op_expense':'營運費用','order_sale':'訂單成立','order_payment':'訂單收款',
             'production_in':'生產入庫','other_income':'其他收益','equity':'資本異動',
-            'manual_adjustment':'帳務調整','asset_acquire':'設備取得','asset_depreciation':'折舊'}[v.source_type] }}
+            'manual_adjustment':'帳務調整','asset_acquire':'設備取得','asset_depreciation':'折舊',
+            'sales_return':'退貨/折讓'}[v.source_type] }}
         · {{ v.entry_date }}
       </span></div>
     <div class="muted" style="font-size:12px">{{ v.note or '' }}</div>

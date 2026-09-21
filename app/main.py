@@ -1217,6 +1217,20 @@ def order_detail(request: Request, oid: int):
 # ---------- 銷貨退回 / 折讓(v2 回合 8) ----------------------
 RETURN_KINDS = ['退貨', '折讓']
 
+def _post_return_ledger(rid, oid, date, kind, amount, product_id, qty, restock):
+    o = q1('SELECT payment_status, payment_account FROM "order" WHERE order_id=?', (oid,))
+    already_paid = o.get("payment_status") == "已收款"
+    cogs_amount, pg_name = 0, None
+    if restock and product_id and qty:
+        p = q1("""SELECT p.unit_cost, pg.name pg_name FROM product p
+                   LEFT JOIN product_group pg ON pg.pg_id=p.product_group_id
+                   WHERE p.product_id=?""", (product_id,))
+        cogs_amount = abs(qty) * (p.get("unit_cost") or 0)
+        pg_name = p.get("pg_name")
+    legs = ledger.compose_sales_return_entries(kind, amount, already_paid, o.get("payment_account"),
+                                                cogs_amount, pg_name)
+    ledger.save_voucher("sales_return", rid, date, legs, "T", note=f"{kind}:訂單#{oid}")
+
 @app.get("/returns", response_class=HTMLResponse)
 def returns_page(request: Request):
     rows = Q.returns_list()
@@ -1257,6 +1271,7 @@ async def order_return_create(request: Request, oid: int):
                    VALUES(?,?,?,?,?,?,?)""",
                 (date, cols["product_id"], cols["batch_id"], abs(qty), "退貨入庫", oid,
                  f"退貨單#{rid}"))
+    _post_return_ledger(rid, oid, date, kind, amount, cols["product_id"], qty, restock)
     return RedirectResponse(f"/orders/{oid}?rok=1", status_code=303)
 
 @app.post("/orders/{oid}/return_all")
@@ -1278,15 +1293,22 @@ async def order_return_all(request: Request, oid: int):
                    VALUES(?,?,?,?,?,?,?)""",
                 (date, ln["product_id"], ln["batch_id"], abs(ln["qty"]), "退貨入庫", oid,
                  f"退貨單#{rid}"))
+        _post_return_ledger(rid, oid, date, "退貨", ln["line_subtotal"], ln["product_id"], ln["qty"], 1)
     return RedirectResponse(f"/orders/{oid}?rok=1", status_code=303)
 
 
-@app.post("/returns/{rid}/delete")
-async def order_return_delete(request: Request, rid: int):
+def _return_delete(rid):
+    """回傳被刪那筆退貨所屬的 order_id(找不到就 None)。"""
     r = q("SELECT order_id FROM sales_return WHERE return_id=?", (rid,))
     execute("DELETE FROM stock_move WHERE move_type='退貨入庫' AND note=?", (f"退貨單#{rid}",))
     execute("DELETE FROM sales_return WHERE return_id=?", (rid,))
-    back = f"/orders/{r[0]['order_id']}" if r else "/returns"
+    ledger.delete_voucher_for("sales_return", rid)
+    return r[0]["order_id"] if r else None
+
+@app.post("/returns/{rid}/delete")
+async def order_return_delete(request: Request, rid: int):
+    oid = _return_delete(rid)
+    back = f"/orders/{oid}" if oid else "/returns"
     f = await request.form()
     return RedirectResponse(f.get("next") or back, status_code=303)
 
@@ -1385,6 +1407,10 @@ def order_delete(oid: int):
     execute("UPDATE review_queue SET resolved_order_id=NULL WHERE resolved_order_id=?", (oid,))
     ledger.delete_voucher_for("order_sale", oid)
     ledger.delete_voucher_for("order_payment", oid)
+    # sales_return 列本身靠 ON DELETE CASCADE 清,但那不會連動清總帳,要在 cascade 前先查出
+    # return_id 把對應的傳票也清掉
+    for r in q("SELECT return_id FROM sales_return WHERE order_id=?", (oid,)):
+        ledger.delete_voucher_for("sales_return", r["return_id"])
     execute('DELETE FROM "order" WHERE order_id=?', (oid,))  # order_line / sales_return 靠 ON DELETE CASCADE 一起清掉
     return RedirectResponse("/orders?deleted=1", status_code=303)
 
@@ -1780,7 +1806,7 @@ def ledger_page(request: Request):
     where, args = ["1=1"], []
     if src in ("purchase", "op_expense", "order_sale", "order_payment",
                "production_in", "other_income", "equity", "manual_adjustment",
-               "asset_acquire", "asset_depreciation"):
+               "asset_acquire", "asset_depreciation", "sales_return"):
         where.append("source_type=?"); args.append(src)
     rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
                  ORDER BY voucher_no DESC, entry_id""", args)
@@ -1985,6 +2011,7 @@ _LEDGER_DELETERS = {
     "other_income": _other_income_delete,
     "equity": _equity_delete,
     "manual_adjustment": _adjustment_delete,
+    "sales_return": _return_delete,
 }
 
 @app.post("/ledger/delete")

@@ -83,6 +83,9 @@ REVENUE_ACCOUNTS = {
 }
 REVENUE_DEFAULT = ("4110", "銷貨收入")
 
+# 銷貨退回 / 折讓(借方,沖減營收)——兩個代碼正式科目表都有
+RETURN_ACCOUNTS = {"退貨": ("4170", "銷貨退回"), "折讓": ("4190", "銷貨折讓")}
+
 # 產品線 -> 存貨科目(COGS 貸方,對應同事「F存貨管理」那張的科目系列)
 COGS_INVENTORY_ACCOUNTS = {
     "龍眼鮮果": ("1315-01", "原料-龍眼鮮果"),
@@ -305,6 +308,30 @@ def compose_depreciation_entries(monthly_amount):
     ]
 
 
+def compose_sales_return_entries(kind, amount, already_paid, payment_account=None,
+                                  cogs_amount=0, pg_name=None):
+    """銷貨退回/折讓:借銷貨退回或折讓/貸現金(已收款,真的退錢)或應收帳款(還沒收款,
+    折抵欠款)。好貨退回可再賣(restock)時,再鏡射訂單成立那組分錄,借存貨/貸銷貨成本
+    把成本沖回。"""
+    amount = amount or 0
+    if amount <= 0:
+        return []
+    code, name = RETURN_ACCOUNTS.get(kind, RETURN_ACCOUNTS["退貨"])
+    legs = [dict(account_code=code, account_name=name, debit=amount, credit=0)]
+    if already_paid:
+        cash_code, cash_name = _cash_account(payment_account)
+        legs.append(dict(account_code=cash_code, account_name=cash_name, debit=0, credit=amount))
+    else:
+        legs.append(dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=0, credit=amount))
+    cogs_amount = cogs_amount or 0
+    if cogs_amount > 0:
+        inv_code, inv_name = COGS_INVENTORY_ACCOUNTS.get(pg_name, COGS_INVENTORY_DEFAULT)
+        legs.append(dict(account_code=inv_code, account_name=inv_name, debit=cogs_amount, credit=0))
+        legs.append(dict(account_code=COGS_EXPENSE_ACCOUNT[0], account_name=COGS_EXPENSE_ACCOUNT[1],
+                          debit=0, credit=cogs_amount))
+    return legs
+
+
 def _all_accounts():
     """攤平現有所有科目常數,去重、依代碼排序,給「帳務調整」畫面的科目下拉用。"""
     pairs = [CASH_ACCOUNT, TAX_INPUT_ACCOUNT, AR_ACCOUNT, COGS_EXPENSE_ACCOUNT,
@@ -313,7 +340,8 @@ def _all_accounts():
              EQUITY_RETAINED_ACCOUNT, FIXED_ASSET_DEFAULT, DEPRECIATION_EXPENSE_ACCOUNT,
              ACCUM_DEP_ACCOUNT]
     for d in (PURCHASE_ACCOUNTS, EXPENSE_ACCOUNTS, REVENUE_ACCOUNTS,
-              COGS_INVENTORY_ACCOUNTS, OTHER_INCOME_ACCOUNTS, FIXED_ASSET_ACCOUNTS):
+              COGS_INVENTORY_ACCOUNTS, OTHER_INCOME_ACCOUNTS, FIXED_ASSET_ACCOUNTS,
+              RETURN_ACCOUNTS):
         pairs.extend(d.values())
     seen, out = set(), []
     for code, name in pairs:

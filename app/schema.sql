@@ -350,7 +350,7 @@ CREATE TABLE ledger_entry (
   credit       REAL NOT NULL DEFAULT 0,
   source_type  TEXT NOT NULL CHECK (source_type IN ('purchase','op_expense','order_sale','order_payment',
                  'production_in','other_income','equity','manual_adjustment',
-                 'asset_acquire','asset_depreciation')),
+                 'asset_acquire','asset_depreciation','sales_return')),
   source_id    INTEGER NOT NULL,       -- 對應 purchase.purchase_id 或 op_expense.expense_id
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
