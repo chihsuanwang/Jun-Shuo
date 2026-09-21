@@ -543,7 +543,7 @@ async def purchase_save(request: Request):
         return RedirectResponse("/purchases", status_code=303)
 
     # 原料/包材/委外/服務/其他 → 先看確認畫面,存檔動作交給 /purchases/confirm
-    existing = q1("SELECT tax_amount, payment_account, doc_type FROM purchase WHERE purchase_id=?",
+    existing = q1("SELECT tax_amount, payment_account, doc_type, invoice_no FROM purchase WHERE purchase_id=?",
                   (int(pid),)) if pid else {}
     sup_name = None
     if cols["supplier_id"]:
@@ -567,6 +567,7 @@ async def purchase_save(request: Request):
         amount=cols["amount"], primary_account_name=acct_name,
         tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
         doc_type=existing.get("doc_type"), doc_types=DOC_TYPES, bank_names=Q.payment_account_names(),
+        invoice_no=existing.get("invoice_no"),
     ))
 
 
@@ -587,6 +588,7 @@ async def purchase_confirm(request: Request):
         tax_amount=tax_amount,
         payment_account=payment_account,
         doc_type=g("doc_type"),
+        invoice_no=g("invoice_no"),
         note=g("note"))
     new_id = _purchase_upsert(cols, pid)
     legs = ledger.compose_purchase_entries(cols["category"], cols["amount"], tax_amount,
@@ -1542,7 +1544,7 @@ async def finance_expense_save(request: Request):
         note=g("note"))
 
     # 走確認畫面,存檔動作交給 /finance/expenses/confirm
-    existing = q1("SELECT tax_amount, payment_account, doc_type FROM op_expense WHERE expense_id=?",
+    existing = q1("SELECT tax_amount, payment_account, doc_type, invoice_no FROM op_expense WHERE expense_id=?",
                   (int(eid),)) if eid else {}
     acct_code, acct_name = ledger.EXPENSE_ACCOUNTS.get(cat, ledger.EXPENSE_ACCOUNTS["其他"])
     hidden = dict(cols)
@@ -1561,6 +1563,7 @@ async def finance_expense_save(request: Request):
         amount=cols["amount"], primary_account_name=acct_name,
         tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
         doc_type=existing.get("doc_type"), doc_types=DOC_TYPES, bank_names=Q.payment_account_names(),
+        invoice_no=existing.get("invoice_no"),
     ))
 
 
@@ -1579,6 +1582,7 @@ async def finance_expense_confirm(request: Request):
         ym=ym, category=cat, amount=fl("amount"),
         amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
         tax_amount=tax_amount, payment_account=payment_account, doc_type=g("doc_type"),
+        invoice_no=g("invoice_no"),
         note=g("note"))
     new_id = _expense_upsert(cols, eid)
     legs = ledger.compose_expense_entries(cat, cols["amount"], tax_amount, payment_account)

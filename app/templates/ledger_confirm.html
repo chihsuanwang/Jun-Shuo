@@ -35,9 +35,11 @@
     <div><label>進項稅額(沒有留 0)</label>
       <input name="tax_amount" id="taxAmt" type="number" step="1" min="0" value="{{ tax_amount|round(0) if tax_amount else 0 }}"></div>
     <div><label>憑證類型</label>
-      <select name="doc_type"><option value="">—</option>
+      <select name="doc_type" id="docType"><option value="">—</option>
         {% for d in doc_types %}<option {{ 'selected' if doc_type == d }}>{{ d }}</option>{% endfor %}
       </select></div>
+    <div id="invoiceNoField" hidden><label>發票號碼</label>
+      <input name="invoice_no" id="invoiceNo" value="{{ invoice_no or '' }}" placeholder="例:YW46458"></div>
   </div>
 
   <table style="margin-top:14px">
@@ -62,6 +64,12 @@
   var taxRow = document.getElementById('taxRow'), taxDebit = document.getElementById('taxDebit');
   var cashName = document.getElementById('cashName'), cashCredit = document.getElementById('cashCredit');
   var balCheck = document.getElementById('balCheck');
+  var docType = document.getElementById('docType'), invoiceNoField = document.getElementById('invoiceNoField');
+  function toggleInvoiceNo() {
+    invoiceNoField.hidden = docType.value.indexOf('發票') === -1;
+  }
+  docType.addEventListener('change', toggleInvoiceNo);
+  toggleInvoiceNo();
   function money(n) { return Math.round(n).toLocaleString(); }
   function recalc() {
     var tax = +taxAmt.value || 0;

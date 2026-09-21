@@ -15,7 +15,7 @@
   <table class="sortable">
     <thead><tr>
       <th>月份</th><th>項目</th>
-      <th data-num>金額</th><th>攤提</th>
+      <th data-num>金額</th><th>攤提</th><th>憑證</th>
       <th>修改日期</th><th>備註</th><th></th>
     </tr></thead>
     <tbody>{% for r in rows %}
@@ -24,11 +24,12 @@
       <td>{{ r.category }}</td>
       <td>{{ r.amount|money }}</td>
       <td>{{ (r.amortize_months ~ ' 個月') if r.amortize_months else '—' }}</td>
+      <td class="muted" style="font-size:12px">{{ r.doc_type or '' }}{{ (' ' ~ r.invoice_no) if r.invoice_no else '' }}</td>
       <td class="muted">{{ (r.updated_at or '')[:16] }}</td>
       <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
       <td><a href="/finance/expenses/{{ r.expense_id }}/edit">編輯</a></td>
     </tr>
-    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
 <div class="muted" style="font-size:11px;margin-top:8px">

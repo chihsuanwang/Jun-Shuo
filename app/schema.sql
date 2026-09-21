@@ -233,6 +233,7 @@ CREATE TABLE op_expense (
   tax_amount       REAL NOT NULL DEFAULT 0,  -- 進項稅額
   tax_deductible   INTEGER NOT NULL DEFAULT 0 CHECK (tax_deductible IN (0,1)),
   doc_type         TEXT CHECK (doc_type IN ('三聯式發票','二聯式發票','收據','農民收據','無憑證')),
+  invoice_no       TEXT,                -- 發票號碼(憑證類型選發票才需要填)
   payment_account  TEXT,               -- 用哪個帳戶付款(自由文字,例:現金 / 合庫);方案B分錄用
   note        TEXT,
   updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))   -- 最後新增 / 修改時間
@@ -276,6 +277,7 @@ CREATE TABLE purchase (
   tax_amount       REAL NOT NULL DEFAULT 0,              -- 進項稅額
   tax_deductible   INTEGER NOT NULL DEFAULT 1 CHECK (tax_deductible IN (0,1)),
   doc_type         TEXT CHECK (doc_type IN ('三聯式發票','二聯式發票','收據','農民收據','無憑證')),
+  invoice_no       TEXT,                -- 發票號碼(憑證類型選發票才需要填)
   is_fixed_asset   INTEGER NOT NULL DEFAULT 0 CHECK (is_fixed_asset IN (0,1)),  -- 打勾標記;固定資產卡回合 3 才建
   payment_account  TEXT,               -- 用哪個帳戶付款(自由文字,例:現金 / 合庫);方案B分錄用
   note             TEXT,
