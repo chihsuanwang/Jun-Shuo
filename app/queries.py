@@ -229,6 +229,13 @@ def cash_accounts():
                 WHERE account_code IN ('1102','1103') ORDER BY account_code, account_name""")
 
 
+def payment_account_names():
+    """「付款/收款帳戶」欄位的自動完成建議清單——把之前打過的銀行帳戶名稱(去掉『銀行存款-』
+    前綴)抓出來,減少同一個帳戶因為打字不一致被當成兩個帳戶的風險。現金不用列,留白就是現金。"""
+    accts = cash_accounts()
+    return [a["account_name"][len("銀行存款-"):] for a in accts if a["account_code"] == "1103"]
+
+
 def cash_ledger(account_code, account_name):
     """某個現金/銀行帳戶的明細 + 逐筆累計餘額(依日期、entry_id 排序)。"""
     rows = q("""SELECT entry_date, voucher_no, note, source_type, debit, credit

@@ -19,7 +19,8 @@
     <div><label>銷項稅額(沒有留 0)</label>
       <input name="tax_amount" type="number" step="1" min="0" value="{{ r.tax_amount|round(0) if r and r.tax_amount else 0 }}"></div>
     <div><label>收款帳戶</label>
-      <input name="payment_account" value="{{ (r.payment_account or '') if r else '' }}" placeholder="現金">
+      <input name="payment_account" value="{{ (r.payment_account or '') if r else '' }}" placeholder="現金" list="bankNames">
+      <datalist id="bankNames">{% for b in bank_names %}<option value="{{ b }}">{% endfor %}</datalist>
       <div class="muted" style="font-size:11px;margin-top:3px">留白 = 現金;要記銀行帳戶就打帳戶名(例:合庫)</div>
     </div>
   </div>

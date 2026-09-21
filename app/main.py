@@ -566,7 +566,7 @@ async def purchase_save(request: Request):
         hidden=hidden,
         amount=cols["amount"], primary_account_name=acct_name,
         tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
-        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES,
+        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES, bank_names=Q.payment_account_names(),
     ))
 
 
@@ -1560,7 +1560,7 @@ async def finance_expense_save(request: Request):
         hidden=hidden,
         amount=cols["amount"], primary_account_name=acct_name,
         tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
-        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES,
+        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES, bank_names=Q.payment_account_names(),
     ))
 
 
@@ -1614,7 +1614,8 @@ def other_income_list(request: Request):
         request=request, active="other_income", rows=rows))
 
 def _other_income_form_ctx(request, r):
-    return dict(request=request, active="other_income", r=r, cats=OTHER_INCOME_CATS)
+    return dict(request=request, active="other_income", r=r, cats=OTHER_INCOME_CATS,
+                bank_names=Q.payment_account_names())
 
 @app.get("/other-income/new", response_class=HTMLResponse)
 def other_income_new(request: Request):
@@ -1666,14 +1667,16 @@ def equity_list(request: Request):
 
 @app.get("/equity/new", response_class=HTMLResponse)
 def equity_new(request: Request):
-    return tpl.TemplateResponse("equity_form.html", dict(request=request, active="equity", r=None))
+    return tpl.TemplateResponse("equity_form.html", dict(
+        request=request, active="equity", r=None, bank_names=Q.payment_account_names()))
 
 @app.get("/equity/{tid}/edit", response_class=HTMLResponse)
 def equity_edit(request: Request, tid: int):
     r = q("SELECT * FROM equity_txn WHERE txn_id=?", (tid,))
     if not r:
         return RedirectResponse("/equity", status_code=303)
-    return tpl.TemplateResponse("equity_form.html", dict(request=request, active="equity", r=r[0]))
+    return tpl.TemplateResponse("equity_form.html", dict(
+        request=request, active="equity", r=r[0], bank_names=Q.payment_account_names()))
 
 def _equity_delete(tid):
     execute("DELETE FROM equity_txn WHERE txn_id=?", (int(tid),))

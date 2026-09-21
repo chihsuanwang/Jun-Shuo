@@ -28,8 +28,9 @@
   <h3 class="serif" style="font-size:15px">分錄草稿</h3>
   <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:8px">
     <div><label>付款帳戶</label>
-      <input name="payment_account" id="payAcct" value="{{ payment_account or '' }}" placeholder="現金">
-      <div class="muted" style="font-size:11px;margin-top:3px">留白 = 現金;要記銀行帳戶就打帳戶名(例:合庫)</div>
+      <input name="payment_account" id="payAcct" value="{{ payment_account or '' }}" placeholder="現金" list="bankNames">
+      <datalist id="bankNames">{% for b in bank_names %}<option value="{{ b }}">{% endfor %}</datalist>
+      <div class="muted" style="font-size:11px;margin-top:3px">留白 = 現金;要記銀行帳戶就打帳戶名(例:合庫)——同一個帳戶每次要打一樣的名稱,才會被系統當成同一戶</div>
     </div>
     <div><label>進項稅額(沒有留 0)</label>
       <input name="tax_amount" id="taxAmt" type="number" step="1" min="0" value="{{ tax_amount|round(0) if tax_amount else 0 }}"></div>
