@@ -27,6 +27,11 @@
     <div><label>殘值(留白 = 自動算)</label>
       <input name="salvage" id="salvage" type="number" step="1" value="{{ a.salvage|round(0) if a else '' }}" placeholder="自動 =(成本−補助)÷(年數+1)">
     </div>
+    <div><label>付款帳戶</label>
+      <input name="payment_account" value="{{ d.payment_account or '' }}" placeholder="現金" list="bankNames">
+      <datalist id="bankNames">{% for b in bank_names %}<option value="{{ b }}">{% endfor %}</datalist>
+      <div class="muted" style="font-size:11px;margin-top:3px">留白 = 現金;要記銀行帳戶就打帳戶名——同一個帳戶每次要打一樣的名稱</div>
+    </div>
   </div>
   <div class="muted" style="font-size:12px;margin-top:10px" id="hint"></div>
   {% if a %}

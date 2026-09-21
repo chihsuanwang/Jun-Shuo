@@ -10,7 +10,10 @@ app/schema.sql 的 ledger_entry(總帳)。
 - 9 宮格 B 類(回合三):生產入庫 / 其他收益 / 資本異動 / 帳務調整,一樣不經過確認畫面
   ——這批是從零蓋的新畫面,欄位直接放在同一張表單裡,存檔即過帳。「其他費用」沒有另開
   畫面,併進「營運費用」既有畫面的類別下拉(EXPENSE_ACCOUNTS 補了對應子科目)。
-  固定資產購入、折舊、銷貨退回這幾類還沒接,留到之後。
+- 固定資產(技術債 #1,2026-09-21):買入比照其他類型,存檔整張重開(`save_voucher`)。
+  折舊沒有「存檔」這種天然觸發點(是時間流逝就該發生的事),改用 `save_voucher_if_new`
+  ——開 `/assets` 頁時系統順便把還沒記過的月份補上,已經記過的月份不動,不是整張重開。
+  銷貨退回這類還沒接,留到之後。
 
 對照表(PURCHASE_ACCOUNTS / EXPENSE_ACCOUNTS / REVENUE_ACCOUNTS / COGS_INVENTORY_ACCOUNTS /
 OTHER_INCOME_ACCOUNTS / EQUITY_* 等)2026-09-21 已對照同事「會計科目表」正式版(完整科目
@@ -192,6 +195,23 @@ EQUITY_STOCK_ACCOUNT    = ("3110", "普通股股本")
 EQUITY_RESERVE_ACCOUNT  = ("3310", "法定盈餘公積")   # 同事草稿有、正式科目表沒列,先照草稿放
 EQUITY_RETAINED_ACCOUNT = ("3351", "累積盈虧")
 
+# 固定資產類別(對應 main.ASSET_CATS)-> 借方資產科目。正式表沒有「生財器具」「運輸設備」
+# 專門科目,電腦設備/生財器具先併記辦公設備,運輸設備標「待確認」。
+FIXED_ASSET_ACCOUNTS = {
+    "機器設備":   ("1616", "機器設備"),
+    "房屋建築":   ("1611", "房屋"),
+    "電腦設備":   ("1691", "辦公設備"),
+    "生財器具":   ("1691", "辦公設備"),
+    "運輸設備":   ("1616-02", "機器設備-運輸設備(待確認)"),
+    "其他":       ("1616", "機器設備"),
+}
+FIXED_ASSET_DEFAULT = ("1616", "機器設備")
+
+# 折舊費用(借方)/累計折舊(貸方,共用一個科目,不分資產類別——正式表沒有專門對應,
+# 比照正式表自己的 1405生產性生物資產/1406累計折舊-生產性生物資產那組命名模式類推)
+DEPRECIATION_EXPENSE_ACCOUNT = ("6124", "折舊")
+ACCUM_DEP_ACCOUNT = ("1616-99", "累計折舊")
+
 
 def compose_production_in_entries(pg_name, amount):
     """生產入庫:借存貨(依產品線)/貸其他利益。amount<=0 回傳空 list。"""
@@ -256,14 +276,44 @@ def compose_manual_entries(debit_code, debit_name, credit_code, credit_name, amo
     ]
 
 
+def compose_asset_acquire_entries(category, cost, grant_amount=0, payment_account=None):
+    """設備買入:借設備科目(全額成本)/貸現金(淨額)+ 貸政府補助收入(補助額,>0 才加)。"""
+    cost = cost or 0
+    grant_amount = grant_amount or 0
+    if cost <= 0:
+        return []
+    code, name = FIXED_ASSET_ACCOUNTS.get(category, FIXED_ASSET_DEFAULT)
+    cash_code, cash_name = _cash_account(payment_account)
+    legs = [dict(account_code=code, account_name=name, debit=cost, credit=0),
+            dict(account_code=cash_code, account_name=cash_name, debit=0, credit=cost - grant_amount)]
+    if grant_amount:
+        gcode, gname = OTHER_INCOME_ACCOUNTS["政府補助收入"]
+        legs.append(dict(account_code=gcode, account_name=gname, debit=0, credit=grant_amount))
+    return legs
+
+
+def compose_depreciation_entries(monthly_amount):
+    """折舊(每月一筆):借折舊費用/貸累計折舊。"""
+    monthly_amount = monthly_amount or 0
+    if monthly_amount <= 0:
+        return []
+    return [
+        dict(account_code=DEPRECIATION_EXPENSE_ACCOUNT[0], account_name=DEPRECIATION_EXPENSE_ACCOUNT[1],
+             debit=monthly_amount, credit=0),
+        dict(account_code=ACCUM_DEP_ACCOUNT[0], account_name=ACCUM_DEP_ACCOUNT[1],
+             debit=0, credit=monthly_amount),
+    ]
+
+
 def _all_accounts():
     """攤平現有所有科目常數,去重、依代碼排序,給「帳務調整」畫面的科目下拉用。"""
     pairs = [CASH_ACCOUNT, TAX_INPUT_ACCOUNT, AR_ACCOUNT, COGS_EXPENSE_ACCOUNT,
              REVENUE_DEFAULT, COGS_INVENTORY_DEFAULT, PRODUCTION_GAIN_ACCOUNT,
              SALES_TAX_OUTPUT_ACCOUNT, EQUITY_STOCK_ACCOUNT, EQUITY_RESERVE_ACCOUNT,
-             EQUITY_RETAINED_ACCOUNT]
+             EQUITY_RETAINED_ACCOUNT, FIXED_ASSET_DEFAULT, DEPRECIATION_EXPENSE_ACCOUNT,
+             ACCUM_DEP_ACCOUNT]
     for d in (PURCHASE_ACCOUNTS, EXPENSE_ACCOUNTS, REVENUE_ACCOUNTS,
-              COGS_INVENTORY_ACCOUNTS, OTHER_INCOME_ACCOUNTS):
+              COGS_INVENTORY_ACCOUNTS, OTHER_INCOME_ACCOUNTS, FIXED_ASSET_ACCOUNTS):
         pairs.extend(d.values())
     seen, out = set(), []
     for code, name in pairs:
@@ -298,6 +348,25 @@ def save_voucher(source_type, source_id, date, legs, prefix, note=None):
     legs 為空(例:設備採購)時只清空、不產生新傳票。"""
     execute("DELETE FROM ledger_entry WHERE source_type=? AND source_id=?", (source_type, source_id))
     if not legs:
+        return None
+    voucher_no = next_voucher_no(prefix, date)
+    for leg in legs:
+        execute("""INSERT INTO ledger_entry(voucher_no, entry_date, account_code, account_name,
+                     debit, credit, source_type, source_id, note)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (voucher_no, date, leg["account_code"], leg["account_name"],
+                 leg["debit"], leg["credit"], source_type, source_id, note))
+    return voucher_no
+
+
+def save_voucher_if_new(source_type, source_id, date, legs, prefix, note=None):
+    """累加式記錄(不是整張重開):給折舊這種「同一個來源、很多筆歷史分錄」的情境用——
+    這個來源 + 這個日期已經記過就跳過,不存在才補插入一筆。過去記過的月份不會被動到。"""
+    if not legs:
+        return None
+    existing = q("SELECT 1 FROM ledger_entry WHERE source_type=? AND source_id=? AND entry_date=? LIMIT 1",
+                 (source_type, source_id, date))
+    if existing:
         return None
     voucher_no = next_voucher_no(prefix, date)
     for leg in legs:

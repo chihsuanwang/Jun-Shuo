@@ -604,6 +604,7 @@ ASSET_CATS = {"機器設備": 5, "生財器具": 5, "運輸設備": 5,
 
 @app.get("/assets", response_class=HTMLResponse)
 def assets_page(request: Request):
+    Q.sync_depreciation_vouchers()
     rows = Q.asset_list()
     in_use = [a for a in rows if a["in_use"]]
     summary = dict(
@@ -617,7 +618,8 @@ def assets_page(request: Request):
 
 def _asset_form_ctx(request, a, prefill=None):
     return dict(request=request, active="asset", a=a, prefill=prefill,
-               cats=ASSET_CATS, today=dt.date.today().isoformat())
+               cats=ASSET_CATS, today=dt.date.today().isoformat(),
+               bank_names=Q.payment_account_names())
 
 @app.get("/assets/new", response_class=HTMLResponse)
 def asset_new(request: Request):
@@ -646,6 +648,8 @@ async def asset_save(request: Request):
     aid = f.get("asset_id")
     if f.get("_delete") and aid:
         execute("DELETE FROM fixed_asset WHERE asset_id=?", (int(aid),))
+        ledger.delete_voucher_for("asset_acquire", int(aid))
+        ledger.delete_voucher_for("asset_depreciation", int(aid))
         return RedirectResponse("/assets", status_code=303)
     name = (f.get("name") or "").strip()
     date = (f.get("acquire_date") or "").strip()
@@ -657,18 +661,23 @@ async def asset_save(request: Request):
     sv = (f.get("salvage") or "").strip()
     salvage = float(sv) if sv else round(max(0.0, cost - grant) / (life + 1))
     spv = f.get("source_purchase_id") or ""
+    category = g("category")
+    payment_account = g("payment_account")
     cols = dict(
-        name=name, category=g("category"),
+        name=name, category=category,
         acquire_date=date, cost=cost, grant_amount=grant, salvage=salvage,
         life_years=life, method="平均法",
         source_purchase_id=(int(spv) if spv.isdigit() else None),
-        disposed_date=g("disposed_date"), note=g("note"))
+        disposed_date=g("disposed_date"), payment_account=payment_account, note=g("note"))
     if aid:
         sets = ",".join(f"{k}=:{k}" for k in cols)
         execute(f"UPDATE fixed_asset SET {sets} WHERE asset_id=:id", {**cols, "id": int(aid)})
+        new_id = int(aid)
     else:
         keys = ",".join(cols)
-        execute(f"INSERT INTO fixed_asset({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+        new_id = execute(f"INSERT INTO fixed_asset({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
+    legs = ledger.compose_asset_acquire_entries(category, cost, grant, payment_account)
+    ledger.save_voucher("asset_acquire", new_id, date, legs, "K", note=f"設備取得:{name}")
     return RedirectResponse("/assets", status_code=303)
 
 
@@ -1770,7 +1779,8 @@ def ledger_page(request: Request):
     src = request.query_params.get("source") or ""
     where, args = ["1=1"], []
     if src in ("purchase", "op_expense", "order_sale", "order_payment",
-               "production_in", "other_income", "equity", "manual_adjustment"):
+               "production_in", "other_income", "equity", "manual_adjustment",
+               "asset_acquire", "asset_depreciation"):
         where.append("source_type=?"); args.append(src)
     rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
                  ORDER BY voucher_no DESC, entry_id""", args)

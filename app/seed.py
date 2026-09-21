@@ -304,10 +304,15 @@ assets = [
 for name, cat, pgname, adate, cost, grant, sv, life, src_note in assets:
     salvage = sv if sv is not None else round(max(0, cost - grant) / (life + 1))
     c.execute("""INSERT INTO fixed_asset(name,category,product_group_id,acquire_date,cost,
-                 grant_amount,salvage,life_years,method,source_purchase_id,note)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                 grant_amount,salvage,life_years,method,source_purchase_id,payment_account,note)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
               (name, cat, pg.get(pgname), adate, cost, grant, salvage, life, "平均法",
-               buy_id.get(src_note), None))
+               buy_id.get(src_note), "現金", None))
+    asset_id = c.lastrowid
+    legs = ledger.compose_asset_acquire_entries(cat, cost, grant, "現金")
+    add_voucher("K", adate, legs, "asset_acquire", asset_id, f"設備取得:{name}")
+    # 折舊分錄留給 /assets 頁第一次打開時自動補上(sync_depreciation_vouchers),
+    # 這裡不預先寫,才是走跟真實使用一樣的路徑
 
 # ---- 庫存異動:每產季分裝一批(A 批),再依訂單出庫 ----------
 import math

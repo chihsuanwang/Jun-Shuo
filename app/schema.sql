@@ -301,6 +301,7 @@ CREATE TABLE fixed_asset (
   method       TEXT NOT NULL DEFAULT '平均法',
   source_purchase_id INTEGER REFERENCES purchase(purchase_id),  -- 從哪筆進貨建卡(可空)
   disposed_date TEXT,                            -- 處分日;NULL = 在用
+  payment_account TEXT,               -- 用哪個帳戶付款(自由文字,例:現金 / 合庫);總帳分錄用
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -348,7 +349,8 @@ CREATE TABLE ledger_entry (
   debit        REAL NOT NULL DEFAULT 0,
   credit       REAL NOT NULL DEFAULT 0,
   source_type  TEXT NOT NULL CHECK (source_type IN ('purchase','op_expense','order_sale','order_payment',
-                 'production_in','other_income','equity','manual_adjustment')),
+                 'production_in','other_income','equity','manual_adjustment',
+                 'asset_acquire','asset_depreciation')),
   source_id    INTEGER NOT NULL,       -- 對應 purchase.purchase_id 或 op_expense.expense_id
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))

@@ -3,6 +3,7 @@ season=None 代表全部產季;asof 為『結算日』('latest'=最新訂單日 
 毛利 = 銷售明細營收 - 明細成本(數量×批次單位成本);運費損益另計。"""
 import datetime as dt
 from db import q, q1
+import ledger
 
 
 def seasons():
@@ -546,6 +547,28 @@ def asset_list(as_of_ym=None):
         a["book_value"] = (a["cost"] or 0) - a["accum_dep"]
         a["in_use"] = not a["disposed_date"]
     return rows
+
+
+def sync_depreciation_vouchers():
+    """開 /assets 頁時呼叫:把每個在用資產從取得月到「這個月」(或處分月)還沒記過的折舊
+    月份補上分錄。已經記過的月份不動——用 ledger.save_voucher_if_new,不是整張重開。"""
+    this_ym = dt.date.today().strftime("%Y-%m")
+    for a in q("SELECT * FROM fixed_asset"):
+        base = asset_dep_base(a)
+        life = a["life_years"] or 0
+        if base <= 0 or life <= 0 or not a["acquire_date"]:
+            continue
+        monthly = base / life / 12
+        start = a["acquire_date"][:7]
+        end = this_ym
+        if a["disposed_date"] and a["disposed_date"][:7] < end:
+            end = a["disposed_date"][:7]
+        n = min(life * 12, max(0, _months_between(start, end) + 1))
+        legs = ledger.compose_depreciation_entries(monthly)
+        for i in range(n):
+            ym = _add_months(start, i)
+            ledger.save_voucher_if_new("asset_depreciation", a["asset_id"], f"{ym}-01", legs, "D",
+                                        note=f"折舊:{a['name']}")
 
 # ---------- 銷貨退回 / 折讓(v2 回合 8) ----------------------
 def _returns_agg(season):
