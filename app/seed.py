@@ -340,6 +340,33 @@ for oid, kind, odate in c.execute(
         c.execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,ref_order_id)
                      VALUES(?,?,?,?,?,?)""", (odate, pid, bid, -abs(qty or 0), mtype, oid))
 
+# ---- 9 宮格 B 類示範(各給 1 筆,讓同事一打開就看得到長相)--------
+prod_id = prod["GY-DRY-300"]["id"]
+c.execute("""INSERT INTO stock_move(move_date,product_id,qty,move_type,note)
+             VALUES(?,?,?,'生產入庫',?)""", ("2026-09-05", prod_id, 30, "示範:9 月第一批龍眼乾入庫"))
+move_id = c.lastrowid
+legs = ledger.compose_production_in_entries("龍眼乾", 30 * prod["GY-DRY-300"]["unit_cost"])
+add_voucher("F", "2026-09-05", legs, "production_in", move_id, "生產入庫示範")
+
+c.execute("""INSERT INTO other_income(income_date,category,amount,tax_amount,payment_account,note)
+             VALUES(?,?,?,?,?,?)""", ("2026-08-31", "利息收入", 85, 0, "郵局", "示範:8 月存款利息"))
+inc_id = c.lastrowid
+legs = ledger.compose_other_income_entries("利息收入", 85, 0, "郵局")
+add_voucher("I", "2026-08-31", legs, "other_income", inc_id, "其他收益示範")
+
+c.execute("""INSERT INTO equity_txn(txn_date,txn_type,amount,payment_account,note)
+             VALUES(?,?,?,?,?)""", ("2025-04-01", "現金增資", 50000, "現金", "示範:開業資本額出資"))
+eq_id = c.lastrowid
+legs = ledger.compose_equity_entries("現金增資", 50000, "現金")
+add_voucher("Q", "2025-04-01", legs, "equity", eq_id, "資本異動示範")
+
+c.execute("""INSERT INTO manual_entry(entry_date,debit_code,debit_name,credit_code,credit_name,amount,note)
+             VALUES(?,?,?,?,?,?,?)""",
+          ("2026-09-10", "1102", "現金", "1103", "銀行存款-郵局", 500, "示範:提領零用金(帳戶間轉帳,套不進其他 8 類)"))
+adj_id = c.lastrowid
+legs = ledger.compose_manual_entries("1102", "現金", "1103", "銀行存款-郵局", 500)
+add_voucher("M", "2026-09-10", legs, "manual_adjustment", adj_id, "帳務調整示範")
+
 cx.commit()
 n_ord = c.execute('SELECT COUNT(*) FROM "order"').fetchone()[0]
 rev = c.execute("SELECT COALESCE(SUM(order_total),0) FROM \"order\" WHERE order_kind='銷售'").fetchone()[0]
