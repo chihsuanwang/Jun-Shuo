@@ -39,7 +39,7 @@
         {% for d in doc_types %}<option {{ 'selected' if doc_type == d }}>{{ d }}</option>{% endfor %}
       </select></div>
     <div id="invoiceNoField" hidden><label>發票號碼</label>
-      <input name="invoice_no" id="invoiceNo" value="{{ invoice_no or '' }}" placeholder="例:YW46458"></div>
+      <input name="invoice_no" id="invoiceNo" value="{{ invoice_no or '' }}" placeholder="例:YW46458" required></div>
   </div>
 
   <table style="margin-top:14px">

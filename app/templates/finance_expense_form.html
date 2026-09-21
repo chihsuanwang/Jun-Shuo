@@ -6,6 +6,7 @@
   <h1 class="serif">{{ '編輯費用' if e else '新增一筆費用' }}</h1>
 </div></div>
 <hr class="rule">
+{% if request.query_params.get('ierr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">憑證類型選了發票,發票號碼是必填的,請補上再存檔。</div>{% endif %}
 
 <form method="post" action="/finance/expenses">
 {% if e %}<input type="hidden" name="expense_id" value="{{ e.expense_id }}">{% endif %}

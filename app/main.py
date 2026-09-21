@@ -579,6 +579,11 @@ async def purchase_confirm(request: Request):
     pid = f.get("purchase_id")
     tax_amount = fl("tax_amount")
     payment_account = g("payment_account")
+    doc_type = g("doc_type")
+    invoice_no = g("invoice_no")
+    if doc_type and "發票" in doc_type and not invoice_no:
+        back = f"/purchases/{pid}/edit" if pid else "/purchases/new"
+        return RedirectResponse(f"{back}?ierr=1", status_code=303)
     cols = dict(
         purchase_date=(f.get("purchase_date") or "").strip(),
         supplier_id=(int(f.get("supplier_id")) if (f.get("supplier_id") or "").isdigit() else None),
@@ -587,8 +592,8 @@ async def purchase_confirm(request: Request):
         is_fixed_asset=0,
         tax_amount=tax_amount,
         payment_account=payment_account,
-        doc_type=g("doc_type"),
-        invoice_no=g("invoice_no"),
+        doc_type=doc_type,
+        invoice_no=invoice_no,
         note=g("note"))
     new_id = _purchase_upsert(cols, pid)
     legs = ledger.compose_purchase_entries(cols["category"], cols["amount"], tax_amount,
@@ -1613,11 +1618,16 @@ async def finance_expense_confirm(request: Request):
     am = f.get("amortize_months") or ""
     ym = (f.get("ym") or "").strip()
     cat = (f.get("category") or "").strip()
+    doc_type = g("doc_type")
+    invoice_no = g("invoice_no")
+    if doc_type and "發票" in doc_type and not invoice_no:
+        back = f"/finance/expenses/{eid}/edit" if eid else "/finance/expenses/new"
+        return RedirectResponse(f"{back}?ierr=1", status_code=303)
     cols = dict(
         ym=ym, category=cat, amount=fl("amount"),
         amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
-        tax_amount=tax_amount, payment_account=payment_account, doc_type=g("doc_type"),
-        invoice_no=g("invoice_no"),
+        tax_amount=tax_amount, payment_account=payment_account, doc_type=doc_type,
+        invoice_no=invoice_no,
         note=g("note"))
     new_id = _expense_upsert(cols, eid)
     legs = ledger.compose_expense_entries(cat, cols["amount"], tax_amount, payment_account)

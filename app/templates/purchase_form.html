@@ -6,6 +6,7 @@
   <h1 class="serif">{{ '編輯進貨' if p else '記一筆進貨' }}</h1>
 </div></div>
 <hr class="rule">
+{% if request.query_params.get('ierr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">憑證類型選了發票,發票號碼是必填的,請補上再存檔。</div>{% endif %}
 
 <form method="post" action="/purchases">
 {% if p %}<input type="hidden" name="purchase_id" value="{{ p.purchase_id }}">{% endif %}
