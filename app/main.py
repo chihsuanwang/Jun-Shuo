@@ -1627,15 +1627,15 @@ async def finance_expense_confirm(request: Request):
 
 # ---------- 9 宮格 B 類:首頁入口 ----------------------------
 ENTRY_CARDS = [
-    dict(tag="A類・既有", title="銷售 / 出貨", href="/orders/new", desc="開一張訂單,存檔就自動記應收帳款/銷貨收入。"),
-    dict(tag="A類・既有", title="採購物料", href="/purchases/new", desc="原料/包材/委外/服務進貨,存檔前會給你看一次分錄。"),
-    dict(tag="A類・既有", title="營運支出", href="/finance/expenses/new", desc="逐月費用登記,存檔前會給你看一次分錄。"),
-    dict(tag="A類・既有", title="設備相關", href="/assets/new", desc="機器/器具採購,建固定資產卡(這批還不記分錄)。"),
-    dict(tag="B類・新", title="生產入庫", href="/stock#produce", desc="農產品/蜂蜜做好入庫,登記數量+價值。"),
-    dict(tag="B類・新", title="其他收益", href="/other-income/new", desc="利息收入、政府補助等非銷售的進帳。"),
-    dict(tag="B類・併入營運支出", title="其他費用", href="/finance/expenses/new", desc="勞務費/檢驗費/規費等雜項費用,類別選單裡挑。"),
-    dict(tag="B類・新", title="資本異動", href="/equity/new", desc="現金增資、盈餘轉列公積。"),
-    dict(tag="B類・新", title="帳務調整", href="/adjustments/new", desc="其他 8 類都套不上時,手動指定一組借/貸科目。"),
+    dict(title="銷售 / 出貨", href="/orders/new", desc="開一張訂單,存檔就自動記應收帳款/銷貨收入。"),
+    dict(title="採購物料", href="/purchases/new", desc="原料/包材/委外/服務進貨,存檔前會給你看一次分錄。"),
+    dict(title="營運支出", href="/finance/expenses/new", desc="逐月費用登記,存檔前會給你看一次分錄。"),
+    dict(title="設備相關", href="/assets/new", desc="機器/器具採購,建固定資產卡,系統會自動記分錄、每月提折舊。"),
+    dict(title="生產入庫", href="/stock#produce", desc="農產品/蜂蜜做好入庫,登記數量+價值。"),
+    dict(title="其他收益", href="/other-income/new", desc="利息收入、政府補助等非銷售的進帳。"),
+    dict(title="其他費用", href="/finance/expenses/new", desc="勞務費/檢驗費/規費等雜項費用,在「營運支出」的類別選單裡就找得到。"),
+    dict(title="資本異動", href="/equity/new", desc="現金增資、盈餘轉列公積。"),
+    dict(title="帳務調整", href="/adjustments/new", desc="上面都套不上時,手動指定一組借/貸科目記一筆。"),
 ]
 
 @app.get("/entry", response_class=HTMLResponse)

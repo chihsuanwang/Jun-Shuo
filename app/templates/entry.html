@@ -12,8 +12,7 @@
 <div class="grid" style="grid-template-columns:repeat(3,1fr)">
   {% for c in cards %}
   <a href="{{ c.href }}" class="card" style="display:block;text-decoration:none;min-height:96px">
-    <div style="font-size:11px;letter-spacing:2px;color:var(--ink-3)">{{ c.tag }}</div>
-    <h3 class="serif" style="margin:6px 0 5px;color:var(--ink)">{{ c.title }}</h3>
+    <h3 class="serif" style="margin:0 0 5px;color:var(--ink)">{{ c.title }}</h3>
     <div class="muted" style="font-size:12px;line-height:1.5">{{ c.desc }}</div>
   </a>
   {% endfor %}
