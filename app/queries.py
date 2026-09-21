@@ -208,6 +208,65 @@ def ar_aging(season=None, asof=None):
     return buckets, rows
 
 
+def ar_recently_paid(season=None, limit=15):
+    """比照 E應收帳款 sheet 的『已收回的帳款』——最近標記已收款的訂單,依收款日新到舊。"""
+    sc, sp = _S(season)
+    rows = q(f"""SELECT o.order_id, o.order_no, o.paid_date, o.paid_amount, o.order_total,
+                        cu.display_name cust
+                 FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
+                 WHERE {sc} AND o.payment_status='已收款' AND o.paid_date IS NOT NULL
+                 ORDER BY o.paid_date DESC, o.order_id DESC LIMIT ?""", sp + [limit])
+    return rows
+
+
+CASH_SRC_LABEL = {'purchase': '進貨', 'op_expense': '營運費用', 'order_sale': '訂單成立',
+                   'order_payment': '訂單收款', 'production_in': '生產入庫', 'other_income': '其他收益',
+                   'equity': '資本異動', 'manual_adjustment': '帳務調整'}
+
+def cash_accounts():
+    """現金 / 各銀行帳戶清單——依 ledger_entry 裡實際用過的科目抓,不是另外維護的固定名單。"""
+    return q("""SELECT DISTINCT account_code, account_name FROM ledger_entry
+                WHERE account_code IN ('1102','1103') ORDER BY account_code, account_name""")
+
+
+def cash_ledger(account_code, account_name):
+    """某個現金/銀行帳戶的明細 + 逐筆累計餘額(依日期、entry_id 排序)。"""
+    rows = q("""SELECT entry_date, voucher_no, note, source_type, debit, credit
+                FROM ledger_entry WHERE account_code=? AND account_name=?
+                ORDER BY entry_date, entry_id""", (account_code, account_name))
+    bal = 0.0
+    for r in rows:
+        bal += (r["debit"] or 0) - (r["credit"] or 0)
+        r["balance"] = bal
+        r["src_label"] = CASH_SRC_LABEL.get(r["source_type"], r["source_type"])
+    return rows, bal
+
+
+def stock_value_rows(lo, hi):
+    """存貨管理(含金額)——依商品列期初/入庫/出庫/期末的數量+金額。單位成本用商品目錄的
+    unit_cost 概算(不分批次,跟現在毛利/COGS 計算同一套邏輯)。lo/hi 是 YYYY-MM-DD。"""
+    prods = q("SELECT product_id, sku, name, uom, unit_cost FROM product ORDER BY status, sku")
+    out = []
+    for p in prods:
+        pid = p["product_id"]
+        begin = q1("SELECT COALESCE(SUM(qty),0) v FROM stock_move WHERE product_id=? AND move_date<?",
+                   (pid, lo))["v"]
+        inn = q1("""SELECT COALESCE(SUM(qty),0) v FROM stock_move
+                    WHERE product_id=? AND move_date BETWEEN ? AND ? AND qty>0""", (pid, lo, hi))["v"]
+        outq = q1("""SELECT COALESCE(SUM(qty),0) v FROM stock_move
+                     WHERE product_id=? AND move_date BETWEEN ? AND ? AND qty<0""", (pid, lo, hi))["v"]
+        end = begin + inn + outq
+        if begin == 0 and inn == 0 and outq == 0:
+            continue
+        uc = p["unit_cost"] or 0
+        out.append(dict(sku=p["sku"], name=p["name"], uom=p["uom"], unit_cost=uc,
+                         begin_qty=begin, begin_amt=begin * uc,
+                         in_qty=inn, in_amt=inn * uc,
+                         out_qty=-outq, out_amt=-outq * uc,
+                         end_qty=end, end_amt=end * uc))
+    return out
+
+
 def product_mix(season=None):
     sc, sp = _S(season)
     return q(f"""SELECT p.name, SUM(ol.line_subtotal) rev, SUM(ol.qty) qty

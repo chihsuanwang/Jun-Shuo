@@ -332,7 +332,8 @@ def reports(request: Request):
     elif tab == "aging":
         buckets, rows = Q.ar_aging(season, asof)
         data.update(buckets=buckets, rows=rows,
-                    agmax=max(list(buckets.values()) + [1]))
+                    agmax=max(list(buckets.values()) + [1]),
+                    paid_recent=Q.ar_recently_paid(season))
     elif tab == "compare":
         klist, series = Q.season_compare()
         data.update(klist=klist, series=series,
@@ -1782,6 +1783,19 @@ def ledger_page(request: Request):
         request=request, active="ledger", vouchers=vouchers, src=src))
 
 
+# ---------- 銀行帳戶明細(現金 / 各銀行帳戶,依科目篩選總帳)---
+@app.get("/cash", response_class=HTMLResponse)
+def cash_page(request: Request):
+    accounts = Q.cash_accounts()
+    sel = request.query_params.get("account") or ""
+    if not sel and accounts:
+        a = accounts[0]
+        sel = f"{a['account_code']}|{a['account_name']}"
+    code, _, name = sel.partition("|")
+    rows, bal = (Q.cash_ledger(code, name) if code else ([], 0.0))
+    return tpl.TemplateResponse("cash.html", dict(
+        request=request, active="cash", accounts=accounts, sel=sel, rows=rows, bal=bal))
+
 
 # ---------- 定價試算(管理估算,不進帳本) --------------------
 PRICING_KEYS = {k for k, *_ in Q.PRICING_FIELDS}
@@ -1862,6 +1876,14 @@ def stock_page(request: Request):
         rows=Q.stock_on_hand(),
         products=q("SELECT product_id,sku,name FROM product WHERE status='在售' ORDER BY sku"),
         in_types=STOCK_IN_TYPES, adj_types=STOCK_ADJ_TYPES))
+
+@app.get("/stock/value", response_class=HTMLResponse)
+def stock_value_page(request: Request):
+    today = dt.date.today()
+    lo = request.query_params.get("from") or today.replace(day=1).isoformat()
+    hi = request.query_params.get("to") or today.isoformat()
+    return tpl.TemplateResponse("stock_value.html", dict(
+        request=request, active="stock", lo=lo, hi=hi, rows=Q.stock_value_rows(lo, hi)))
 
 @app.get("/stock/moves", response_class=HTMLResponse)
 def stock_moves_page(request: Request):

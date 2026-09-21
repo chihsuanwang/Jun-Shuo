@@ -80,15 +80,26 @@
     <div class="lab">{{ k2 }}</div><div class="val">{{ v|money }}</div></div>
   {% endfor %}
 </div>
-<div class="card">
-  <h3 class="serif">未收款訂單</h3>
+<div class="card" style="margin-bottom:16px">
+  <h3 class="serif">尚未收回的帳款</h3>
   <table>
-    <thead><tr><th>單號</th><th>客戶</th><th>日期</th><th>金額</th><th>狀態</th><th>距今(天)</th></tr></thead>
+    <thead><tr><th>單號</th><th>客戶</th><th>日期</th><th>金額</th><th>狀態</th><th>距今(天)</th><th></th></tr></thead>
     <tbody>{% for r in rows %}
       <tr><td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td><td>{{ r.cust or '—' }}</td>
           <td>{{ r.order_date }}</td><td>{{ r.order_total|money }}</td><td>{{ r.payment_status }}</td>
-          <td class="{{ 'neg' if r.days > 30 }}">{{ r.days }}</td></tr>
-    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">沒有未收款訂單。</td></tr>{% endfor %}</tbody>
+          <td class="{{ 'neg' if r.days > 30 }}">{{ r.days }}</td>
+          <td><a href="/orders/{{ r.order_id }}#markPaidForm" style="font-size:12px">標記收款</a></td></tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">沒有未收款訂單。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+<div class="card">
+  <h3 class="serif">最近已收回</h3>
+  <table>
+    <thead><tr><th>單號</th><th>客戶</th><th>收款日</th><th>實收金額</th></tr></thead>
+    <tbody>{% for r in paid_recent %}
+      <tr><td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td><td>{{ r.cust or '—' }}</td>
+          <td>{{ r.paid_date }}</td><td>{{ r.paid_amount|money }}</td></tr>
+    {% else %}<tr><td colspan="4" class="muted" style="text-align:left">還沒有收款紀錄。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
 

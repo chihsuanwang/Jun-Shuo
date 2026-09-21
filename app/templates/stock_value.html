@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}存貨管理(含金額) · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/stock">庫存</a> / 存貨管理(含金額)</div><h1 class="serif">存貨管理(含金額)</h1></div>
+  <a href="/stock"><button class="ghost">回庫存頁</button></a>
+</div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 14px">
+  依商品列期初/入庫/出庫/期末的數量跟金額。金額 = 數量 × 商品目錄的「單位成本」概算(不分批次,
+  跟現在算毛利用的是同一套邏輯)。
+</p>
+
+<form method="get" action="/stock/value" style="display:flex;gap:10px;align-items:end;margin-bottom:16px">
+  <div><label>從</label><input type="date" name="from" value="{{ lo }}"></div>
+  <div><label>到</label><input type="date" name="to" value="{{ hi }}"></div>
+  <button type="submit" class="ghost">查詢</button>
+</form>
+
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead>
+      <tr><th rowspan="2" style="text-align:left">品項</th><th rowspan="2">單位成本</th>
+        <th colspan="2">期初</th><th colspan="2">入庫</th><th colspan="2">出庫</th><th colspan="2">期末</th></tr>
+      <tr><th>數量</th><th>金額</th><th>數量</th><th>金額</th><th>數量</th><th>金額</th><th>數量</th><th>金額</th></tr>
+    </thead>
+    <tbody>{% for r in rows %}
+      <tr>
+        <td>{{ r.name }}<span class="muted" style="font-size:11px">({{ r.sku }})</span></td>
+        <td class="r">{{ r.unit_cost|money }}</td>
+        <td class="r">{{ r.begin_qty|round(0) }}</td><td class="r">{{ r.begin_amt|money }}</td>
+        <td class="r">{{ r.in_qty|round(0) }}</td><td class="r">{{ r.in_amt|money }}</td>
+        <td class="r">{{ r.out_qty|round(0) }}</td><td class="r">{{ r.out_amt|money }}</td>
+        <td class="r">{{ r.end_qty|round(0) }}</td><td class="r">{{ r.end_amt|money }}</td>
+      </tr>
+    {% else %}<tr><td colspan="10" class="muted" style="text-align:left">這段期間沒有存貨異動。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endblock %}

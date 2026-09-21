@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}銀行帳戶明細 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup">桂圓帳房 / 銀行帳戶明細</div>
+  <h1 class="serif">銀行帳戶明細</h1>
+</div></div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 14px">
+  依科目從總帳篩出來的現金/銀行帳戶流水——進貨、費用、訂單收款…等等,只要動到這個帳戶都會出現在這裡,
+  累計餘額逐筆往下算。帳戶名單是各筆進貨/費用/訂單「付款帳戶」欄位打過的名稱,不是另外維護的清單。
+</p>
+
+{% if not accounts %}
+<p class="muted">還沒有任何進貨/費用/訂單記過分錄,所以還沒有帳戶可以看。</p>
+{% else %}
+<div class="chips" style="margin-bottom:16px">
+  {% for a in accounts %}
+  {% set v = a.account_code ~ '|' ~ a.account_name %}
+  <a class="chip" href="/cash?account={{ v|urlencode }}"
+     style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if sel==v }}">{{ a.account_name }}</a>
+  {% endfor %}
+</div>
+
+<div class="grid" style="grid-template-columns:1fr;margin-bottom:16px">
+  <div class="card kpi" style="border-top-color:var(--leaf)"><div class="lab">目前餘額</div><div class="val">{{ bal|money }}</div></div>
+</div>
+
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead><tr><th>日期</th><th>摘要</th><th>傳票號碼</th><th data-num>存入</th><th data-num>領出</th><th data-num>餘額</th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr>
+        <td>{{ r.entry_date }}</td>
+        <td class="muted" style="text-align:left">{{ r.src_label }}{{ ('・' ~ r.note) if r.note else '' }}</td>
+        <td class="muted" style="font-size:12px">{{ r.voucher_no }}</td>
+        <td class="r">{{ r.debit|money if r.debit else '—' }}</td>
+        <td class="r">{{ r.credit|money if r.credit else '—' }}</td>
+        <td class="r">{{ r.balance|money }}</td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">這個帳戶還沒有任何紀錄。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}
