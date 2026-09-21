@@ -33,6 +33,7 @@
 {% if request.query_params.get('done') == 'shipped' %}<div class="ok">已標記為「已出貨」,出貨日填今天。</div>{% endif %}
 {% if request.query_params.get('rok') %}<div class="ok">退貨 / 折讓已登記。</div>{% endif %}
 {% if request.query_params.get('rerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">沖減金額要大於 0。</div>{% endif %}
+{% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
 
 <form method="post" action="/orders/{{ o.order_id }}" id="orderForm">
 
@@ -99,10 +100,10 @@
       <div><label>實收金額</label><input name="paid_amount" type="number" id="paidAmountField" value="{{ o.paid_amount or '' }}"></div>
       <div style="display:flex;align-items:flex-end;padding-bottom:9px">
         <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
-          <input type="checkbox" name="invoiced" value="1" style="width:auto" {{ 'checked' if o.invoiced }}> 已開發票
+          <input type="checkbox" name="invoiced" id="invoicedBox" value="1" style="width:auto" {{ 'checked' if o.invoiced }}> 已開發票
         </label>
       </div>
-      <div><label>發票號碼(選填)</label><input name="tax_doc_no" value="{{ o.tax_doc_no or '' }}"></div>
+      <div><label id="taxDocLabel">發票號碼</label><input name="tax_doc_no" id="taxDocNo" value="{{ o.tax_doc_no or '' }}"></div>
     </div>
   </div>
   <div class="card">
@@ -285,6 +286,18 @@
     });
   }
   recalc();
+})();
+</script>
+<script>
+(function () {
+  var box = document.getElementById('invoicedBox'), num = document.getElementById('taxDocNo'),
+      label = document.getElementById('taxDocLabel');
+  function toggle() {
+    num.required = box.checked;
+    label.textContent = box.checked ? '發票號碼' : '發票號碼(選填)';
+  }
+  box.addEventListener('change', toggle);
+  toggle();
 })();
 </script>
 {% endblock %}

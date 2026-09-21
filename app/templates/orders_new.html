@@ -5,6 +5,7 @@
 <hr class="rule">
 {% if request.query_params.get('ok') %}<div class="ok">訂單已建立。</div>{% endif %}
 {% if request.query_params.get('err') == 'required' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請選擇客戶與銷售管道。</div>{% endif %}
+{% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
 
 <form method="post" action="/orders">
 <div class="card" style="margin-bottom:16px">
@@ -79,10 +80,10 @@
       </div>
       <div style="display:flex;align-items:flex-end;padding-bottom:9px">
         <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
-          <input type="checkbox" name="invoiced" value="1" style="width:auto"> 已開發票
+          <input type="checkbox" name="invoiced" id="invoicedBox" value="1" style="width:auto"> 已開發票
         </label>
       </div>
-      <div><label>發票號碼(選填)</label><input name="tax_doc_no"></div>
+      <div><label id="taxDocLabel">發票號碼(選填)</label><input name="tax_doc_no" id="taxDocNo"></div>
     </div>
   </div>
 </div>
@@ -243,6 +244,17 @@
   search.form.addEventListener('submit', function (e) {
     if (!custId.value) { e.preventDefault(); alert('請先從搜尋結果選一位客戶。'); search.focus(); }
   });
+})();
+</script>
+<script>
+(function () {
+  var box = document.getElementById('invoicedBox'), num = document.getElementById('taxDocNo'),
+      label = document.getElementById('taxDocLabel');
+  function toggle() {
+    num.required = box.checked;
+    label.textContent = box.checked ? '發票號碼' : '發票號碼(選填)';
+  }
+  box.addEventListener('change', toggle);
 })();
 </script>
 {% endblock %}

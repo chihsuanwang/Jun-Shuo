@@ -1139,6 +1139,8 @@ async def order_create(request: Request):
     # 應收金額不含運費(運費只是家易花多少錢的紀錄,不跟客人收的部分另外拆帳)。
     total = subtotal - discount_total
     invoiced = 1 if one("invoiced") else 0
+    if invoiced and not one("tax_doc_no"):
+        return RedirectResponse("/orders/new?err=invoice", status_code=303)
     oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
                      discount_total,order_total,payment_method,payment_status,
                      shipping_cost_actual,ship_payer,ship_method,ship_status,invoiced,tax_doc_no)
@@ -1357,6 +1359,8 @@ async def order_update(request: Request, oid: int):
     disc = o["discount_total"] or 0  # 折扣欄位已不開放編輯,沿用原值(通常是 0)
     total = subtotal - disc
 
+    if f.get("invoiced") and not g("tax_doc_no"):
+        return RedirectResponse(f"/orders/{oid}?err=invoice", status_code=303)
     cust_id = f.get("customer_id")
     cols = dict(order_date=g("order_date"), order_kind=g("order_kind"),
                 payment_method=g("payment_method"), payment_status=g("payment_status") or "待收款",
