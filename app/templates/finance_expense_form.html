@@ -14,9 +14,15 @@
     <div><label>月份(攤提時 = 起始月)</label>
       <input name="ym" value="{{ e.ym if e else ym_default }}" placeholder="2026-09" required></div>
     <div><label>項目</label>
-      <select name="category" required>
+      <select name="category" id="cat" required>
         {% for c in cats %}<option {{ 'selected' if e and e.category == c }}>{{ c }}</option>{% endfor %}
-      </select></div>
+      </select>
+      <div class="muted" id="rndHint" hidden style="font-size:11px;margin-top:3px;color:var(--seal)">
+        如果是設備/機器的零件、組裝費用(例:烘焙機的元件),建議改到
+        <a href="/assets/new">固定資產</a> 登記,才會正確逐年提折舊——這裡的「研發」比較適合
+        沒有形成實體設備的費用(例:配方試驗、委外檢驗)。
+      </div>
+    </div>
     <div><label>金額(實際花的錢)</label>
       <input name="amount" type="number" step="1" value="{{ e.amount|round(0) if e else '' }}" required></div>
     <div><label>攤提月數(一次性大支出才填)</label>
@@ -37,4 +43,12 @@
   </div>
 </div>
 </form>
+<script>
+(function () {
+  var cat = document.getElementById('cat'), hint = document.getElementById('rndHint');
+  function toggle() { hint.hidden = cat.value !== '研發'; }
+  cat.addEventListener('change', toggle);
+  toggle();
+})();
+</script>
 {% endblock %}
