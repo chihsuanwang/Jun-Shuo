@@ -160,17 +160,18 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
     if ship_status is None:
         ship_status = "已送達" if pay_status == "已收款" else "已出貨"
     invoiced = 1 if ci["seg"] in ("批發", "機構") else 0
+    tax_doc_no = f"AA{order_no:08d}" if invoiced else None
     paid_amount = total if pay_status == "已收款" else (round(total * 0.5) if pay_status == "部分收款" else None)
     c.execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
                  source_ref,discount_total,order_total,
                  payment_method,payment_account,payment_status,paid_date,paid_amount,
-                 invoiced,ship_method,carrier,shipping_cost_actual,ship_status)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 invoiced,tax_doc_no,ship_method,carrier,shipping_cost_actual,ship_status)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (f"S{order_no:04d}", d.isoformat(), season, cid, ch[chan], kind,
                None, 0, total,
                pm, "郵局" if pm == "銀行匯款" else None, pay_status,
                d.isoformat() if pay_status == "已收款" else None, paid_amount,
-               invoiced, ship_method, carrier, ship_cost, ship_status))
+               invoiced, tax_doc_no, ship_method, carrier, ship_cost, ship_status))
     oid = c.lastrowid
     bcode = f"{season}-A"
     for sku, qty, gift in lines:
@@ -298,18 +299,18 @@ for name, tid, cat, phone in suppliers:
     c.execute("INSERT INTO supplier(name,tax_id,category,phone) VALUES(?,?,?,?)", (name, tid, cat, phone))
     sup[name] = c.lastrowid
 
-# 日期, 供應商, 類別, 產品線, 未稅額, 稅額, 可扣抵, 憑證, 固定資產, 備註
+# 日期, 供應商, 類別, 產品線, 未稅額, 稅額, 可扣抵, 憑證, 發票號碼, 固定資產, 備註
 purchases = [
-    ("2026-05-10", "中寮果農合作社", "原料", "龍眼乾", 60000,    0, 0, "農民收據",   0, "鮮果收購 · 2026 產季"),
-    ("2026-05-15", "永信包裝材料行", "包材", "龍眼乾",  8000,  400, 1, "三聯式發票", 0, "夾鏈袋 + 禮盒盒一批"),
-    ("2026-04-20", "永信包裝材料行", "設備", "蜂蜜",   20000, 1000, 1, "三聯式發票", 1, "搖蜜機(固定資產,待建卡)"),
+    ("2026-05-10", "中寮果農合作社", "原料", "龍眼乾", 60000,    0, 0, "農民收據",   None,        0, "鮮果收購 · 2026 產季"),
+    ("2026-05-15", "永信包裝材料行", "包材", "龍眼乾",  8000,  400, 1, "三聯式發票", "AB12345678", 0, "夾鏈袋 + 禮盒盒一批"),
+    ("2026-04-20", "永信包裝材料行", "設備", "蜂蜜",   20000, 1000, 1, "三聯式發票", "AB12345679", 1, "搖蜜機(固定資產,待建卡)"),
 ]
 buy_id = {}
-for d, sname, cat, pgname, amt, tax, ded, doc, fa, note in purchases:
+for d, sname, cat, pgname, amt, tax, ded, doc, inv, fa, note in purchases:
     c.execute("""INSERT INTO purchase(purchase_date,supplier_id,category,product_group_id,
-                 amount,tax_amount,tax_deductible,doc_type,is_fixed_asset,payment_account,note)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-              (d, sup[sname], cat, pg.get(pgname), amt, tax, ded, doc, fa, "現金", note))
+                 amount,tax_amount,tax_deductible,doc_type,invoice_no,is_fixed_asset,payment_account,note)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+              (d, sup[sname], cat, pg.get(pgname), amt, tax, ded, doc, inv, fa, "現金", note))
     pur_id = c.lastrowid
     buy_id[note] = pur_id
     legs = ledger.compose_purchase_entries(cat, amt, tax, "現金", is_fixed_asset=bool(fa))
