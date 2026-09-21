@@ -512,6 +512,10 @@ def _purchase_upsert(cols, pid):
     return execute(f"INSERT INTO purchase({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
 
 
+def _purchase_delete(pid):
+    execute("DELETE FROM purchase WHERE purchase_id=?", (int(pid),))
+    ledger.delete_voucher_for("purchase", int(pid))
+
 @app.post("/purchases")
 async def purchase_save(request: Request):
     f = await request.form()
@@ -519,8 +523,7 @@ async def purchase_save(request: Request):
     fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
     pid = f.get("purchase_id")
     if f.get("_delete") and pid:
-        execute("DELETE FROM purchase WHERE purchase_id=?", (int(pid),))
-        ledger.delete_voucher_for("purchase", int(pid))
+        _purchase_delete(pid)
         return RedirectResponse("/purchases", status_code=303)
     date = (f.get("purchase_date") or "").strip()
     if not date:
@@ -1514,6 +1517,10 @@ def _expense_upsert(cols, eid):
                    f"VALUES({','.join(':' + k for k in cols)}, datetime('now','localtime'))", cols)
 
 
+def _expense_delete(eid):
+    execute("DELETE FROM op_expense WHERE expense_id=?", (int(eid),))
+    ledger.delete_voucher_for("op_expense", int(eid))
+
 @app.post("/finance/expenses")
 async def finance_expense_save(request: Request):
     f = await request.form()
@@ -1521,8 +1528,7 @@ async def finance_expense_save(request: Request):
     fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
     eid = f.get("expense_id")
     if f.get("_delete") and eid:
-        execute("DELETE FROM op_expense WHERE expense_id=?", (int(eid),))
-        ledger.delete_voucher_for("op_expense", int(eid))
+        _expense_delete(eid)
         return RedirectResponse("/finance/expenses", status_code=303)
     ym = (f.get("ym") or "").strip()
     cat = (f.get("category") or "").strip()
@@ -1620,6 +1626,10 @@ def other_income_edit(request: Request, iid: int):
         return RedirectResponse("/other-income", status_code=303)
     return tpl.TemplateResponse("other_income_form.html", _other_income_form_ctx(request, r[0]))
 
+def _other_income_delete(iid):
+    execute("DELETE FROM other_income WHERE income_id=?", (int(iid),))
+    ledger.delete_voucher_for("other_income", int(iid))
+
 @app.post("/other-income")
 async def other_income_save(request: Request):
     f = await request.form()
@@ -1627,8 +1637,7 @@ async def other_income_save(request: Request):
     fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
     iid = f.get("income_id")
     if f.get("_delete") and iid:
-        execute("DELETE FROM other_income WHERE income_id=?", (int(iid),))
-        ledger.delete_voucher_for("other_income", int(iid))
+        _other_income_delete(iid)
         return RedirectResponse("/other-income", status_code=303)
     date = (f.get("income_date") or "").strip()
     cat = g("category")
@@ -1665,6 +1674,10 @@ def equity_edit(request: Request, tid: int):
         return RedirectResponse("/equity", status_code=303)
     return tpl.TemplateResponse("equity_form.html", dict(request=request, active="equity", r=r[0]))
 
+def _equity_delete(tid):
+    execute("DELETE FROM equity_txn WHERE txn_id=?", (int(tid),))
+    ledger.delete_voucher_for("equity", int(tid))
+
 @app.post("/equity")
 async def equity_save(request: Request):
     f = await request.form()
@@ -1672,8 +1685,7 @@ async def equity_save(request: Request):
     fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
     tid = f.get("txn_id")
     if f.get("_delete") and tid:
-        execute("DELETE FROM equity_txn WHERE txn_id=?", (int(tid),))
-        ledger.delete_voucher_for("equity", int(tid))
+        _equity_delete(tid)
         return RedirectResponse("/equity", status_code=303)
     date = (f.get("txn_date") or "").strip()
     ttype = g("txn_type")
@@ -1712,6 +1724,10 @@ def adjustment_edit(request: Request, mid: int):
     return tpl.TemplateResponse("adjustment_form.html", dict(
         request=request, active="adjust", r=r[0], accounts=ledger.ALL_ACCOUNTS))
 
+def _adjustment_delete(mid):
+    execute("DELETE FROM manual_entry WHERE entry_id=?", (int(mid),))
+    ledger.delete_voucher_for("manual_adjustment", int(mid))
+
 @app.post("/adjustments")
 async def adjustment_save(request: Request):
     f = await request.form()
@@ -1719,8 +1735,7 @@ async def adjustment_save(request: Request):
     fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
     mid = f.get("entry_id")
     if f.get("_delete") and mid:
-        execute("DELETE FROM manual_entry WHERE entry_id=?", (int(mid),))
-        ledger.delete_voucher_for("manual_adjustment", int(mid))
+        _adjustment_delete(mid)
         return RedirectResponse("/adjustments", status_code=303)
     date = (f.get("entry_date") or "").strip()
     debit_code, _, debit_name = (f.get("debit_account") or "").partition("|")
@@ -1756,8 +1771,8 @@ def ledger_page(request: Request):
     for r in rows:
         if r["voucher_no"] not in seen:
             seen[r["voucher_no"]] = dict(voucher_no=r["voucher_no"], entry_date=r["entry_date"],
-                                          source_type=r["source_type"], note=r["note"], lines=[],
-                                          total_debit=0, total_credit=0)
+                                          source_type=r["source_type"], source_id=r["source_id"],
+                                          note=r["note"], lines=[], total_debit=0, total_credit=0)
             vouchers.append(seen[r["voucher_no"]])
         v = seen[r["voucher_no"]]
         v["lines"].append(r)
@@ -1765,6 +1780,7 @@ def ledger_page(request: Request):
         v["total_credit"] += r["credit"] or 0
     return tpl.TemplateResponse("ledger.html", dict(
         request=request, active="ledger", vouchers=vouchers, src=src))
+
 
 
 # ---------- 定價試算(管理估算,不進帳本) --------------------
@@ -1878,16 +1894,21 @@ async def stock_move_add(request: Request):
              (f.get("note") or "").strip() or None))
     return RedirectResponse("/stock", status_code=303)
 
-@app.post("/stock/moves/{mid}/delete")
-async def stock_move_delete(request: Request, mid: int):
+def _stock_move_delete(mid):
+    """回傳 True=刪成功,False=被擋(這筆是訂單自動記的出貨/贈送出庫,不能單獨刪)。"""
     r = q("SELECT ref_order_id FROM stock_move WHERE move_id=?", (mid,))
-    if not r:
-        return RedirectResponse("/stock/moves", status_code=303)
-    if r[0]["ref_order_id"]:
-        return RedirectResponse("/stock/moves?perr=1", status_code=303)
+    if not r or r[0]["ref_order_id"]:
+        return False
     execute("DELETE FROM stock_move WHERE move_id=?", (mid,))
     ledger.delete_voucher_for("production_in", mid)
+    return True
+
+@app.post("/stock/moves/{mid}/delete")
+async def stock_move_delete(request: Request, mid: int):
+    ok = _stock_move_delete(mid)
     f = await request.form()
+    if not ok:
+        return RedirectResponse("/stock/moves?perr=1", status_code=303)
     return RedirectResponse(f.get("next") or "/stock/moves", status_code=303)
 
 
@@ -1913,6 +1934,32 @@ async def stock_produce(request: Request):
     legs = ledger.compose_production_in_entries(pg.get("pg_name") if pg else None, amount)
     ledger.save_voucher("production_in", move_id, date, legs, "F", note=note)
     return RedirectResponse("/stock", status_code=303)
+
+
+# 傳票勾選刪除:連來源紀錄一起刪(重用各來源自己的刪除邏輯,不繞過既有規則)
+_LEDGER_DELETERS = {
+    "purchase": _purchase_delete,
+    "op_expense": _expense_delete,
+    "order_sale": order_delete,
+    "order_payment": order_delete,
+    "production_in": _stock_move_delete,
+    "other_income": _other_income_delete,
+    "equity": _equity_delete,
+    "manual_adjustment": _adjustment_delete,
+}
+
+@app.post("/ledger/delete")
+async def ledger_delete(request: Request):
+    f = await request.form()
+    done = set()
+    for v in f.getlist("voucher"):
+        source_type, _, source_id = v.partition(":")
+        key = (source_type, source_id)
+        if key in done or source_type not in _LEDGER_DELETERS:
+            continue
+        done.add(key)
+        _LEDGER_DELETERS[source_type](int(source_id))
+    return RedirectResponse("/ledger", status_code=303)
 
 
 # ---------- 出貨作業:揀貨單 / 標籤 / 食品標示 ---------------

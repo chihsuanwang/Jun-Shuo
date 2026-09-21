@@ -9,27 +9,45 @@
 <p class="muted" style="font-size:13px;margin:-4px 0 14px">
   進貨、營運費用、訂單、以及生產入庫/其他收益/資本異動/帳務調整這幾個新畫面存檔時,依對照表
   自動組出的分錄。進貨/費用要改分錄,回去編輯來源那筆重新確認一次即可;其他都是背景自動記的,
-  改來源內容就會自動更新。這裡都不能直接改。
+  改來源內容就會自動更新。這裡不能直接改內容,但可以勾選整張傳票刪除——**刪除會連同來源那筆
+  紀錄(那筆進貨/那張訂單…)一起刪掉,刪之前系統一樣會套用該筆原本的刪除規則**。
 </p>
 
-<form method="get" action="/ledger" style="display:flex;gap:10px;margin-bottom:14px">
-  <select name="source" onchange="this.form.submit()">
-    <option value="" {{ 'selected' if not src }}>全部來源</option>
-    <option value="purchase" {{ 'selected' if src == 'purchase' }}>進貨</option>
-    <option value="op_expense" {{ 'selected' if src == 'op_expense' }}>營運費用</option>
-    <option value="order_sale" {{ 'selected' if src == 'order_sale' }}>訂單成立</option>
-    <option value="order_payment" {{ 'selected' if src == 'order_payment' }}>訂單收款</option>
-    <option value="production_in" {{ 'selected' if src == 'production_in' }}>生產入庫</option>
-    <option value="other_income" {{ 'selected' if src == 'other_income' }}>其他收益</option>
-    <option value="equity" {{ 'selected' if src == 'equity' }}>資本異動</option>
-    <option value="manual_adjustment" {{ 'selected' if src == 'manual_adjustment' }}>帳務調整</option>
-  </select>
-</form>
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+  <form method="get" action="/ledger" style="display:flex;gap:10px">
+    <select name="source" onchange="this.form.submit()">
+      <option value="" {{ 'selected' if not src }}>全部來源</option>
+      <option value="purchase" {{ 'selected' if src == 'purchase' }}>進貨</option>
+      <option value="op_expense" {{ 'selected' if src == 'op_expense' }}>營運費用</option>
+      <option value="order_sale" {{ 'selected' if src == 'order_sale' }}>訂單成立</option>
+      <option value="order_payment" {{ 'selected' if src == 'order_payment' }}>訂單收款</option>
+      <option value="production_in" {{ 'selected' if src == 'production_in' }}>生產入庫</option>
+      <option value="other_income" {{ 'selected' if src == 'other_income' }}>其他收益</option>
+      <option value="equity" {{ 'selected' if src == 'equity' }}>資本異動</option>
+      <option value="manual_adjustment" {{ 'selected' if src == 'manual_adjustment' }}>帳務調整</option>
+    </select>
+  </form>
+  <input id="fDate1" type="date" style="width:auto">
+  <span class="muted" style="font-size:12px">～</span>
+  <input id="fDate2" type="date" style="width:auto">
+  <input id="fKw" type="text" placeholder="篩科目代碼/名稱/備註…" style="width:220px">
+  <span id="fCount" class="muted" style="font-size:12px"></span>
+</div>
+
+<form method="post" action="/ledger/delete" id="delForm"
+      onsubmit="return confirm('確定刪除勾選的傳票?連同來源那筆紀錄(進貨/訂單/其他收益…)一起刪掉,不能復原。')">
+<button type="submit" class="ghost" style="margin-bottom:12px">刪除勾選的傳票</button>
 
 {% for v in vouchers %}
-<div class="card" style="max-width:680px;margin-bottom:14px">
+<div class="card voucher-card" data-date="{{ v.entry_date }}"
+     data-kw="{{ v.voucher_no }} {{ v.note or '' }} {% for l in v.lines %}{{ l.account_code }} {{ l.account_name }} {% endfor %}"
+     style="max-width:680px;margin-bottom:14px">
   <div style="display:flex;justify-content:space-between;align-items:baseline">
-    <div><b>{{ v.voucher_no }}</b>
+    <div>
+      <label style="display:inline-flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" name="voucher" value="{{ v.source_type }}:{{ v.source_id }}" style="width:auto">
+        <b>{{ v.voucher_no }}</b>
+      </label>
       <span class="muted" style="font-size:12px;margin-left:8px">
         {{ {'purchase':'進貨','op_expense':'營運費用','order_sale':'訂單成立','order_payment':'訂單收款',
             'production_in':'生產入庫','other_income':'其他收益','equity':'資本異動',
@@ -53,4 +71,26 @@
 {% else %}
 <p class="muted">還沒有分錄。記一筆進貨或營運費用,存檔確認後就會出現在這裡。</p>
 {% endfor %}
+</form>
+
+<script>
+(function () {
+  var cards = [].slice.call(document.querySelectorAll('.voucher-card'));
+  var d1 = document.getElementById('fDate1'), d2 = document.getElementById('fDate2'),
+      kw = document.getElementById('fKw'), cnt = document.getElementById('fCount');
+  function apply() {
+    var a = d1.value, b = d2.value, k = (kw.value || '').trim().toLowerCase();
+    var shown = 0;
+    cards.forEach(function (c) {
+      var date = c.dataset.date, hay = c.dataset.kw.toLowerCase();
+      var ok = (!a || date >= a) && (!b || date <= b) && (!k || hay.indexOf(k) !== -1);
+      c.hidden = !ok;
+      if (ok) shown++;
+    });
+    cnt.textContent = cards.length ? ('顯示 ' + shown + ' / ' + cards.length + ' 張') : '';
+  }
+  [d1, d2, kw].forEach(function (el) { el.addEventListener('input', apply); });
+  apply();
+})();
+</script>
 {% endblock %}
