@@ -1128,11 +1128,19 @@ def _display_balance(account_code, balance):
     return balance if _is_debit_normal(account_code) else -balance
 
 
+PNL_SUMMARY_ACCOUNT = ("3353", "本期損益")  # 同事截圖給的代碼;只有這個沒被 9/23 列為待確認,視為已確認
+
 def trial_balance(as_of):
     """試算表:每個用過的科目,累計到 as_of(含)為止的借貸合計 = 期末餘額。含已經貼過的
     年度結轉傳票——結轉會把已結束年度的 4~7 開頭科目沖平、餘額留到累積盈虧,試算表才會對。
     順便算一個檢核值(比照同事的檢核規則,理論上永遠是 0,因為每張傳票本來就借貸相等,
-    顯示出來是給同事一個熟悉的核對數字)。"""
+    顯示出來是給同事一個熟悉的核對數字)。
+
+    2026-10-01 改法(比照同事截圖的設計):加一列 `3353 本期損益`(= `_unclosed_pnl`,還沒
+    結轉的年度 4~7 開頭淨額)——**這一列是算出來的,底層沒有真的傳票**,所以先把 debit_side
+    / credit_side / check 用「真的有過帳的列」算完,才把這列加進 rows 顯示(同事說的「要填入
+    數字但加總[檢核]時不計算他」)。資產負債表 / 其他要看權益的地方,直接篩 `tb['rows']`
+    代碼開頭 3 就會自動含這列,不用再像以前那樣另外呼叫一次 `_unclosed_pnl` 重算。"""
     rows = q("""SELECT account_code, account_name, SUM(debit) db, SUM(credit) cr
                 FROM ledger_entry WHERE entry_date<=?
                 GROUP BY account_code, account_name
@@ -1141,8 +1149,15 @@ def trial_balance(as_of):
     for r in rows:
         r["balance"] = (r["db"] or 0) - (r["cr"] or 0)
         r["disp"] = _display_balance(r["account_code"], r["balance"])
+        r["synthetic"] = False
     debit_side  = sum(r["disp"] for r in rows if _is_debit_normal(r["account_code"]))
     credit_side = sum(r["disp"] for r in rows if not _is_debit_normal(r["account_code"]))
+
+    code, name = PNL_SUMMARY_ACCOUNT
+    rows.append(dict(account_code=code, account_name=name, db=None, cr=None, balance=None,
+                      disp=_unclosed_pnl(as_of), synthetic=True))
+    rows.sort(key=lambda r: r["account_code"])
+
     return dict(as_of=as_of, rows=rows, debit_side=debit_side, credit_side=credit_side,
                 check=round(debit_side - credit_side, 2))
 
@@ -1190,19 +1205,20 @@ def _unclosed_pnl(as_of):
 
 
 def balance_sheet(as_of):
-    """資產負債表:試算表篩代碼開頭 1/2/3 的列;另外附上「本期損益」(見 `_unclosed_pnl`,
-    顯示用,不是總帳裡真的科目)——年度結轉之前靠這個讓資產負債表配平,結轉之後這筆會
-    自然趨近 0(因為淨額已經真的轉進累積盈虧了)。"""
+    """資產負債表:試算表篩代碼開頭 1/2/3 的列。2026-10-01 起「本期損益」是試算表自己的
+    一列(代碼開頭 3,見 `trial_balance`),權益篩選會自動含進來,不用再像以前那樣另外呼叫
+    `_unclosed_pnl` 疊加——年度結轉之前靠這列讓資產負債表配平,結轉之後會自然趨近 0
+    (因為淨額已經真的轉進累積盈虧了)。"""
     tb = trial_balance(as_of)
     year = int(as_of[:4])
     assets      = [r for r in tb["rows"] if r["account_code"][0] == "1"]
     liabilities = [r for r in tb["rows"] if r["account_code"][0] == "2"]
     equity      = [r for r in tb["rows"] if r["account_code"][0] == "3"]
-    total_assets = sum(r["balance"] for r in assets)
-    total_liab   = -sum(r["balance"] for r in liabilities)
-    total_equity_posted = -sum(r["balance"] for r in equity)
-    current_pnl = _unclosed_pnl(as_of)
-    total_equity = total_equity_posted + current_pnl
+    total_assets = sum(r["disp"] for r in assets)
+    total_liab   = sum(r["disp"] for r in liabilities)
+    total_equity = sum(r["disp"] for r in equity)
+    current_pnl  = next((r["disp"] for r in equity if r["synthetic"]), 0.0)
+    total_equity_posted = total_equity - current_pnl
     return dict(as_of=as_of, year=year, assets=assets, liabilities=liabilities, equity=equity,
                 total_assets=total_assets, total_liab=total_liab,
                 total_equity_posted=total_equity_posted, current_pnl=current_pnl,

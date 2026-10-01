@@ -40,14 +40,15 @@
 {% if tab == 'trial' %}
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">
   截至 {{ tb.as_of }} 為止,每個用過的科目累計借貸餘額。含已經結轉過的年度——那些年份的
-  收入/成本/費用科目已經歸零,餘額轉進了累積盈虧。
+  收入/成本/費用科目已經歸零,餘額轉進了累積盈虧。「3353 本期損益」這列是算出來的(還沒
+  結轉的年度損益),底下沒有真的傳票,下面的借貸合計檢核不含這列。
 </p>
 <div class="card" style="margin-bottom:16px">
   <table>
     <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>借方合計</th><th data-num>貸方合計</th><th data-num>餘額</th></tr></thead>
     <tbody>{% for r in tb.rows %}
-      <tr>
-        <td>{{ r.account_code }}</td><td>{{ r.account_name }}</td>
+      <tr style="{{ 'background:var(--paper-2)' if r.synthetic }}">
+        <td>{{ r.account_code }}</td><td>{{ r.account_name }}{{ '(算出來的)' if r.synthetic }}</td>
         <td class="r">{{ r.db|money if r.db else '—' }}</td>
         <td class="r">{{ r.cr|money if r.cr else '—' }}</td>
         <td class="r {{ 'neg' if r.disp < 0 }}">{{ r.disp|money }}</td>
@@ -97,9 +98,11 @@
       <thead><tr><th>科目</th><th data-num>餘額</th></tr></thead>
       <tbody>
         {% for r in bs.equity %}
-        <tr><td>{{ r.account_code }} {{ r.account_name }}</td><td class="r">{{ r.disp|money }}</td></tr>
-        {% endfor %}
-        <tr><td>本期損益(還沒結轉的年度,顯示用,不是真的科目)</td><td class="r">{{ bs.current_pnl|money }}</td></tr>
+        <tr style="{{ 'background:var(--paper-2)' if r.synthetic }}">
+          <td>{{ r.account_code }} {{ r.account_name }}{{ '(算出來的,還沒結轉的年度損益)' if r.synthetic }}</td>
+          <td class="r">{{ r.disp|money }}</td>
+        </tr>
+        {% else %}<tr><td colspan="2" class="muted" style="text-align:left">—</td></tr>{% endfor %}
       </tbody>
       <tfoot><tr><td><b>權益合計</b></td><td class="r"><b>{{ bs.total_equity|money }}</b></td></tr></tfoot>
     </table>
