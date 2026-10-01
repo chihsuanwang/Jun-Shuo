@@ -40,8 +40,7 @@ REM 啟動(或直接雙擊 啟動.bat)
 
 | Skill | 用途 | 怎麼裝 | 備註 |
 |---|---|---|---|
-| **agent-browser** | 瀏覽器自動化(dogfood 探索式測試、走位截圖、示意圖 Artifact 發布前預覽) | `npm i -g agent-browser && agent-browser install` | 套件內含**未簽章 exe**。SAC 開啟的機器(2026-10 確認其中一台是)會被硬擋
-  (「應用程式控制原則已封鎖此檔案」,無法繞過);SAC 沒開的那台能正常用,目前主要在那台做測試 |
+| **agent-browser** | 瀏覽器自動化(dogfood 探索式測試、走位截圖、示意圖 Artifact 發布前預覽) | `npm i -g agent-browser && agent-browser install`(實際下載 Chrome ~196MB,不是估的 50MB) | 套件內含**未簽章 exe**,SAC 開啟時會被硬擋(「應用程式控制原則已封鎖此檔案」,無法繞過)。2026-10-01 兩台一度一台能用一台不能;當天使用者把原本開著 SAC 的那台關掉後,裝起來也驗證能正常開瀏覽器/讀畫面/點連結 |
 | **playwright**(Claude Code plugin,非上面那個 npm 工具) | 瀏覽器自動化的另一個來源,微軟官方 `@playwright/mcp`,走官方 marketplace | `claude plugin install playwright@claude-plugins-official --scope project` | 2026-10-01 裝在 SAC 開啟的那台當 agent-browser 的替代方案;還沒實際觸發過(第一次用會下載瀏覽器執行檔),能不能繞過 SAC 未驗證 |
 | **frontend-design**(Claude Code plugin) | 前端 UI/排版工作時的被動技能,避免「一看就是 AI 做的」通用設計 | `claude plugin install frontend-design@claude-plugins-official --scope project` | 純 `SKILL.md` 文字指示,無執行檔,兩台都能裝 |
 | find-skills | 幫忙找/裝其他 skill 的 meta skill | 通常內建或用它裝別的 skill 時順便有 | |
