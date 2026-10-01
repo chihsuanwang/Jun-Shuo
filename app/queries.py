@@ -24,6 +24,16 @@ def latest_sold_season():
     return rows[-1]["season"] if rows else None
 
 
+def calendar_years():
+    """所有「有動靜」的西曆年——跟 seasons() 同一組資料來源(訂單 + 營運費用),只是
+    切法改成 1~12 月而非產季(2026-10 新增,給經營報表的「依西曆年」檢視用)。"""
+    rows = q("""SELECT CAST(strftime('%Y', order_date) AS INT) y FROM "order"
+                UNION
+                SELECT CAST(substr(ym, 1, 4) AS INT) y FROM op_expense
+                ORDER BY y""")
+    return [r["y"] for r in rows]
+
+
 def season_of(d):
     """由日期(YYYY-MM-DD 或 date)推產季:4 月初~隔年 3 月底,以起始年命名。
     例:2026-04-01 ~ 2027-03-31 皆屬 2026 產季。"""
@@ -48,9 +58,33 @@ def _season_list(season):
     return [int(season)]
 
 
-def _S(season, alias="o"):
+def _year_list(year):
+    """把 year 參數正規化成西曆年 int 清單,語意同 _season_list,用在 calendar 模式。"""
+    if year in (None, "all", "", 0):
+        return calendar_years()
+    if isinstance(year, (list, tuple, set)):
+        ys = sorted({int(y) for y in year if str(y).strip() not in ("", "all")})
+        return ys or calendar_years()
+    return [int(year)]
+
+
+def _S(season, alias="o", mode="season", date_col="order_date", year=None):
     """回傳 (clause, params) —— 供 WHERE ... AND {clause} 使用。
-    season 可為單一產季、產季清單,或 None / 'all'(全部)。"""
+    mode='season'(預設,行為不變):season 可為單一產季、產季清單,或 None/'all'(全部),
+    依 {alias}.season 欄位過濾。
+    mode='calendar'(2026-10 新增,經營報表「依西曆年」檢視用):改依 {alias}.{date_col}
+    這個日期欄位落在哪個西曆年過濾(不是比對 season 欄位,因為切法完全不同),
+    year 可為單一西曆年、清單,或 None/'all';這個模式下 season 參數被忽略。"""
+    if mode == "calendar":
+        if year in (None, "all", "", 0):
+            return "1=1", []
+        if isinstance(year, (list, tuple, set)):
+            ys = sorted({int(y) for y in year if str(y).strip() not in ("", "all")})
+            if not ys:
+                return "1=1", []
+            return (f"strftime('%Y',{alias}.{date_col}) IN ({','.join('?' * len(ys))})",
+                    [str(y) for y in ys])
+        return f"strftime('%Y',{alias}.{date_col})=?", [str(int(year))]
     if season in (None, "all", "", 0):
         return "1=1", []
     if isinstance(season, (list, tuple, set)):
@@ -67,15 +101,15 @@ def _S(season, alias="o"):
 #   但照樣可以出貨(出貨跟庫存不受付款狀態影響)。
 PAID_O = "o.payment_status IN ('已收款','部分收款')"
 
-def kpi(season=None, asof=None):
+def kpi(season=None, asof=None, mode="season", year=None):
     a = as_of(asof)
-    sc, sp = _S(season)
+    sc, sp = _S(season, mode=mode, year=year)
     rev = q1(f"SELECT COALESCE(SUM(o.paid_amount),0) v FROM \"order\" o WHERE {sc} AND order_kind='銷售' AND {PAID_O}", sp)["v"]
     m = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) cogs
                FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                JOIN product p ON p.product_id=ol.product_id
                WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}""", sp)
-    ret_gross, ret_cogs = _returns_agg(season)
+    ret_gross, ret_cogs = _returns_agg(season, mode=mode, year=year)
     net_rev = rev - ret_gross
     gp = net_rev - (m["cogs"] - ret_cogs)
     oc = q1(f"SELECT COUNT(*) n FROM \"order\" o WHERE {sc} AND order_kind='銷售'", sp)["n"]
@@ -99,9 +133,9 @@ def kpi(season=None, asof=None):
 
 
 # ---------- 警示 -----------------------------------------------------
-def alerts(season=None, asof=None):
+def alerts(season=None, asof=None, mode="season", year=None):
     a = as_of(asof)
-    sc, sp = _S(season)
+    sc, sp = _S(season, mode=mode, year=year)
     out = []
     od = q1(f"""SELECT COUNT(*) n, COALESCE(SUM(order_total),0) v,
                        MAX(julianday(?)-julianday(order_date)) maxdays
@@ -143,9 +177,9 @@ def alerts(season=None, asof=None):
 
 
 # ---------- 儀表板圖表 --------------------------------------------
-def monthly(season=None):
+def monthly(season=None, mode="season", year=None):
     """依訂單日期歸月,金額用實收(只算已收款 / 部分收款的訂單)。"""
-    sc, sp = _S(season)
+    sc, sp = _S(season, mode=mode, year=year)
     rev_rows = q(f"""SELECT strftime('%Y-%m', o.order_date) ym, COALESCE(SUM(o.paid_amount),0) rev
                      FROM "order" o WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}
                      GROUP BY ym""", sp)
@@ -157,7 +191,7 @@ def monthly(season=None):
                       GROUP BY ym""", sp)
     cogs_map = {r["ym"]: r["cogs"] for r in cogs_rows}
     rows = [dict(ym=r["ym"], rev=r["rev"], gp=r["rev"] - cogs_map.get(r["ym"], 0)) for r in rev_rows]
-    rc, rp = _S(season, alias="sr")
+    rc, rp = _S(season, alias="sr", mode=mode, date_col="return_date", year=year)
     rmap = {r["ym"]: r for r in q(f"""SELECT strftime('%Y-%m', sr.return_date) ym,
                 COALESCE(SUM(sr.amount),0) ret,
                 COALESCE(SUM(CASE WHEN sr.restock=1
@@ -176,8 +210,8 @@ def monthly(season=None):
     return rows
 
 
-def by_channel(season=None):
-    sc, sp = _S(season)
+def by_channel(season=None, mode="season", year=None):
+    sc, sp = _S(season, mode=mode, year=year)
     rows = q(f"""SELECT c.name,
         (SELECT COUNT(*) FROM "order" o WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') orders,
         (SELECT COALESCE(SUM(ol.line_subtotal),0) FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
@@ -193,9 +227,9 @@ def by_channel(season=None):
     return rows
 
 
-def ar_aging(season=None, asof=None):
+def ar_aging(season=None, asof=None, mode="season", year=None):
     a = as_of(asof)
-    sc, sp = _S(season)
+    sc, sp = _S(season, mode=mode, year=year)
     rows = q(f"""SELECT o.order_id, o.order_no, o.order_total, o.order_date, o.payment_status,
                         cu.display_name cust,
                         CAST(julianday(?)-julianday(o.order_date) AS INT) days
@@ -209,9 +243,9 @@ def ar_aging(season=None, asof=None):
     return buckets, rows
 
 
-def ar_recently_paid(season=None, limit=15):
+def ar_recently_paid(season=None, limit=15, mode="season", year=None):
     """比照 E應收帳款 sheet 的『已收回的帳款』——最近標記已收款的訂單,依收款日新到舊。"""
-    sc, sp = _S(season)
+    sc, sp = _S(season, mode=mode, year=year)
     rows = q(f"""SELECT o.order_id, o.order_no, o.paid_date, o.paid_amount, o.order_total,
                         cu.display_name cust
                  FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
@@ -225,16 +259,18 @@ CASH_SRC_LABEL = {'purchase': '進貨', 'op_expense': '營運費用', 'order_sal
                    'equity': '資本異動', 'manual_adjustment': '帳務調整'}
 
 def cash_accounts():
-    """現金 / 各銀行帳戶清單——依 ledger_entry 裡實際用過的科目抓,不是另外維護的固定名單。"""
+    """現金 / 各銀行帳戶清單——依 ledger_entry 裡實際用過的科目抓,不是另外維護的固定名單。
+    2026-09-23 起每家銀行有自己的子代碼(1103-01/02/03…,見 bank_account 主檔),用 LIKE
+    抓整組,不是只比對『1103』這個舊的共用代碼。"""
     return q("""SELECT DISTINCT account_code, account_name FROM ledger_entry
-                WHERE account_code IN ('1102','1103') ORDER BY account_code, account_name""")
+                WHERE account_code='1102' OR account_code LIKE '1103%'
+                ORDER BY account_code, account_name""")
 
 
 def payment_account_names():
-    """「付款/收款帳戶」欄位的自動完成建議清單——把之前打過的銀行帳戶名稱(去掉『銀行存款-』
-    前綴)抓出來,減少同一個帳戶因為打字不一致被當成兩個帳戶的風險。現金不用列,留白就是現金。"""
-    accts = cash_accounts()
-    return [a["account_name"][len("銀行存款-"):] for a in accts if a["account_code"] == "1103"]
+    """「付款/收款帳戶」欄位的自動完成建議清單——2026-09-23 起直接讀 bank_account 主檔
+    (銀行帳戶已經有專門的主檔跟固定子代碼,不用再從 ledger_entry 的科目名稱反推)。"""
+    return [r["name"] for r in q("SELECT name FROM bank_account ORDER BY name")]
 
 
 def cash_ledger(account_code, account_name):
@@ -275,8 +311,8 @@ def stock_value_rows(lo, hi):
     return out
 
 
-def product_mix(season=None):
-    sc, sp = _S(season)
+def product_mix(season=None, mode="season", year=None):
+    sc, sp = _S(season, mode=mode, year=year)
     return q(f"""SELECT p.name, SUM(ol.line_subtotal) rev, SUM(ol.qty) qty
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
@@ -284,8 +320,8 @@ def product_mix(season=None):
                  GROUP BY p.name ORDER BY rev DESC""", sp)
 
 
-def new_vs_repeat(season=None):
-    sc, sp = _S(season)
+def new_vs_repeat(season=None, mode="season", year=None):
+    sc, sp = _S(season, mode=mode, year=year)
     rows = q(f"""SELECT customer_id, COUNT(*) n, SUM(order_total) v
                  FROM "order" o WHERE {sc} AND order_kind='銷售' GROUP BY customer_id""", sp)
     return dict(
@@ -296,8 +332,8 @@ def new_vs_repeat(season=None):
     )
 
 
-def top_customers(season=None, n=5):
-    sc, sp = _S(season)
+def top_customers(season=None, n=5, mode="season", year=None):
+    sc, sp = _S(season, mode=mode, year=year)
     return q(f"""SELECT cu.display_name, cu.segment, SUM(o.order_total) v
                  FROM "order" o JOIN customer cu ON cu.customer_id=o.customer_id
                  WHERE {sc} AND o.order_kind='銷售'
@@ -363,8 +399,8 @@ def issues_list():
 
 
 # ---------- 報表:獲利 --------------------------------------------
-def profit_by_product(season=None):
-    sc, sp = _S(season)
+def profit_by_product(season=None, mode="season", year=None):
+    sc, sp = _S(season, mode=mode, year=year)
     return q(f"""SELECT p.name, SUM(ol.qty) qty, p.uom,
                         SUM(ol.line_subtotal) rev,
                         SUM(CASE WHEN ol.list_price>ol.unit_price
@@ -404,7 +440,10 @@ OPEX_CATS = ["直接人工", "田間管理", "驗證費", "研發",
              # 9 宮格「其他費用」併進來的子科目(2026-09)
              "其他費用-什項購置", "其他費用-勞務費", "其他費用-設計費", "其他費用-手續費",
              "其他費用-交通費", "其他費用-包裝費", "其他費用-檢驗費", "其他費用-印刷費",
-             "其他費用-規費", "其他費用-燃料費"]
+             "其他費用-規費", "其他費用-燃料費",
+             # 同事會計科目表 2026-09-23 更新補的獨立費用科目
+             "文具用品", "交際費", "捐贈", "伙食費", "職工福利", "佣金支出",
+             "進出口費用", "產品保固費用", "利息費用"]
 
 def _month_span(a, b):
     y, m = map(int, a.split("-")); y2, m2 = map(int, b.split("-"))
@@ -476,10 +515,15 @@ def months_with_data():
     return _month_span(min(marks), max(max(marks), today_ym))
 
 
-def finance_months(season=None):
-    """月損益頁要顯示的月份:months_with_data() 中屬於指定產季的。
-    season=None / 'all' → 全部;可傳單一產季或產季清單。"""
+def finance_months(season=None, mode="season", year=None):
+    """月損益頁要顯示的月份:months_with_data() 中屬於指定產季(或 mode='calendar' 時
+    指定西曆年)的。season=None / 'all' → 全部;可傳單一產季或產季清單。"""
     mw = months_with_data()
+    if mode == "calendar":
+        if year in (None, "all", "", 0):
+            return mw
+        ys = set(_year_list(year))
+        return [m for m in mw if int(m[:4]) in ys]
     if season in (None, "all", "", 0):
         return mw
     ss = set(_season_list(season))
@@ -571,9 +615,10 @@ def sync_depreciation_vouchers():
                                         note=f"折舊:{a['name']}")
 
 # ---------- 銷貨退回 / 折讓(v2 回合 8) ----------------------
-def _returns_agg(season):
-    """指定產季(可 None / list)的退回 / 折讓:gross = 沖減營收;cogs_back = restock 回沖的成本。"""
-    sc, sp = _S(season, alias="sr")
+def _returns_agg(season, mode="season", year=None):
+    """指定產季(可 None / list)的退回 / 折讓:gross = 沖減營收;cogs_back = restock 回沖的成本。
+    mode='calendar' 時改用 year 參數(西曆年)。"""
+    sc, sp = _S(season, alias="sr", mode=mode, date_col="return_date", year=year)
     r = q1(f"""SELECT COALESCE(SUM(sr.amount),0) gross,
                       COALESCE(SUM(CASE WHEN sr.restock=1
                            THEN COALESCE(sr.qty,0)*COALESCE(p.unit_cost,0) ELSE 0 END),0) cogs_back
@@ -633,6 +678,36 @@ def season_finance(season):
                 margin=(gp / net_rev if net_rev else 0))
 
 
+def calendar_year_finance(year):
+    """整個西曆年合計(2026-10 新增)——結構完全比照 season_finance(),只是窗口改成
+    1~12 月,給經營報表「依西曆年」檢視用。回傳 dict 用 year= 取代 season= 當 key
+    (模板沒有地方直接讀 fin.season,已確認安全)。"""
+    yr = str(int(year))
+    rev = q1(f"""SELECT COALESCE(SUM(paid_amount),0) v FROM "order" o
+                WHERE strftime('%Y',order_date)=? AND order_kind='銷售' AND {PAID_O}""", (yr,))["v"]
+    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
+                 FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
+                 JOIN product p ON p.product_id=ol.product_id
+                 WHERE strftime('%Y',o.order_date)=? AND o.order_kind='銷售' AND {PAID_O}""", (yr,))["v"]
+    ship_cost = q1("""SELECT COALESCE(SUM(shipping_cost_actual),0) v
+                       FROM "order" WHERE strftime('%Y',order_date)=?""", (yr,))["v"]
+    ret_gross, ret_cogs = _returns_agg(None, mode="calendar", year=int(year))
+    cogs_net = cogs - ret_cogs
+    net_rev = rev - ret_gross
+    lo, hi_full = f"{yr}-01", f"{yr}-12"
+    hi = min(hi_full, dt.date.today().strftime("%Y-%m"))  # 進行中的年度只算到這個月
+    ox_rows = opex_rows(lo, hi)
+    opex_v = sum(r["amt"] for r in ox_rows)
+    opex_n = len(set(r["ym"] for r in ox_rows))
+    gp = net_rev - cogs_net
+    return dict(year=int(year), window=f"{lo} ~ {hi_full}",
+                revenue=rev, returns=ret_gross, cogs=cogs_net,
+                gross_profit=gp, ship_cost=ship_cost,
+                opex=opex_v, opex_months=opex_n,
+                pretax=gp - ship_cost - opex_v,
+                margin=(gp / net_rev if net_rev else 0))
+
+
 # ---------- 各產品線損益(v2 回合 6) -------------------------
 def _season_window(season):
     ss = _season_list(season)
@@ -640,12 +715,20 @@ def _season_window(season):
         return (None, None)
     return f"{ss[0]}-04", f"{ss[-1] + 1}-03"
 
-def product_line_pnl(season=None, basis="rev"):
+def _year_window(year):
+    """calendar 模式版的 _season_window——回傳格式一樣是 YYYY-MM(跟 opex_rows()/
+    purchase_date 比對用,不是完整日期)。"""
+    ys = _year_list(year)
+    if not ys:
+        return (None, None)
+    return f"{ys[0]}-01", f"{ys[-1]}-12"
+
+def product_line_pnl(season=None, basis="rev", mode="season", year=None):
     """各產品線損益(管理視角:含攤提 / 折舊,共同費用依 basis 分攤)。
     basis: rev 依營收 / qty 依銷量 / dm 依直接成本。
     直接材料:有批次成本用批次,否則用歸該線的進貨(原料 / 包材 / 委外)。"""
-    sc, sp = _S(season)                       # alias o
-    lo, hi = _season_window(season)
+    sc, sp = _S(season, mode=mode, year=year)   # alias o
+    lo, hi = (_year_window(year) if mode == "calendar" else _season_window(season))
 
     groups = q("""SELECT g.pg_id, g.name, b.name bu_name
                   FROM product_group g JOIN business_unit b ON b.bu_id=g.bu_id
@@ -689,7 +772,7 @@ def product_line_pnl(season=None, basis="rev"):
             g["ship_cost"] += (o["ship"] or 0) * s / tot
 
     # 銷貨退回 / 折讓:有 product_id → 歸該線;純折讓(無品項)→ 依原單各線營收佔比分攤(僅金額)
-    rc, rp = _S(season, alias="sr")
+    rc, rp = _S(season, alias="sr", mode=mode, date_col="return_date", year=year)
     for r in q(f"""SELECT sr.order_id oid, sr.amount, sr.qty, sr.restock,
                           COALESCE(p.unit_cost,0) ucost, p.product_group_id pg
                    FROM sales_return sr
@@ -762,8 +845,24 @@ def product_line_pnl(season=None, basis="rev"):
                 window=(f"{lo} ~ {hi}" if lo else "全部"))
 
 
-def finance_summary(season=None):
-    """儀表板用:單一產季 → season_finance;多個 / 全部 → 各產季相加。"""
+def finance_summary(season=None, mode="season", year=None):
+    """儀表板用:單一產季(或西曆年)→ season_finance/calendar_year_finance;
+    多個 / 全部 → 相加。"""
+    if mode == "calendar":
+        ys = _year_list(year)
+        if not ys:
+            return dict(year=None, window="全部年度", revenue=0, returns=0, cogs=0, gross_profit=0,
+                        ship_cost=0, opex=0, opex_months=0, pretax=0, margin=0)
+        if len(ys) == 1:
+            return calendar_year_finance(ys[0])
+        parts = [calendar_year_finance(y) for y in ys]
+        window = "全部年度" if ys == calendar_years() else "、".join(str(y) for y in ys) + " 年"
+        agg = dict(year=None, window=window)
+        for f in ("revenue", "returns", "cogs", "gross_profit", "ship_cost", "opex", "opex_months", "pretax"):
+            agg[f] = sum(p[f] for p in parts)
+        net = agg["revenue"] - agg["returns"]
+        agg["margin"] = agg["gross_profit"] / net if net else 0
+        return agg
     ss = _season_list(season)
     if not ss:
         return dict(season=None, window="全部產季", revenue=0, returns=0, cogs=0, gross_profit=0,
@@ -993,3 +1092,105 @@ def pricing_params():
         if r["key"] in vals:
             vals[r["key"]] = r["value"]
     return vals
+
+
+# ---------- 正式三表:試算表 / 資產負債表 / 綜合損益表(2026-09-23) --------
+#   同事做帳/報稅用,直接從 ledger_entry 彙總,口徑要跟總帳分毫不差——跟上面
+#   season_finance() 那套「給家易看的經營報表」是兩回事,不共用算法。年度一律用西曆年
+#   (1~12月)切,跟系統其他地方用的「產季」是兩條不同時間軸。
+
+def statement_years():
+    """有總帳資料的西曆年 + 當年(就算今年還沒資料也讓使用者選得到)。"""
+    rows = q("SELECT DISTINCT substr(entry_date,1,4) y FROM ledger_entry")
+    return sorted({int(r["y"]) for r in rows} | {dt.date.today().year})
+
+
+def _is_debit_normal(account_code):
+    """比照同事的檢核規則分組:1、5、6 開頭跟 7500(含)以後的 7 開頭是「正常餘額在借方」
+    (資產/成本/費用類);2、3、4 開頭跟 7500 以前的 7 開頭是「正常餘額在貸方」(負債/權益/
+    收入類)。"""
+    code_num = account_code.split("-")[0]
+    head = code_num[0]
+    if head == "7" and code_num.isdigit():
+        return int(code_num) >= 7500
+    return head in ("1", "5", "6")
+
+
+def trial_balance(as_of):
+    """試算表:每個用過的科目,累計到 as_of(含)為止的借貸合計 = 期末餘額。含已經貼過的
+    年度結轉傳票——結轉會把已結束年度的 4~7 開頭科目沖平、餘額留到累積盈虧,試算表才會對。
+    順便算一個檢核值(比照同事的檢核規則,理論上永遠是 0,因為每張傳票本來就借貸相等,
+    顯示出來是給同事一個熟悉的核對數字)。"""
+    rows = q("""SELECT account_code, account_name, SUM(debit) db, SUM(credit) cr
+                FROM ledger_entry WHERE entry_date<=?
+                GROUP BY account_code, account_name
+                HAVING SUM(debit)<>0 OR SUM(credit)<>0
+                ORDER BY account_code""", (as_of,))
+    for r in rows:
+        r["balance"] = (r["db"] or 0) - (r["cr"] or 0)
+    debit_side  = sum(r["balance"] for r in rows if _is_debit_normal(r["account_code"]))
+    credit_side = -sum(r["balance"] for r in rows if not _is_debit_normal(r["account_code"]))
+    return dict(as_of=as_of, rows=rows, debit_side=debit_side, credit_side=credit_side,
+                check=round(debit_side - credit_side, 2))
+
+
+def income_statement(year):
+    """綜合損益表:只抓當年度(西曆年,進行中的年份只算到今天為止,比照 season_finance()
+    的做法)、代碼開頭 4/5/6/7,**排除年度結轉傳票本身**——結轉會把這些科目沖平,不排除的話
+    已經結轉過的年度會整批顯示 0。"""
+    lo, hi_full = f"{year}-01-01", f"{year}-12-31"
+    today = dt.date.today()
+    hi = min(hi_full, today.strftime("%Y-%m-%d")) if year == today.year else hi_full
+    rows = q("""SELECT account_code, account_name, SUM(debit) db, SUM(credit) cr
+                FROM ledger_entry
+                WHERE entry_date BETWEEN ? AND ?
+                  AND (account_code LIKE '4%' OR account_code LIKE '5%'
+                       OR account_code LIKE '6%' OR account_code LIKE '7%')
+                  AND source_type != 'year_closing'
+                GROUP BY account_code, account_name
+                HAVING SUM(debit)<>0 OR SUM(credit)<>0
+                ORDER BY account_code""", (lo, hi))
+    for r in rows:
+        r["balance"] = (r["db"] or 0) - (r["cr"] or 0)
+    net_income = -sum(r["balance"] for r in rows)
+    closed = bool(q("""SELECT 1 FROM ledger_entry WHERE source_type='year_closing'
+                        AND source_id=? LIMIT 1""", (year,)))
+    return dict(year=year, window=f"{lo} ~ {hi_full}", rows=rows, net_income=net_income, closed=closed)
+
+
+def _unclosed_pnl(as_of):
+    """資產負債表用的「本期損益」顯示行:把**所有還沒結轉過的年度**(不是只算 as_of
+    當年——如果前面有年度漏結轉,原始的收入/費用分錄還在總帳裡,不能只看 as_of 那一年,
+    不然資產負債表會對不起來)的收入/費用類餘額全部加總。已經結轉過的年度不會重複算,
+    因為那年的原始分錄雖然還在,但淨額已經真的轉進累積盈虧,這裡用
+    `年份 NOT IN (已結轉年度)` 排除掉。"""
+    r = q1("""SELECT COALESCE(SUM(debit),0) db, COALESCE(SUM(credit),0) cr
+              FROM ledger_entry
+              WHERE entry_date<=? AND source_type != 'year_closing'
+                AND (account_code LIKE '4%' OR account_code LIKE '5%'
+                     OR account_code LIKE '6%' OR account_code LIKE '7%')
+                AND CAST(substr(entry_date,1,4) AS INTEGER) NOT IN (
+                    SELECT source_id FROM ledger_entry WHERE source_type='year_closing')
+           """, (as_of,))
+    return -(r["db"] - r["cr"])
+
+
+def balance_sheet(as_of):
+    """資產負債表:試算表篩代碼開頭 1/2/3 的列;另外附上「本期損益」(見 `_unclosed_pnl`,
+    顯示用,不是總帳裡真的科目)——年度結轉之前靠這個讓資產負債表配平,結轉之後這筆會
+    自然趨近 0(因為淨額已經真的轉進累積盈虧了)。"""
+    tb = trial_balance(as_of)
+    year = int(as_of[:4])
+    assets      = [r for r in tb["rows"] if r["account_code"][0] == "1"]
+    liabilities = [r for r in tb["rows"] if r["account_code"][0] == "2"]
+    equity      = [r for r in tb["rows"] if r["account_code"][0] == "3"]
+    total_assets = sum(r["balance"] for r in assets)
+    total_liab   = -sum(r["balance"] for r in liabilities)
+    total_equity_posted = -sum(r["balance"] for r in equity)
+    current_pnl = _unclosed_pnl(as_of)
+    total_equity = total_equity_posted + current_pnl
+    return dict(as_of=as_of, year=year, assets=assets, liabilities=liabilities, equity=equity,
+                total_assets=total_assets, total_liab=total_liab,
+                total_equity_posted=total_equity_posted, current_pnl=current_pnl,
+                total_equity=total_equity,
+                check=round(total_assets - (total_liab + total_equity), 2))

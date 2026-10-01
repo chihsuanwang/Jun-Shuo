@@ -350,7 +350,7 @@ CREATE TABLE ledger_entry (
   credit       REAL NOT NULL DEFAULT 0,
   source_type  TEXT NOT NULL CHECK (source_type IN ('purchase','op_expense','order_sale','order_payment',
                  'production_in','other_income','equity','manual_adjustment',
-                 'asset_acquire','asset_depreciation','sales_return')),
+                 'asset_acquire','asset_depreciation','sales_return','year_closing')),
   source_id    INTEGER NOT NULL,       -- 對應 purchase.purchase_id 或 op_expense.expense_id
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
@@ -398,3 +398,17 @@ CREATE TABLE manual_entry (
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX ix_manual_date ON manual_entry(entry_date);
+
+-- 23. 銀行帳戶主檔(2026-09-23,正式三表)------------------------------
+--     取代「所有銀行帳戶都共用科目代碼 1103」——同事的正式科目表對每家銀行都有自己的
+--     子代碼(1103-01/02/03…)。名字第一次在付款帳戶欄位被打出來時,ledger._cash_account()
+--     自動在這張表新增一筆、指派代碼,不需要家易先手動開戶。代碼一旦指派永久不變,
+--     所以這張表不提供刪除,只能改名(bank_account_id 是 AUTOINCREMENT,不會因為刪除
+--     而重複發號)。
+CREATE TABLE bank_account (
+  bank_account_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name         TEXT NOT NULL UNIQUE,    -- 例:合庫、凱基、郵局
+  account_code TEXT NOT NULL UNIQUE,    -- 例:1103-01
+  note         TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);

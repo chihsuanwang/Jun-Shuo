@@ -65,7 +65,7 @@
     <div class="muted" style="font-size:11px;margin-top:10px">回頭客 {{ nr.repeat_customers }} / {{ nr.total_customers }} 位(買過 2 次以上)</div>
   </div>
   <div class="card">
-    <h3 class="serif">本產季 Top 客戶</h3>
+    <h3 class="serif">本{{ '年度' if view == 'calendar' else '產季' }} Top 客戶</h3>
     {% for t in top %}
     <div class="row"><span>{{ loop.index }} · {{ t.display_name }} <span class="muted">{{ t.segment }}</span></span><strong>{{ t.v|money }}</strong></div>
     {% endfor %}

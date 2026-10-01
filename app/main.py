@@ -39,7 +39,10 @@ if _GY_PASSWORD:
         return await call_next(request)
 
 def money(v):
-    try: return f"{v:,.0f}"
+    try:
+        if -0.5 < v < 0.5:   # 避免浮點數誤差(例如折舊除不盡)顯示成難看的 -0
+            v = 0
+        return f"{v:,.0f}"
     except Exception: return v
 tpl.env.filters["money"] = money
 tpl.env.filters["pct"] = lambda v: f"{v*100:.0f}%"
@@ -261,19 +264,63 @@ def export_report(request: Request):
 
 # ---------- 儀表板 ---------------------------------------------------
 ASOF_OPTS = {"latest": "最新訂單日", "today": "今天"}
+VIEW_OPTS = {"season": "依產季", "calendar": "依西曆年"}   # 2026-10:經營報表檢視切換
+
 
 def _season_ctx(request: Request):
+    """回傳 (view, period, asof, ctx)。view='season' 時 period 是單一產季 int/None;
+    view='calendar' 時 period 是單一西曆年 int/None(讀 ?year=,跟 ?season= 分開,
+    避免同一個數字在兩個模式下意義搞混)。"""
+    view = request.query_params.get("view", "season")
+    if view not in VIEW_OPTS:
+        view = "season"
+    asof = request.query_params.get("asof", "latest") or "latest"
+    if view == "calendar":
+        yv = request.query_params.get("year", "")
+        year = None if yv in ("", "all") else int(yv)
+        return view, year, asof, dict(
+            view=view, view_opts=VIEW_OPTS,
+            seasons=Q.seasons(), season_sel="all",
+            years=Q.calendar_years(), year_sel=yv or "all",
+            asof_sel=asof, asof_opts=ASOF_OPTS)
     sv = request.query_params.get("season", "")
     season = None if sv in ("", "all") else int(sv)
-    asof = request.query_params.get("asof", "latest") or "latest"
-    return season, asof, dict(
-        seasons=Q.seasons(), season_sel=sv or "all", asof_sel=asof, asof_opts=ASOF_OPTS)
+    return view, season, asof, dict(
+        view=view, view_opts=VIEW_OPTS,
+        seasons=Q.seasons(), season_sel=sv or "all",
+        years=Q.calendar_years(), year_sel="all",
+        asof_sel=asof, asof_opts=ASOF_OPTS)
 
 
 def _seasons_ctx(request: Request):
-    """產季可複選(?season=2025&season=2026)—— 儀表板 / 各產品線損益共用。
-    沒帶 season → 預設只看最新產季;明確帶 season=all → 全部。"""
+    """產季(或西曆年)可複選(?season=2025&season=2026 / ?year=2025&year=2026)——
+    儀表板 / 各產品線損益 / 財務健康共用。沒帶值 → 預設只看最新一個;明確帶 all → 全部。
+    回傳 (view, period_sel, asof, ctx);period_sel 為 list[int] 或 None(=全部)。"""
+    view = request.query_params.get("view", "season")
+    if view not in VIEW_OPTS:
+        view = "season"
+    asof = request.query_params.get("asof", "latest") or "latest"
     all_seasons = Q.seasons()
+    all_years = Q.calendar_years()
+
+    if view == "calendar":
+        default_sel = all_years[-1:]
+        raw = request.query_params.getlist("year")
+        if not raw:
+            sel = default_sel
+        elif "all" in raw:
+            sel = []
+        else:
+            sel = sorted({int(v) for v in raw if v.strip().isdigit() and int(v) in all_years})
+            if not sel:
+                sel = default_sel
+        season_qs = "&".join(f"year={y}" for y in sel) if sel else "year=all"
+        return view, (sel or None), asof, dict(
+            view=view, view_opts=VIEW_OPTS,
+            seasons=all_seasons, seasons_sel=[], season_qs=season_qs,
+            years=all_years, years_sel=sel,
+            asof_sel=asof, asof_opts=ASOF_OPTS)
+
     default_sel = all_seasons[-1:]                    # 預設:最新產季
     raw = request.query_params.getlist("season")
     if not raw:
@@ -284,28 +331,31 @@ def _seasons_ctx(request: Request):
         sel = sorted({int(v) for v in raw if v.strip().isdigit() and int(v) in all_seasons})
         if not sel:
             sel = default_sel
-    asof = request.query_params.get("asof", "latest") or "latest"
     season_qs = "&".join(f"season={s}" for s in sel) if sel else "season=all"
-    return (sel or None), asof, dict(
+    return view, (sel or None), asof, dict(
+        view=view, view_opts=VIEW_OPTS,
         seasons=all_seasons, seasons_sel=sel, season_qs=season_qs,
+        years=all_years, years_sel=[],
         asof_sel=asof, asof_opts=ASOF_OPTS)
 
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    season, asof, ctx = _seasons_ctx(request)
-    k = Q.kpi(season, asof)
-    mon = Q.monthly(season)
+    view, period, asof, ctx = _seasons_ctx(request)
+    mode_kw = dict(mode=view, year=period) if view == "calendar" else dict(mode=view)
+    season_arg = None if view == "calendar" else period
+    k = Q.kpi(season_arg, asof, **mode_kw)
+    mon = Q.monthly(season_arg, **mode_kw)
     monmax = max([m["rev"] for m in mon] + [1])
-    fin = Q.finance_summary(season)
-    prog = Q.season_progress(season)
+    fin = Q.finance_summary(season_arg, **mode_kw)
+    prog = Q.season_progress(period) if view == "season" else None   # 旺季進度沒有西曆年版本,見計畫第 7 節
     # 各產品線賺不賺(pl)2026-09 暫時隱藏,先不算 —— 要恢復時把這行打開,
     # 連同 dashboard.html 裡對應那段一起解除註解。
-    # pl = Q.product_line_pnl(season, "rev")
+    # pl = Q.product_line_pnl(season_arg, "rev", **mode_kw)
     return tpl.TemplateResponse("dashboard.html", dict(
         request=request, active="dash", k=k, fin=fin, prog=prog,
         mon_json=json.dumps(mon), monmax=monmax,
-        alerts=Q.alerts(season, asof), **ctx,
+        alerts=Q.alerts(season_arg, asof, **mode_kw), **ctx,
     ))
 
 
@@ -314,26 +364,31 @@ REPORT_TABS = {"profit": "獲利分析", "aging": "收款帳齡", "compare": "�
 
 @app.get("/reports", response_class=HTMLResponse)
 def reports(request: Request):
-    season, asof, ctx = _season_ctx(request)
+    view, period, asof, ctx = _season_ctx(request)
     tab = request.query_params.get("tab", "profit")
     if tab not in REPORT_TABS:
         tab = "profit"
+    if tab == "compare":
+        view = "season"   # 跨產季比較沒有西曆年版本,這個 tab 固定維持產季(見計畫第 7 節)
+        ctx = {**ctx, "view": view}
+    mode_kw = dict(mode=view, year=period) if view == "calendar" else dict(mode=view)
+    season_arg = None if view == "calendar" else period
     data = dict(request=request, active="report", tab=tab, tabs=REPORT_TABS, **ctx)
     if tab == "profit":
-        pm = Q.product_mix(season)
+        pm = Q.product_mix(season_arg, **mode_kw)
         pmtot = sum(p["rev"] for p in pm) or 1
         for p in pm:
             p["share"] = p["rev"] / pmtot
-        nr = Q.new_vs_repeat(season)
+        nr = Q.new_vs_repeat(season_arg, **mode_kw)
         nrtot = (nr["repeat_rev"] + nr["new_rev"]) or 1
-        data.update(prod=Q.profit_by_product(season), ch=Q.by_channel(season),
+        data.update(prod=Q.profit_by_product(season_arg, **mode_kw), ch=Q.by_channel(season_arg, **mode_kw),
                     pm=pm, nr=nr, nr_rep_pct=nr["repeat_rev"] / nrtot,
-                    top=Q.top_customers(season))
+                    top=Q.top_customers(season_arg, **mode_kw))
     elif tab == "aging":
-        buckets, rows = Q.ar_aging(season, asof)
+        buckets, rows = Q.ar_aging(season_arg, asof, **mode_kw)
         data.update(buckets=buckets, rows=rows,
                     agmax=max(list(buckets.values()) + [1]),
-                    paid_recent=Q.ar_recently_paid(season))
+                    paid_recent=Q.ar_recently_paid(season_arg, **mode_kw))
     elif tab == "compare":
         klist, series = Q.season_compare()
         data.update(klist=klist, series=series,
@@ -1503,11 +1558,13 @@ PNL_BASIS = {"rev": "依營收", "qty": "依銷量", "dm": "依直接成本"}
 
 @app.get("/lines", response_class=HTMLResponse)
 def product_lines_pnl(request: Request):
-    season, asof, ctx = _seasons_ctx(request)
+    view, period, asof, ctx = _seasons_ctx(request)
+    mode_kw = dict(mode=view, year=period) if view == "calendar" else dict(mode=view)
+    season_arg = None if view == "calendar" else period
     basis = request.query_params.get("basis", "rev")
     if basis not in PNL_BASIS:
         basis = "rev"
-    data = Q.product_line_pnl(season, basis)
+    data = Q.product_line_pnl(season_arg, basis, **mode_kw)
     return tpl.TemplateResponse("lines.html", dict(
         request=request, active="lines", basis=basis, basis_opts=PNL_BASIS,
         d=data, **ctx))
@@ -1516,18 +1573,22 @@ def product_lines_pnl(request: Request):
 # ---------- 財務健康:月損益 ----------------------------------
 @app.get("/finance", response_class=HTMLResponse)
 def finance_page(request: Request):
-    season, asof, ctx = _seasons_ctx(request)
+    view, period, asof, ctx = _seasons_ctx(request)
+    mode_kw = dict(mode=view, year=period) if view == "calendar" else dict(mode=view)
+    season_arg = None if view == "calendar" else period
     fin = []
-    for ym in Q.finance_months(season):
+    for ym in Q.finance_months(season_arg, **mode_kw):
         d = Q.finance_month(ym)
         fin.append(dict(ym=ym, revenue=d["revenue"], returns=d["returns"], cogs=d["cogs"],
                         gross_profit=d["gross_profit"], ship_cost=d["ship_cost"],
                         opex_total=d["opex_total"], pretax=d["pretax"],
                         opex={r["category"]: r["amt"] for r in d["opex"]}))
+    fin_totals = ([Q.calendar_year_finance(y) for y in Q.calendar_years()] if view == "calendar"
+                  else [Q.season_finance(s) for s in Q.seasons()])
     return tpl.TemplateResponse("finance.html", dict(
         request=request, active="finance",
         fin_json=json.dumps(fin), cats=Q.OPEX_CATS,
-        seasons_fin=[Q.season_finance(s) for s in Q.seasons()], **ctx))
+        seasons_fin=fin_totals, **ctx))
 
 @app.get("/finance/expenses", response_class=HTMLResponse)
 def finance_expenses(request: Request):
@@ -1820,7 +1881,7 @@ def ledger_page(request: Request):
     where, args = ["1=1"], []
     if src in ("purchase", "op_expense", "order_sale", "order_payment",
                "production_in", "other_income", "equity", "manual_adjustment",
-               "asset_acquire", "asset_depreciation", "sales_return"):
+               "asset_acquire", "asset_depreciation", "sales_return", "year_closing"):
         where.append("source_type=?"); args.append(src)
     rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
                  ORDER BY voucher_no DESC, entry_id""", args)
@@ -1838,6 +1899,68 @@ def ledger_page(request: Request):
         v["total_credit"] += r["credit"] or 0
     return tpl.TemplateResponse("ledger.html", dict(
         request=request, active="ledger", vouchers=vouchers, src=src))
+
+
+# ---------- 銀行帳戶主檔(2026-09-23,每家銀行固定子代碼)-------
+#   代碼是第一次用到某個名字時 ledger._cash_account() 自動指派的(見該函式註解),
+#   這裡只給同事/家易看清單、改名字用,不提供新增/刪除。
+@app.get("/bank-accounts", response_class=HTMLResponse)
+def bank_accounts_page(request: Request):
+    rows = q("SELECT * FROM bank_account ORDER BY account_code")
+    return tpl.TemplateResponse("bank_accounts.html", dict(
+        request=request, active="bankacct", rows=rows))
+
+@app.post("/bank-accounts")
+async def bank_account_save(request: Request):
+    f = await request.form()
+    bid = f.get("bank_account_id")
+    name = (f.get("name") or "").strip()
+    if bid and name:
+        execute("UPDATE bank_account SET name=? WHERE bank_account_id=?", (name, int(bid)))
+    return RedirectResponse("/bank-accounts", status_code=303)
+
+
+# ---------- 正式三表:試算表 / 資產負債表 / 綜合損益表(2026-09-23)------
+#   給同事做帳/報稅用,直接從總帳彙總,用西曆年切期間(跟系統其他地方的「產季」不是
+#   同一條時間軸)。詳見 ledger.compose_year_closing_entries / queries.trial_balance 等註解。
+STATEMENT_TABS = {"trial": "試算表", "bs": "資產負債表", "is": "綜合損益表"}
+
+@app.get("/statements", response_class=HTMLResponse)
+def statements_page(request: Request):
+    tab = request.query_params.get("tab", "trial")
+    if tab not in STATEMENT_TABS:
+        tab = "trial"
+    years = Q.statement_years()
+    yv = request.query_params.get("year")
+    year = int(yv) if yv and yv.isdigit() and int(yv) in years else years[-1]
+    as_of = f"{year}-12-31"
+    closed = bool(q("""SELECT 1 FROM ledger_entry WHERE source_type='year_closing'
+                        AND source_id=? LIMIT 1""", (year,)))
+    data = dict(request=request, active="statement", tab=tab, tabs=STATEMENT_TABS,
+                years=years, year=year, closed=closed)
+    if tab == "trial":
+        data["tb"] = Q.trial_balance(as_of)
+    elif tab == "bs":
+        data["bs"] = Q.balance_sheet(as_of)
+    elif tab == "is":
+        data["is_"] = Q.income_statement(year)
+    return tpl.TemplateResponse("statements.html", data)
+
+@app.post("/statements/close-year")
+async def statements_close_year(request: Request):
+    f = await request.form()
+    year = int(f.get("year"))
+    if not q("SELECT 1 FROM ledger_entry WHERE source_type='year_closing' AND source_id=?", (year,)):
+        legs = ledger.compose_year_closing_entries(year)
+        ledger.save_voucher("year_closing", year, f"{year}-12-31", legs, "Y", note=f"{year} 年度結轉")
+    return RedirectResponse(f"/statements?tab=trial&year={year}", status_code=303)
+
+@app.post("/statements/reopen-year")
+async def statements_reopen_year(request: Request):
+    f = await request.form()
+    year = int(f.get("year"))
+    ledger.delete_voucher_for("year_closing", year)
+    return RedirectResponse(f"/statements?tab=trial&year={year}", status_code=303)
 
 
 # ---------- 銀行帳戶明細(現金 / 各銀行帳戶,依科目篩選總帳)---

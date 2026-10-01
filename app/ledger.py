@@ -15,6 +15,14 @@ app/schema.sql 的 ledger_entry(總帳)。
   ——開 `/assets` 頁時系統順便把還沒記過的月份補上,已經記過的月份不動,不是整張重開。
 - 銷貨退回 / 折讓(技術債 #2,2026-09-21):比照訂單,不經過確認畫面,存檔背景自動記。
   沖銷方向依原訂單付款狀態:已收款貸現金/銀行存款(真退錢),沒收款貸應收帳款(折抵)。
+- 正式三表(試算表/資產負債表/綜合損益表,2026-09-23):給同事做帳/報稅用,直接從
+  ledger_entry 彙總,不重用業務表算法(queries.season_finance 那套是給家易看的經營報表,
+  口徑不用跟總帳一致)。年度用西曆年(1~12月)切,跟系統其他地方用的「產季」是兩條不同
+  時間軸。年度結轉是真的貼一筆傳票(`compose_year_closing_entries`),把 4~7 開頭科目的
+  當年餘額歸零、淨額轉入累積盈虧,不是報表端純公式計算——所以要防重複結轉(main.py 存檔前
+  查 source_id=year 是否已存在)。銀行帳戶改成查 `bank_account` 主檔,每家銀行有自己的
+  固定子代碼(1103-01/02/03…),第一次用到某個名字時 `_cash_account()` 自動建號,不用
+  家易先手動開戶。
 
 對照表(PURCHASE_ACCOUNTS / EXPENSE_ACCOUNTS / REVENUE_ACCOUNTS / COGS_INVENTORY_ACCOUNTS /
 OTHER_INCOME_ACCOUNTS / EQUITY_* / FIXED_ASSET_ACCOUNTS / RETURN_ACCOUNTS 等)2026-09-21
@@ -25,8 +33,15 @@ OTHER_INCOME_ACCOUNTS / EQUITY_* / FIXED_ASSET_ACCOUNTS / RETURN_ACCOUNTS 等)20
 科目下面,要請同事確認。「研發」原本也在這份待確認名單,2026-09-21 已確認申報表那筆
 78 萬其實是設備零件費用,不是本科目該記的東西(見 EXPENSE_ACCOUNTS 上面的註解)。之後
 要改直接改這個檔案的常數就好,比照 queries.OPEX_CATS 也是這樣讓人直接改的做法。
+2026-09-23 同事又補了一份會計科目表更新檔,原本 3 個「待確認」科目(田間管理/法定盈餘
+公積/運輸設備)這份更新檔還是沒有列出對應代碼,仍要問同事;但確認了現有 6188-01~10
+那組子科目猜對了,另外多列出 8 個原本系統沒用到的獨立費用科目(文具用品/交際費/捐贈/
+伙食費/職工福利/佣金支出/進出口費用/產品保固費用),已補進 EXPENSE_ACCOUNTS 跟
+queries.OPEX_CATS。同一天同事又給了正式三表的範例,連帶又給了一批新代碼(7101 利息收入/
+7190 其他收入/7250 生物資產淨FV利益/7510 利息費用),取代原本代打用的 4881-01/02/09、
+6498——PRODUCTION_GAIN_ACCOUNT、OTHER_INCOME_ACCOUNTS 都已經改成新代碼。
 """
-from db import q, execute
+from db import q, q1, execute
 
 CASH_ACCOUNT = ("1102", "現金")   # 正式表這個代碼叫「零用金」,沿用「現金」這個家易更好懂的講法
 TAX_INPUT_ACCOUNT = ("1423", "進項稅額")   # 原本誤用 1150(正式表沒有這個碼);1423 才是進項稅額
@@ -71,6 +86,17 @@ EXPENSE_ACCOUNTS = {
     "其他費用-印刷費":   ("6188-08", "其他費用-印刷費"),
     "其他費用-規費":     ("6188-09", "其他費用-規費"),
     "其他費用-燃料費":   ("6188-10", "其他費用-燃料費"),
+    # 同事會計科目表 2026-09-23 更新的獨立費用科目(不是 6188 底下的子科目,自成一號)
+    "文具用品":   ("6112", "文具用品"),
+    "交際費":     ("6120", "交際費"),
+    "捐贈":       ("6121", "捐贈"),
+    "伙食費":     ("6127", "伙食費"),
+    "職工福利":   ("6128", "職工福利"),
+    "佣金支出":   ("6130", "佣金支出"),
+    "進出口費用": ("6132", "進出口費用"),
+    "產品保固費用": ("613501", "產品保固費用"),
+    # 同事會計科目表 2026-09-23 更新新增,目前系統沒有專門的「借款」畫面,先併進營運費用選
+    "利息費用": ("7510", "利息費用"),
 }
 
 # 應收帳款(訂單成立時的借方、收款時的貸方)
@@ -102,10 +128,21 @@ COGS_INVENTORY_DEFAULT = ("1300", "存貨")
 
 
 def _cash_account(payment_account):
+    """現金或某家銀行的科目代碼。銀行帳戶 2026-09-23 起各自有固定子代碼(比照同事正式表
+    的合庫/凱基/台新分開編號,不再全部共用 1103)——查 bank_account 主檔,第一次用到某個
+    名字時自動新增一筆並指派代碼(用 AUTOINCREMENT 的 id 組出 1103-01/02/03…,刪除不重複
+    發號,代碼一旦指派永久不變)。"""
     name = (payment_account or "").strip()
     if not name or name == "現金":
         return CASH_ACCOUNT
-    return ("1103", f"銀行存款-{name}")
+    row = q1("SELECT account_code FROM bank_account WHERE name=?", (name,))
+    if row:
+        return (row["account_code"], f"銀行存款-{name}")
+    next_id = (q1("SELECT MAX(bank_account_id) m FROM bank_account").get("m") or 0) + 1
+    code = f"1103-{next_id:02d}"
+    execute("INSERT INTO bank_account(bank_account_id, name, account_code) VALUES(?,?,?)",
+            (next_id, name, code))
+    return (code, f"銀行存款-{name}")
 
 
 def compose_purchase_entries(category, amount, tax_amount=0, payment_account=None, is_fixed_asset=False):
@@ -185,17 +222,18 @@ def compose_order_payment_entries(paid_amount, payment_account=None):
 
 # ---------- 9 宮格 B 類(生產入庫 / 其他收益 / 資本異動 / 帳務調整)------
 
-# 生產入庫的貸方——同事表裡叫「淨FV利益」,會計科目表沒有專門科目,先掛在既有的「其他利益」
-PRODUCTION_GAIN_ACCOUNT = ("6498", "其他利益")
+# 生產入庫的貸方——同事表裡叫「淨FV利益」。2026-09-23 同事更新檔給了專門科目,不用再掛在
+# 「其他利益(6498)」下面代打。
+PRODUCTION_GAIN_ACCOUNT = ("7250", "生物資產淨FV利益")
 
 # 其他收益的銷項稅額(貸方)——跟進貨/費用的進項稅額(借方)相對
 SALES_TAX_OUTPUT_ACCOUNT = ("2214", "銷項稅額")
 
-# 其他收益類別 -> 貸方收入科目
+# 其他收益類別 -> 貸方收入科目。2026-09-23 同事更新檔給了專門科目,不再掛在 4881 底下。
 OTHER_INCOME_ACCOUNTS = {
-    "利息收入":     ("4881-01", "其他營業收入-利息收入"),
-    "政府補助收入": ("4881-02", "其他營業收入-政府補助收入"),
-    "其他":         ("4881-09", "其他營業收入"),
+    "利息收入":     ("7101", "利息收入"),
+    "政府補助收入": ("7190-01", "其他收入-政府補助"),
+    "其他":         ("7190-99", "其他收入-其他"),
 }
 
 # 資本異動科目
@@ -334,6 +372,40 @@ def compose_sales_return_entries(kind, amount, already_paid, payment_account=Non
         legs.append(dict(account_code=inv_code, account_name=inv_name, debit=cogs_amount, credit=0))
         legs.append(dict(account_code=COGS_EXPENSE_ACCOUNT[0], account_name=COGS_EXPENSE_ACCOUNT[1],
                           debit=0, credit=cogs_amount))
+    return legs
+
+
+def compose_year_closing_entries(year):
+    """年度結轉(2026-09-23,正式三表):跟其他 compose_* 不同,這個直接回頭查總帳本身——
+    抓某個西曆年裡代碼開頭 4/5/6/7(收入/成本/費用類)的所有分錄,依科目彙總出借貸淨額,
+    對每個有餘額的科目貼一筆方向相反的沖銷腿(全部歸零),淨額(收入類貸餘 − 費用類借餘 =
+    本期損益)轉入「累積盈虧」。呼叫前由 main.py 檢查這一年是否已經結轉過(source_id=year),
+    這裡不重複檢查。"""
+    lo, hi = f"{year}-01-01", f"{year}-12-31"
+    rows = q("""SELECT account_code, account_name, SUM(debit) db, SUM(credit) cr
+                FROM ledger_entry
+                WHERE entry_date BETWEEN ? AND ?
+                  AND (account_code LIKE '4%' OR account_code LIKE '5%'
+                       OR account_code LIKE '6%' OR account_code LIKE '7%')
+                  AND source_type != 'year_closing'
+                GROUP BY account_code, account_name
+                HAVING db <> cr""", (lo, hi))
+    legs, net = [], 0.0
+    for r in rows:
+        bal = (r["db"] or 0) - (r["cr"] or 0)   # 正=借餘(費用類正常餘額),負=貸餘(收入類正常餘額)
+        if bal > 0:
+            legs.append(dict(account_code=r["account_code"], account_name=r["account_name"], debit=0, credit=bal))
+        else:
+            legs.append(dict(account_code=r["account_code"], account_name=r["account_name"], debit=-bal, credit=0))
+        net -= bal   # 貸餘(收入)讓淨利增加,借餘(費用)讓淨利減少
+    if not legs:
+        return []
+    if net >= 0:
+        legs.append(dict(account_code=EQUITY_RETAINED_ACCOUNT[0], account_name=EQUITY_RETAINED_ACCOUNT[1],
+                          debit=0, credit=net))
+    else:
+        legs.append(dict(account_code=EQUITY_RETAINED_ACCOUNT[0], account_name=EQUITY_RETAINED_ACCOUNT[1],
+                          debit=-net, credit=0))
     return legs
 
 

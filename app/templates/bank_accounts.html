@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}銀行帳戶 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup">桂圓帳房 / 銀行帳戶</div>
+  <h1 class="serif">銀行帳戶</h1>
+</div></div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">
+  訂單/進貨/營運費用等畫面的「付款帳戶」欄位打過的銀行名稱,第一次用到就會自動出現在這裡、
+  自動配一個固定代碼(現金不用列,留白就是現金)。代碼配好就不會再變,這裡只能改名字,
+  不提供刪除。
+</p>
+<div class="card">
+  <table>
+    <thead><tr><th>科目代碼</th><th>名稱</th><th>建立時間</th><th></th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr>
+        <td>{{ r.account_code }}</td>
+        <td>
+          <form method="post" action="/bank-accounts" style="display:flex;gap:6px;align-items:center">
+            <input type="hidden" name="bank_account_id" value="{{ r.bank_account_id }}">
+            <input type="text" name="name" value="{{ r.name }}" style="width:160px">
+            <button type="submit" class="ghost">改名</button>
+          </form>
+        </td>
+        <td class="muted" style="font-size:12px">{{ r.created_at }}</td>
+        <td></td>
+      </tr>
+    {% else %}<tr><td colspan="4" class="muted" style="text-align:left">還沒有任何銀行帳戶。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endblock %}

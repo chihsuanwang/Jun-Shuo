@@ -24,7 +24,9 @@ if os.path.exists(DB):
             print("取消。"); sys.exit(0)
     os.remove(DB)
 
-cx = sqlite3.connect(DB)
+cx = sqlite3.connect(DB, isolation_level=None)   # 自動 commit——2026-09-23 起 ledger._cash_account()
+# 存新銀行帳戶時會另外開一條連線寫 bank_account,這條連線不能一直握著沒 commit 的交易,
+# 不然會跟那條連線互相卡住(database is locked)。
 cx.executescript(open(SQL, encoding="utf-8").read())
 c = cx.cursor()
 
@@ -386,11 +388,12 @@ eq_id = c.lastrowid
 legs = ledger.compose_equity_entries("現金增資", 50000, "現金")
 add_voucher("Q", "2025-04-01", legs, "equity", eq_id, "資本異動示範")
 
+bank_code, bank_name = ledger._cash_account("郵局")   # 2026-09-23 起代碼是自動指派的,不再硬寫死 1103
 c.execute("""INSERT INTO manual_entry(entry_date,debit_code,debit_name,credit_code,credit_name,amount,note)
              VALUES(?,?,?,?,?,?,?)""",
-          ("2026-09-10", "1102", "現金", "1103", "銀行存款-郵局", 500, "示範:提領零用金(帳戶間轉帳,套不進其他 8 類)"))
+          ("2026-09-10", "1102", "現金", bank_code, bank_name, 500, "示範:提領零用金(帳戶間轉帳,套不進其他 8 類)"))
 adj_id = c.lastrowid
-legs = ledger.compose_manual_entries("1102", "現金", "1103", "銀行存款-郵局", 500)
+legs = ledger.compose_manual_entries("1102", "現金", bank_code, bank_name, 500)
 add_voucher("M", "2026-09-10", legs, "manual_adjustment", adj_id, "帳務調整示範")
 
 cx.commit()

@@ -36,7 +36,7 @@
 <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:18px">
   <div class="card">
     <h3 class="serif">累積稅前利潤</h3>
-    <div class="muted" style="font-size:11px;margin-bottom:4px">依上方所選產季逐月累加(產季從 4 月算起)。線在 0 以下 = 前期投入還沒被銷售旺季補回來;爬回 0 以上 = 這段期間整體轉正。</div>
+    <div class="muted" style="font-size:11px;margin-bottom:4px">依上方所選{{ '年度' if view == 'calendar' else '產季' }}逐月累加{{ '' if view == 'calendar' else '(產季從 4 月算起)' }}。線在 0 以下 = 前期投入還沒被銷售旺季補回來;爬回 0 以上 = 這段期間整體轉正。</div>
     <div id="cumWrap" style="position:relative"></div>
     <div id="cumTip" class="chart-tip" hidden></div>
   </div>
@@ -151,15 +151,15 @@
   <div id="selBody" style="margin-top:12px"></div>
 </div>
 
-<!-- 3. 各產季合計 -->
+<!-- 3. 各產季(或各年度)合計 -->
 {% if seasons_fin %}
 <div class="card">
-  <h3 class="serif">各產季合計(含淡月固定成本)</h3>
+  <h3 class="serif">各{{ '年度' if view == 'calendar' else '產季' }}合計(含淡月固定成本)</h3>
   <table>
-    <thead><tr><th>產季</th><th>期間</th><th>營收(實收)</th><th>退貨/折讓</th><th>毛利</th><th>運費</th><th>營運費用(12 月)</th><th>稅前利潤</th></tr></thead>
+    <thead><tr><th>{{ '年度' if view == 'calendar' else '產季' }}</th><th>期間</th><th>營收(實收)</th><th>退貨/折讓</th><th>毛利</th><th>運費</th><th>營運費用</th><th>稅前利潤</th></tr></thead>
     <tbody>{% for s in seasons_fin %}
       <tr>
-        <td>{{ s.season }}</td>
+        <td>{{ s.year if view == 'calendar' else s.season }}</td>
         <td class="muted" style="font-size:12px">{{ s.window }}</td>
         <td>{{ s.revenue|money }}</td>
         <td class="{{ 'neg' if s.returns }}">{{ ('− ' ~ s.returns|money) if s.returns else '—' }}</td>
@@ -171,9 +171,14 @@
     {% endfor %}</tbody>
   </table>
   <div class="muted" style="font-size:11px;margin-top:6px">
+    {% if view == 'calendar' %}
+    一個年度從 1 月算到 12 月,共 12 個月。進行中的年度,營運費用只算到「已經過去的月份」,
+    不會預先把還沒發生的費用也算進去。
+    {% else %}
     一個產季從 4 月開花養果算起,到隔年 3 月這批桂圓乾賣完,共 12 個月;
     其中 9 月~隔年 3 月才有銷售,4–8 月沒收入卻每月都在付固定成本。
     進行中的產季,營運費用只算到「已經過去的月份」,不會預先把還沒發生的費用也算進去。
+    {% endif %}
   </div>
 </div>
 {% endif %}

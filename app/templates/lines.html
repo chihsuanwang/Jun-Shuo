@@ -53,7 +53,7 @@
 </div>
 
 <div class="muted" style="font-size:12px;margin-top:10px;line-height:1.8">
-  產季區間 {{ d.window }} · 分攤基準:{{ basis_opts[basis] }} ·
+  {{ '年度區間' if view == 'calendar' else '產季區間' }} {{ d.window }} · 分攤基準:{{ basis_opts[basis] }} ·
   未分攤的共同費用池 {{ d.shared_pool|money }}(研發、老闆行政、行銷、共同折舊等)<br>
   <b>直接材料來源</b>:{% for g in ls %}{{ g.name }}={{ g.dm_from }}{{ '、' if not loop.last }}{% endfor %} ——
   有填商品單位成本的用那個算;沒填的(蜂蜜 / 鮮果)用「歸該線的進貨」估算,口徑不同。<br>

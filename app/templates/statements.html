@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}{{ tabs[tab] }} · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 正式報表</div><h1 class="serif">{{ tabs[tab] }}</h1></div>
+  <div style="text-align:right">
+    <form method="get" action="/statements" style="display:inline-flex;gap:8px;align-items:center">
+      <input type="hidden" name="tab" value="{{ tab }}">
+      <select name="year" onchange="this.form.submit()">
+        {% for y in years %}<option value="{{ y }}" {{ 'selected' if y==year }}>{{ y }} 年</option>{% endfor %}
+      </select>
+    </form>
+    <div style="margin-top:8px">
+      {% if closed %}
+      <form method="post" action="/statements/reopen-year"
+            onsubmit="return confirm('確定撤銷 {{ year }} 年度結轉?')" style="display:inline">
+        <input type="hidden" name="year" value="{{ year }}">
+        <span class="muted" style="font-size:12px;margin-right:8px">{{ year }} 年已結轉</span>
+        <button type="submit" class="ghost">撤銷結轉</button>
+      </form>
+      {% else %}
+      <form method="post" action="/statements/close-year"
+            onsubmit="return confirm('確定產生 {{ year }} 年度結轉傳票?會把 4~7 開頭科目的本年度餘額歸零,淨額轉入累積盈虧,之後隨時可以撤銷。')"
+            style="display:inline">
+        <input type="hidden" name="year" value="{{ year }}">
+        <button type="submit">產生 {{ year }} 年度結轉</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="chips" style="margin:14px 0 20px;font-size:13px">
+  {% for key, label in tabs.items() %}
+    <a class="chip" href="/statements?tab={{ key }}&year={{ year }}"
+       style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if tab==key }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+{% if tab == 'trial' %}
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">
+  截至 {{ tb.as_of }} 為止,每個用過的科目累計借貸餘額。含已經結轉過的年度——那些年份的
+  收入/成本/費用科目已經歸零,餘額轉進了累積盈虧。
+</p>
+<div class="card" style="margin-bottom:16px">
+  <table>
+    <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>借方合計</th><th data-num>貸方合計</th><th data-num>餘額</th></tr></thead>
+    <tbody>{% for r in tb.rows %}
+      <tr>
+        <td>{{ r.account_code }}</td><td>{{ r.account_name }}</td>
+        <td class="r">{{ r.db|money if r.db else '—' }}</td>
+        <td class="r">{{ r.cr|money if r.cr else '—' }}</td>
+        <td class="r {{ 'neg' if r.balance < 0 }}">{{ r.balance|money }}</td>
+      </tr>
+    {% else %}<tr><td colspan="5" class="muted" style="text-align:left">還沒有總帳資料。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+<div class="card" style="max-width:460px">
+  <div style="display:flex;justify-content:space-between">
+    <span class="muted">借方正常餘額合計(1、5、6 開頭 + 7500 以後的 7 開頭)</span><b>{{ tb.debit_side|money }}</b>
+  </div>
+  <div style="display:flex;justify-content:space-between;margin-top:6px">
+    <span class="muted">貸方正常餘額合計(2、3、4 開頭 + 7500 以前的 7 開頭)</span><b>{{ tb.credit_side|money }}</b>
+  </div>
+  <hr class="rule" style="margin:10px 0">
+  <div style="display:flex;justify-content:space-between">
+    <span>檢核(應該 = 0)</span>
+    <b class="{{ 'pos' if tb.check == 0 else 'neg' }}">{{ tb.check|money }}</b>
+  </div>
+</div>
+{% endif %}
+
+{% if tab == 'bs' %}
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">截至 {{ bs.as_of }} 為止。</p>
+<div style="display:flex;gap:20px;flex-wrap:wrap">
+  <div class="card" style="flex:1;min-width:280px">
+    <h3 class="serif">資產</h3>
+    <table>
+      <thead><tr><th>科目</th><th data-num>餘額</th></tr></thead>
+      <tbody>{% for r in bs.assets %}
+        <tr><td>{{ r.account_code }} {{ r.account_name }}</td><td class="r">{{ r.balance|money }}</td></tr>
+      {% else %}<tr><td colspan="2" class="muted" style="text-align:left">—</td></tr>{% endfor %}</tbody>
+      <tfoot><tr><td><b>資產合計</b></td><td class="r"><b>{{ bs.total_assets|money }}</b></td></tr></tfoot>
+    </table>
+  </div>
+  <div class="card" style="flex:1;min-width:280px">
+    <h3 class="serif">負債</h3>
+    <table>
+      <thead><tr><th>科目</th><th data-num>餘額</th></tr></thead>
+      <tbody>{% for r in bs.liabilities %}
+        <tr><td>{{ r.account_code }} {{ r.account_name }}</td><td class="r">{{ (-r.balance)|money }}</td></tr>
+      {% else %}<tr><td colspan="2" class="muted" style="text-align:left">—</td></tr>{% endfor %}</tbody>
+      <tfoot><tr><td><b>負債合計</b></td><td class="r"><b>{{ bs.total_liab|money }}</b></td></tr></tfoot>
+    </table>
+    <h3 class="serif" style="margin-top:16px">權益</h3>
+    <table>
+      <thead><tr><th>科目</th><th data-num>餘額</th></tr></thead>
+      <tbody>
+        {% for r in bs.equity %}
+        <tr><td>{{ r.account_code }} {{ r.account_name }}</td><td class="r">{{ (-r.balance)|money }}</td></tr>
+        {% endfor %}
+        <tr><td>本期損益(還沒結轉的年度,顯示用,不是真的科目)</td><td class="r">{{ bs.current_pnl|money }}</td></tr>
+      </tbody>
+      <tfoot><tr><td><b>權益合計</b></td><td class="r"><b>{{ bs.total_equity|money }}</b></td></tr></tfoot>
+    </table>
+  </div>
+</div>
+<div class="card" style="max-width:460px;margin-top:16px">
+  <div style="display:flex;justify-content:space-between">
+    <span>檢核(資產 − 負債 − 權益,應該 = 0)</span>
+    <b class="{{ 'pos' if bs.check == 0 else 'neg' }}">{{ bs.check|money }}</b>
+  </div>
+</div>
+{% endif %}
+
+{% if tab == 'is' %}
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">
+  {{ is_.window }}(進行中的年份只算到今天)。已經結轉過的年度,這裡看到的還是原始收入/
+  費用明細——結轉傳票本身不算進來,不然會整批顯示 0。
+</p>
+<div class="card" style="margin-bottom:16px">
+  <table>
+    <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>金額</th></tr></thead>
+    <tbody>{% for r in is_.rows %}
+      <tr><td>{{ r.account_code }}</td><td>{{ r.account_name }}</td>
+          <td class="r {{ 'neg' if r.balance > 0 }}">{{ (-r.balance)|money }}</td></tr>
+    {% else %}<tr><td colspan="3" class="muted" style="text-align:left">這一年還沒有資料。</td></tr>{% endfor %}</tbody>
+    <tfoot><tr><td colspan="2"><b>本期損益</b></td>
+      <td class="r"><b class="{{ 'neg' if is_.net_income < 0 else 'pos' }}">{{ is_.net_income|money }}</b></td></tr></tfoot>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,14 +1,33 @@
-{# 產季多選下拉。放在某個 <form method="get"> 裡;需要 context:seasons、seasons_sel #}
+{# 產季(或西曆年)多選下拉。放在某個 <form method="get"> 裡;需要 context:
+   view、seasons、seasons_sel、years、years_sel #}
+<div class="chips" style="margin-right:10px;display:inline-flex">
+  <a class="chip" href="?view=season"
+     style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if view=='season' }}">依產季</a>
+  <a class="chip" href="?view=calendar"
+     style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if view=='calendar' }}">依西曆年</a>
+</div>
+{% if view == 'calendar' %}
+<input type="hidden" name="view" value="calendar">
+<span>年度</span>
+{% else %}
 <span>產季</span>
+{% endif %}
 <div class="msel" id="seasonMsel">
   <button type="button" class="msel-btn" id="seasonBtn" aria-haspopup="true" aria-expanded="false">
-    <span id="seasonLabel">全部產季</span><span class="msel-caret">▾</span>
+    <span id="seasonLabel">{{ '全部年度' if view=='calendar' else '全部產季' }}</span><span class="msel-caret">▾</span>
   </button>
   <div class="msel-panel" id="seasonPanel" hidden>
+    {% if view == 'calendar' %}
+    <label><input type="checkbox" name="year" value="all" {{ 'checked' if not years_sel }}> 全部</label>
+    {% for y in years %}
+    <label><input type="checkbox" name="year" value="{{ y }}" {{ 'checked' if y in years_sel }}> {{ y }}</label>
+    {% endfor %}
+    {% else %}
     <label><input type="checkbox" name="season" value="all" {{ 'checked' if not seasons_sel }}> 全部</label>
     {% for s in seasons %}
     <label><input type="checkbox" name="season" value="{{ s }}" {{ 'checked' if s in seasons_sel }}> {{ s }}</label>
     {% endfor %}
+    {% endif %}
     <div class="msel-foot"><button type="submit" class="ghost msel-apply">套用</button></div>
   </div>
 </div>
@@ -17,17 +36,20 @@
   var wrap = document.getElementById('seasonMsel');
   if (!wrap || wrap.dataset.wired) return;
   wrap.dataset.wired = '1';
+  var fieldName = {{ "'year'" if view == 'calendar' else "'season'" }};
+  var allLabel = {{ "'全部年度'" if view == 'calendar' else "'全部產季'" }};
+  var unitLabel = {{ "'年'" if view == 'calendar' else "'產季'" }};
   var f = wrap.closest('form');
   var btn = document.getElementById('seasonBtn');
   var panel = document.getElementById('seasonPanel');
   var label = document.getElementById('seasonLabel');
   var all = panel.querySelector('input[value="all"]');
-  var yrs = [].slice.call(panel.querySelectorAll('input[name=season]')).filter(function (c) { return c !== all; });
-  function sig() { return [].map.call(panel.querySelectorAll('input[name=season]'), function (c) { return c.checked ? c.value : ''; }).join(','); }
+  var yrs = [].slice.call(panel.querySelectorAll('input[name=' + fieldName + ']')).filter(function (c) { return c !== all; });
+  function sig() { return [].map.call(panel.querySelectorAll('input[name=' + fieldName + ']'), function (c) { return c.checked ? c.value : ''; }).join(','); }
   var startSig = sig();
   function relabel() {
     var on = yrs.filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
-    label.textContent = (all.checked || on.length === 0) ? '全部產季' : on.join('、') + ' 產季';
+    label.textContent = (all.checked || on.length === 0) ? allLabel : on.join('、') + ' ' + unitLabel;
   }
   function openP() { panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); }
   function closeP() {
