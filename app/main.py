@@ -1903,7 +1903,8 @@ def ledger_page(request: Request):
 
 # ---------- 銀行帳戶主檔(2026-09-23,每家銀行固定子代碼)-------
 #   代碼是第一次用到某個名字時 ledger._cash_account() 自動指派的(見該函式註解),
-#   這裡只給同事/家易看清單、改名字用,不提供新增/刪除。
+#   「新增」不用另外做功能——付款帳戶欄位打一個新名字,存檔就自動生一筆。這裡是
+#   給同事/家易看清單、改名字、併重複帳戶用。
 @app.get("/bank-accounts", response_class=HTMLResponse)
 def bank_accounts_page(request: Request):
     rows = q("SELECT * FROM bank_account ORDER BY account_code")
@@ -1912,12 +1913,39 @@ def bank_accounts_page(request: Request):
 
 @app.post("/bank-accounts")
 async def bank_account_save(request: Request):
+    """改名:連已經記過的舊傳票 account_name 一起回填,不然 /cash 會把改名前後拆成兩行
+    (代碼一樣、名稱不一樣)。"""
     f = await request.form()
     bid = f.get("bank_account_id")
     name = (f.get("name") or "").strip()
     if bid and name:
-        execute("UPDATE bank_account SET name=? WHERE bank_account_id=?", (name, int(bid)))
-    return RedirectResponse("/bank-accounts", status_code=303)
+        bid = int(bid)
+        row = q1("SELECT account_code, name FROM bank_account WHERE bank_account_id=?", (bid,))
+        if row and row["name"] != name:
+            if q1("SELECT 1 FROM bank_account WHERE name=? AND bank_account_id!=?", (name, bid)):
+                return RedirectResponse("/bank-accounts?err=dup", status_code=303)
+            execute("UPDATE bank_account SET name=? WHERE bank_account_id=?", (name, bid))
+            execute("UPDATE ledger_entry SET account_name=? WHERE account_code=?",
+                    (f"銀行存款-{name}", row["account_code"]))
+    return RedirectResponse("/bank-accounts?renamed=1", status_code=303)
+
+@app.post("/bank-accounts/merge")
+async def bank_account_merge(request: Request):
+    """合併:同一家銀行不小心被打成兩個不同名字、各自都已經累積傳票時用——把來源帳戶
+    (from)底下所有傳票的科目代碼/名稱全部改成目標帳戶(to)的,再刪掉來源帳戶主檔。
+    代碼一旦刪除不會再被指派(_cash_account 用 MAX(id)+1 發號),不會撞號。"""
+    f = await request.form()
+    from_id, to_id = f.get("from_id"), f.get("to_id")
+    if not (from_id and to_id) or from_id == to_id:
+        return RedirectResponse("/bank-accounts?err=1", status_code=303)
+    src = q1("SELECT * FROM bank_account WHERE bank_account_id=?", (int(from_id),))
+    dst = q1("SELECT * FROM bank_account WHERE bank_account_id=?", (int(to_id),))
+    if not (src and dst):
+        return RedirectResponse("/bank-accounts?err=1", status_code=303)
+    execute("UPDATE ledger_entry SET account_code=?, account_name=? WHERE account_code=?",
+            (dst["account_code"], f"銀行存款-{dst['name']}", src["account_code"]))
+    execute("DELETE FROM bank_account WHERE bank_account_id=?", (int(from_id),))
+    return RedirectResponse(f"/bank-accounts?merged={src['name']}", status_code=303)
 
 
 # ---------- 正式三表:試算表 / 資產負債表 / 綜合損益表(2026-09-23)------
