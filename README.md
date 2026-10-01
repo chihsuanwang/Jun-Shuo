@@ -33,15 +33,19 @@ REM 啟動(或直接雙擊 啟動.bat)
 
 ### Claude Code 用的 Skills
 
-這些是裝在 Windows 帳號個人目錄(`C:\Users\<你>\.agents\skills\`)的 Claude Code 工具設定,
-**不隨 git clone 帶過去**,換電腦要另外裝。這裡只記錄「有裝什麼、怎麼裝」,方便兩台電腦對齊,
-不是每次都要真的裝——只有真的要用某個功能時才裝那一個。
+這些是裝在 Windows 帳號個人目錄的 Claude Code 工具設定,**不隨 git clone 帶過去**,換電腦
+要另外裝。這裡只記錄「有裝什麼、怎麼裝」,方便兩台電腦對齊,不是每次都要真的裝——只有真的
+要用某個功能時才裝那一個。**兩台電腦的 SAC(智慧型應用程式控制)開關不同,會不會裝得起來
+看那台的 SAC 狀態,不是程式碼問題**(見下表備註)。
 
-| Skill | 用途 | 怎麼裝 |
-|---|---|---|
-| **agent-browser** | 瀏覽器自動化(dogfood 探索式測試、走位截圖、示意圖 Artifact 發布前預覽)—— 這個專案主要在用的就是這個 | `npm i -g agent-browser && agent-browser install`(會另外裝 Chrome,~50MB,每台電腦分開裝) |
-| find-skills | 幫忙找/裝其他 skill 的 meta skill | 通常內建或用它裝別的 skill 時順便有 |
-| pdf | PDF 讀取 / 合併 / 填表等操作 | 目前這個專案還沒實際用過 |
+| Skill | 用途 | 怎麼裝 | 備註 |
+|---|---|---|---|
+| **agent-browser** | 瀏覽器自動化(dogfood 探索式測試、走位截圖、示意圖 Artifact 發布前預覽) | `npm i -g agent-browser && agent-browser install` | 套件內含**未簽章 exe**。SAC 開啟的機器(2026-10 確認其中一台是)會被硬擋
+  (「應用程式控制原則已封鎖此檔案」,無法繞過);SAC 沒開的那台能正常用,目前主要在那台做測試 |
+| **playwright**(Claude Code plugin,非上面那個 npm 工具) | 瀏覽器自動化的另一個來源,微軟官方 `@playwright/mcp`,走官方 marketplace | `claude plugin install playwright@claude-plugins-official --scope project` | 2026-10-01 裝在 SAC 開啟的那台當 agent-browser 的替代方案;還沒實際觸發過(第一次用會下載瀏覽器執行檔),能不能繞過 SAC 未驗證 |
+| **frontend-design**(Claude Code plugin) | 前端 UI/排版工作時的被動技能,避免「一看就是 AI 做的」通用設計 | `claude plugin install frontend-design@claude-plugins-official --scope project` | 純 `SKILL.md` 文字指示,無執行檔,兩台都能裝 |
+| find-skills | 幫忙找/裝其他 skill 的 meta skill | 通常內建或用它裝別的 skill 時順便有 | |
+| pdf | PDF 讀取 / 合併 / 填表等操作 | **不用裝** —— Claude Code 環境本身已內建(`anthropic-skills:pdf`) | |
 
 ## 打包成免安裝 exe(給郡碩)
 
