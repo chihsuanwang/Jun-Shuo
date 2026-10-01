@@ -5,11 +5,13 @@
   <div><div class="sup">桂圓帳房 / 訂單</div><h1 class="serif">訂單</h1></div>
   <div style="display:flex;gap:8px">
     <a href="/export/orders.csv?{{ request.url.query }}"><button class="ghost">匯出 CSV</button></a>
+    <a href="/orders/import"><button class="ghost">匯入(Google 表單 / Excel)</button></a>
     <a href="/orders/new"><button>＋ 新增訂單</button></a>
   </div>
 </div>
 <hr class="rule">
 {% if request.query_params.get('deleted') %}<div class="ok">訂單已刪除。</div>{% endif %}
+{% if request.query_params.get('imported') %}<div class="ok">匯入完成,新增了 {{ request.query_params.get('imported') }} 筆訂單。</div>{% endif %}
 
 <div class="chips" style="margin-bottom:12px;font-size:13px">
   {% for key, label in filters.items() %}

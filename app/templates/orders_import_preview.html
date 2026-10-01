@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}預覽與確認 · 匯入訂單 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 訂單 / 匯入</div><h1 class="serif">預覽與確認</h1></div>
+  <div class="muted" style="font-size:12px;align-self:flex-end">{{ filename }} · 管道:{{ channel_name }}</div>
+</div>
+<hr class="rule">
+
+{% if unmatched_headers %}
+<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E;margin-bottom:16px">
+  以下欄位在「商品目錄」裡找不到完全相同名稱的在售商品,已經忽略、不會被匯入 ——
+  如果這其實是某個商品,請改表單欄名跟商品名稱一致,或改商品名稱跟表單一致:
+  {% for h in unmatched_headers %}「{{ h }}」{% if not loop.last %}、{% endif %}{% endfor %}
+</div>
+{% endif %}
+
+<div style="display:flex;gap:14px;margin-bottom:16px">
+  <div class="card kpi" style="flex:1;border-top-color:var(--leaf)">
+    <div style="font-size:22px;font-weight:900;color:var(--leaf)">{{ summary.ok }}</div>
+    <div class="lab">筆可匯入(客戶 / 商品都比對成功)</div>
+  </div>
+  <div class="card kpi" style="flex:1;border-top-color:var(--gold)">
+    <div style="font-size:22px;font-weight:900;color:var(--gold)">{{ summary.warn }}</div>
+    <div class="lab">筆待確認(可能是新客戶)</div>
+  </div>
+  <div class="card kpi" style="flex:1;border-top-color:var(--seal)">
+    <div style="font-size:22px;font-weight:900;color:var(--seal)">{{ summary.err }}</div>
+    <div class="lab">筆有問題,不會匯入</div>
+  </div>
+  <div class="card kpi" style="flex:1;border-top-color:var(--rule)">
+    <div style="font-size:22px;font-weight:900;color:var(--ink-3)">{{ summary.dup }}</div>
+    <div class="lab">筆之前已經匯入過,自動略過</div>
+  </div>
+</div>
+
+<form method="post" action="/orders/import/confirm">
+<input type="hidden" name="channel_id" value="{{ channel_id }}">
+<input type="hidden" name="rows_json" value='{{ rows_json }}'>
+
+<div class="card" style="margin-bottom:16px">
+  <table>
+    <thead><tr><th>客戶</th><th>商品明細</th><th data-num>金額</th><th>狀態 / 需要處理</th></tr></thead>
+    <tbody>
+    {% for r in actionable %}
+      <tr>
+        <td style="vertical-align:top">
+          {{ r.customer_name or '(沒填姓名)' }}<br>
+          <span class="muted" style="font-size:11px">{{ r.phone }}</span>
+        </td>
+        <td style="vertical-align:top">
+          {% for ln in r.lines %}{{ ln.name }} ×{{ ln.qty|int }}{% if not loop.last %}、{% endif %}{% endfor %}
+        </td>
+        <td class="r muted" style="vertical-align:top;font-size:11px">確認匯入時<br>依客戶分級算</td>
+        <td style="vertical-align:top">
+          {% if r.status == 'ok' %}
+            <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#E4EFDD;border:1px solid #9DBE86;color:#2F7A4F">可匯入</span>
+            <span class="muted" style="font-size:11px;margin-left:6px">= 既有客戶「{{ r.matched_customer_name }}」</span>
+          {% else %}
+            <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#F7ECD3;border:1px solid var(--gold);color:#8A6410">新客戶?</span>
+            <div style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:12px">
+              找不到電話「{{ r.phone }}」—
+              <select name="resolve_{{ loop.index0 }}" style="width:auto;display:inline-block">
+                <option value="new" selected>建立新客戶</option>
+                {% for c in customers %}<option value="{{ c.customer_id }}">其實是:{{ c.display_name }}（{{ c.phone or '沒留電話' }}）</option>{% endfor %}
+              </select>
+            </div>
+          {% endif %}
+          <label style="font-weight:400;font-size:11px;margin-top:6px;display:flex;align-items:center;gap:5px">
+            <input type="checkbox" name="skip_{{ loop.index0 }}" style="width:auto"> 略過這筆,不匯入
+          </label>
+        </td>
+      </tr>
+    {% endfor %}
+    {% for r in display_only %}
+      <tr style="opacity:.65">
+        <td style="vertical-align:top">{{ r.customer_name or '(沒填姓名)' }}<br><span class="muted" style="font-size:11px">{{ r.phone or '(沒填電話)' }}</span></td>
+        <td style="vertical-align:top">{% for ln in r.lines %}{{ ln.name }} ×{{ ln.qty|int }}{% if not loop.last %}、{% endif %}{% endfor %}</td>
+        <td class="r" style="vertical-align:top">—</td>
+        <td style="vertical-align:top">
+          {% if r.status == 'duplicate' %}
+            <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;background:var(--paper-2);border:1px solid var(--rule);color:var(--ink-3)">已匯入過,略過</span>
+          {% else %}
+            <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#F6E3D6;border:1px solid #E4B79C;color:#A8321E">有問題</span>
+            <div class="muted" style="font-size:11px;margin-top:4px;color:var(--seal)">{{ r.error_reason }}</div>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    {% if not actionable and not display_only %}
+      <tr><td colspan="4" class="muted" style="text-align:left">這個檔案沒有解析出任何一列資料。</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<div style="display:flex;justify-content:space-between;align-items:center">
+  <div class="muted" style="font-size:12.5px">
+    上面「待確認」的列,選好要建立新客戶還是指到既有客戶再送出;有問題的列不會被匯入,回原始檔案修正後重新上傳即可。
+  </div>
+  <div style="display:flex;gap:10px">
+    <a href="/orders/import"><button type="button" class="ghost">取消</button></a>
+    <button type="submit" {% if not actionable %}disabled{% endif %}>確認匯入（{{ summary.ok + summary.warn }} 筆）</button>
+  </div>
+</div>
+</form>
+{% endblock %}

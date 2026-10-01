@@ -11,6 +11,7 @@ import paths
 import queries as Q
 import db as _db
 import ledger
+import order_import as OI
 from db import q, q1, execute
 
 HERE = paths.RES_DIR
@@ -1252,6 +1253,106 @@ SHIP_STATUS  = ['待出貨', '已出貨', '已送達', '退回', '遺失', '破�
 SHIP_PAYERS  = ['店家吸收', '客戶付']
 ORDER_KINDS  = ['銷售', '贈送-公關', '贈送-捐贈', '樣品', '理賠重寄', '換貨補出', '內部領用']
 FILTERS = {"all": "全部", "overdue": "貨款逾期", "unpaid": "未收款", "unshipped": "超過 3 天未出貨"}
+
+# ---------- 訂單匯入(Google 表單 / Excel,回合 13)-----------------
+@app.get("/orders/import", response_class=HTMLResponse)
+def order_import_page(request: Request):
+    return tpl.TemplateResponse("orders_import.html", dict(
+        request=request, active="order",
+        channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id")))
+
+
+@app.post("/orders/import/preview")
+async def order_import_preview(request: Request):
+    f = await request.form()
+    channel_id = f.get("channel_id")
+    upload = f.get("file")
+    if not channel_id or upload is None or not getattr(upload, "filename", ""):
+        return RedirectResponse("/orders/import?err=required", status_code=303)
+    content = await upload.read()
+    try:
+        headers, raw_rows = OI.parse_file(upload.filename, content)
+    except Exception as e:
+        return tpl.TemplateResponse("orders_import.html", dict(
+            request=request, active="order",
+            channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id"),
+            parse_err=str(e)))
+    if not raw_rows:
+        return tpl.TemplateResponse("orders_import.html", dict(
+            request=request, active="order",
+            channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id"),
+            parse_err="這個檔案解析不出任何一列資料,確認檔案跟表頭對不對。"))
+    result = OI.match_rows(headers, raw_rows, PAY_METHODS)
+    actionable = [r for r in result["rows"] if r["status"] in ("ok", "new_customer")]
+    display_only = [r for r in result["rows"] if r["status"] in ("error", "duplicate")]
+    chan = q1("SELECT name FROM channel WHERE channel_id=?", (int(channel_id),))
+    return tpl.TemplateResponse("orders_import_preview.html", dict(
+        request=request, active="order",
+        filename=upload.filename, channel_id=int(channel_id), channel_name=chan.get("name"),
+        summary=result["summary"], unmatched_headers=result["unmatched_headers"],
+        actionable=actionable, display_only=display_only,
+        customers=q("SELECT customer_id,display_name,phone FROM customer ORDER BY display_name"),
+        rows_json=json.dumps(actionable, ensure_ascii=False)))
+
+
+@app.post("/orders/import/confirm")
+async def order_import_confirm(request: Request):
+    f = await request.form()
+    try:
+        rows = json.loads(f.get("rows_json") or "[]")
+    except (ValueError, TypeError):
+        rows = []
+    channel_id = int(f.get("channel_id") or 0) if (f.get("channel_id") or "").isdigit() else 0
+    if not channel_id or not q1("SELECT channel_id FROM channel WHERE channel_id=?", (channel_id,)):
+        return RedirectResponse("/orders/import?err=required", status_code=303)
+
+    imported = 0
+    for i, row in enumerate(rows):
+        if f.get(f"skip_{i}"):
+            continue
+        resolve = f.get(f"resolve_{i}", "new")
+        if resolve == "new":
+            cid = execute("""INSERT INTO customer(display_name,customer_type,segment,primary_channel_id,phone)
+                              VALUES(?,?,?,?,?)""",
+                          (row["customer_name"] or row["phone"], "個人", "零售", channel_id,
+                           row["phone_raw"] or row["phone"]))
+            execute("INSERT OR IGNORE INTO customer_alias(customer_id,alias_text) VALUES(?,?)",
+                    (cid, row["customer_name"] or row["phone"]))
+            if row.get("address"):
+                execute("""INSERT INTO address(customer_id,label,is_default,address_full)
+                           VALUES(?,'匯入',1,?)""", (cid, row["address"]))
+        elif resolve.isdigit():
+            cid = int(resolve)
+        else:
+            continue
+
+        seg_row = q1("SELECT segment FROM customer WHERE customer_id=?", (cid,))
+        pseg = SEG_MAP.get(seg_row.get("segment"), "零售")
+        stdprice = {r["product_id"]: r["unit_price"]
+                    for r in q("SELECT product_id,unit_price FROM price_list WHERE customer_segment=? AND channel_id IS NULL",
+                               (pseg,))}
+        built_lines, subtotal = [], 0.0
+        for ln in (row.get("lines") or []):
+            up = stdprice.get(ln["product_id"], 0)
+            built_lines.append((ln["product_id"], ln["qty"], up))
+            subtotal += ln["qty"] * up
+        if not built_lines:
+            continue
+
+        oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
+                         order_total,payment_method,payment_status,ship_status,source_ref,note)
+                         VALUES(?,?,?,?,?, '銷售', ?,?, '待收款', '待出貨', ?,?)""",
+                      (next_order_no(), row["order_date"], Q.season_of(row["order_date"]), cid, channel_id,
+                       subtotal, row.get("payment_method"), row["source_ref"], row.get("note") or None))
+        for pid, qty, up in built_lines:
+            execute("""INSERT INTO order_line(order_id,product_id,qty,unit_price,line_subtotal)
+                       VALUES(?,?,?,?,?)""", (oid, pid, qty, up, qty * up))
+        sync_order_stock(oid)
+        _post_order_ledger(oid)
+        imported += 1
+
+    return RedirectResponse(f"/orders?imported={imported}", status_code=303)
+
 
 @app.get("/orders", response_class=HTMLResponse)
 def orders_page(request: Request):

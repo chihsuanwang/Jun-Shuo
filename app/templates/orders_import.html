@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}匯入訂單 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div><div class="sup">桂圓帳房 / 訂單</div><h1 class="serif">匯入訂單</h1></div></div>
+<hr class="rule">
+
+<div class="chips" style="margin-bottom:16px;font-size:13px">
+  <a class="chip" href="/orders/new">手動新增</a>
+  <span class="chip" style="background:var(--seal);color:#FBF6EA;border-color:var(--seal)">匯入 Google 表單 / Excel</span>
+</div>
+
+{% if request.query_params.get('err') == 'required' %}
+<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請選擇銷售管道,並挑一個檔案上傳。</div>
+{% endif %}
+{% if parse_err %}
+<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">檔案讀不了:{{ parse_err }}</div>
+{% endif %}
+
+<form method="post" action="/orders/import/preview" enctype="multipart/form-data">
+<div class="card" style="margin-bottom:16px;max-width:620px">
+  <h3 class="serif">1. 選銷售管道</h3>
+  <p class="muted" style="font-size:12.5px;margin:-4px 0 12px">這批匯入的訂單都算在這個管道底下(例如「Google 表單」那個管道)。</p>
+  <select name="channel_id" required>
+    {% for c in channels %}<option value="{{ c.channel_id }}">{{ c.name }}</option>{% endfor %}
+  </select>
+</div>
+
+<div class="card" style="margin-bottom:16px;max-width:620px">
+  <h3 class="serif">2. 上傳檔案</h3>
+  <p class="muted" style="font-size:12.5px;margin:-4px 0 12px">
+    支援 .csv / .xlsx。Google 表單的回覆試算表可以直接「檔案 → 下載 → 逗號分隔值(.csv)」。
+  </p>
+  <input type="file" name="file" accept=".csv,.xlsx" required>
+</div>
+
+<div class="card" style="margin-bottom:16px;max-width:620px;background:var(--paper-2);font-size:12.5px;color:var(--ink-2);line-height:1.7">
+  <div>上傳後會先進「預覽」畫面,逐列顯示配對結果 —— <b>確認無誤才會真的寫進訂單,不會上傳就直接建立。</b></div>
+  <div>同一份檔案重新上傳也沒關係,之前已經匯入過的列會自動略過,不會變成兩筆重複訂單。</div>
+  <div>檔案的表頭要用固定格式(時間戳記 / 客戶姓名 / 客戶電話 / 收件地址 / 付款方式 / 備註,其餘每欄對應一個商品品名或 SKU),細節看工作日誌。</div>
+</div>
+
+<div style="max-width:620px;text-align:right">
+  <button type="submit">上傳並預覽 →</button>
+</div>
+</form>
+{% endblock %}
