@@ -50,7 +50,7 @@
         <td>{{ r.account_code }}</td><td>{{ r.account_name }}</td>
         <td class="r">{{ r.db|money if r.db else '—' }}</td>
         <td class="r">{{ r.cr|money if r.cr else '—' }}</td>
-        <td class="r {{ 'neg' if r.balance < 0 }}">{{ r.balance|money }}</td>
+        <td class="r {{ 'neg' if r.disp < 0 }}">{{ r.disp|money }}</td>
       </tr>
     {% else %}<tr><td colspan="5" class="muted" style="text-align:left">還沒有總帳資料。</td></tr>{% endfor %}</tbody>
   </table>
@@ -78,7 +78,7 @@
     <table>
       <thead><tr><th>科目</th><th data-num>餘額</th></tr></thead>
       <tbody>{% for r in bs.assets %}
-        <tr><td>{{ r.account_code }} {{ r.account_name }}</td><td class="r">{{ r.balance|money }}</td></tr>
+        <tr><td>{{ r.account_code }} {{ r.account_name }}</td><td class="r">{{ r.disp|money }}</td></tr>
       {% else %}<tr><td colspan="2" class="muted" style="text-align:left">—</td></tr>{% endfor %}</tbody>
       <tfoot><tr><td><b>資產合計</b></td><td class="r"><b>{{ bs.total_assets|money }}</b></td></tr></tfoot>
     </table>
@@ -88,7 +88,7 @@
     <table>
       <thead><tr><th>科目</th><th data-num>餘額</th></tr></thead>
       <tbody>{% for r in bs.liabilities %}
-        <tr><td>{{ r.account_code }} {{ r.account_name }}</td><td class="r">{{ (-r.balance)|money }}</td></tr>
+        <tr><td>{{ r.account_code }} {{ r.account_name }}</td><td class="r">{{ r.disp|money }}</td></tr>
       {% else %}<tr><td colspan="2" class="muted" style="text-align:left">—</td></tr>{% endfor %}</tbody>
       <tfoot><tr><td><b>負債合計</b></td><td class="r"><b>{{ bs.total_liab|money }}</b></td></tr></tfoot>
     </table>
@@ -97,7 +97,7 @@
       <thead><tr><th>科目</th><th data-num>餘額</th></tr></thead>
       <tbody>
         {% for r in bs.equity %}
-        <tr><td>{{ r.account_code }} {{ r.account_name }}</td><td class="r">{{ (-r.balance)|money }}</td></tr>
+        <tr><td>{{ r.account_code }} {{ r.account_name }}</td><td class="r">{{ r.disp|money }}</td></tr>
         {% endfor %}
         <tr><td>本期損益(還沒結轉的年度,顯示用,不是真的科目)</td><td class="r">{{ bs.current_pnl|money }}</td></tr>
       </tbody>
@@ -123,7 +123,7 @@
     <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>金額</th></tr></thead>
     <tbody>{% for r in is_.rows %}
       <tr><td>{{ r.account_code }}</td><td>{{ r.account_name }}</td>
-          <td class="r {{ 'neg' if r.balance > 0 }}">{{ (-r.balance)|money }}</td></tr>
+          <td class="r {{ 'neg' if r.disp < 0 }}">{{ r.disp|money }}</td></tr>
     {% else %}<tr><td colspan="3" class="muted" style="text-align:left">這一年還沒有資料。</td></tr>{% endfor %}</tbody>
     <tfoot><tr><td colspan="2"><b>本期損益</b></td>
       <td class="r"><b class="{{ 'neg' if is_.net_income < 0 else 'pos' }}">{{ is_.net_income|money }}</b></td></tr></tfoot>

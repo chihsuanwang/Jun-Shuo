@@ -1116,6 +1116,18 @@ def _is_debit_normal(account_code):
     return head in ("1", "5", "6")
 
 
+def _display_balance(account_code, balance):
+    """全站共用的「顯示金額」規則:不教家易 / 同事借貸概念,但數字要有統一道理——
+    不管哪種科目,『正常增加的方向』永遠顯示正數。借方正常(資產/成本/費用)的
+    debit-credit 本來就是這個方向,原樣顯示;貸方正常(負債/權益/收入)要反過來
+    (收入增加、負債增加都該是正數)。跟同事 Excel 範例的呈現方式一致(範例裡金額
+    本來就是正數,沒有真的用 -100 代表貸方)。試算表/資產負債表/綜合損益表三張正式
+    報表、以後任何要把借貸合併成單一數字顯示的地方,都走這個函式,不要各自手動加
+    負號——加出來的正負號不保證跟這條規則一致(2026-09-23 發現的問題就是這樣來的:
+    綜合損益表原本不分科目方向、所有列一律加負號,結果費用類反而顯示成負數)。"""
+    return balance if _is_debit_normal(account_code) else -balance
+
+
 def trial_balance(as_of):
     """試算表:每個用過的科目,累計到 as_of(含)為止的借貸合計 = 期末餘額。含已經貼過的
     年度結轉傳票——結轉會把已結束年度的 4~7 開頭科目沖平、餘額留到累積盈虧,試算表才會對。
@@ -1128,8 +1140,9 @@ def trial_balance(as_of):
                 ORDER BY account_code""", (as_of,))
     for r in rows:
         r["balance"] = (r["db"] or 0) - (r["cr"] or 0)
-    debit_side  = sum(r["balance"] for r in rows if _is_debit_normal(r["account_code"]))
-    credit_side = -sum(r["balance"] for r in rows if not _is_debit_normal(r["account_code"]))
+        r["disp"] = _display_balance(r["account_code"], r["balance"])
+    debit_side  = sum(r["disp"] for r in rows if _is_debit_normal(r["account_code"]))
+    credit_side = sum(r["disp"] for r in rows if not _is_debit_normal(r["account_code"]))
     return dict(as_of=as_of, rows=rows, debit_side=debit_side, credit_side=credit_side,
                 check=round(debit_side - credit_side, 2))
 
@@ -1152,6 +1165,7 @@ def income_statement(year):
                 ORDER BY account_code""", (lo, hi))
     for r in rows:
         r["balance"] = (r["db"] or 0) - (r["cr"] or 0)
+        r["disp"] = _display_balance(r["account_code"], r["balance"])
     net_income = -sum(r["balance"] for r in rows)
     closed = bool(q("""SELECT 1 FROM ledger_entry WHERE source_type='year_closing'
                         AND source_id=? LIMIT 1""", (year,)))
