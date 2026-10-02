@@ -1527,6 +1527,13 @@ async def order_update(request: Request, oid: int):
 
     if f.get("invoiced") and not g("tax_doc_no"):
         return RedirectResponse(f"/orders/{oid}?err=invoice", status_code=303)
+    # 收款狀態/出貨狀態不能用下拉選單直接跳成「已收款/部分收款」「已出貨」——
+    # 要嘛走上面專門的「標記已收款」「標記已出貨」按鈕,要嘛在這裡把對應欄位一起填齊,
+    # 不然會出現「狀態寫已收款,但總帳沒有收款分錄」這種看起來做了其實沒做的情況。
+    if g("payment_status") in ("已收款", "部分收款") and flt("paid_amount") <= 0:
+        return RedirectResponse(f"/orders/{oid}?payerr=1", status_code=303)
+    if g("ship_status") == "已出貨" and not (g("ship_method") and g("shipped_date")):
+        return RedirectResponse(f"/orders/{oid}?shiperr=1", status_code=303)
     cust_id = f.get("customer_id")
     cols = dict(order_date=g("order_date"), order_kind=g("order_kind"),
                 payment_method=g("payment_method"), payment_status=g("payment_status") or "待收款",
@@ -1610,10 +1617,15 @@ async def order_mark_paid(request: Request, oid: int):
     return RedirectResponse(f"/orders/{oid}?done=paid", status_code=303)
 
 @app.post("/orders/{oid}/shipped")
-def order_mark_shipped(oid: int):
-    execute("""UPDATE "order" SET ship_status='已出貨',
+async def order_mark_shipped(request: Request, oid: int):
+    f = await request.form()
+    ship_method = (f.get("ship_method") or "").strip()
+    shipped_date = (f.get("shipped_date") or "").strip() or dt.date.today().isoformat()
+    if not ship_method:
+        return RedirectResponse(f"/orders/{oid}?shiperr=1", status_code=303)
+    execute("""UPDATE "order" SET ship_status='已出貨', ship_method=?,
                shipped_date=COALESCE(shipped_date, ?) WHERE order_id=?""",
-            (dt.date.today().isoformat(), oid))
+            (ship_method, shipped_date, oid))
     return RedirectResponse(f"/orders/{oid}?done=shipped", status_code=303)
 
 

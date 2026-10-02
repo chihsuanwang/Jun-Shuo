@@ -16,7 +16,9 @@
       <button type="submit">標記已收款</button>
     </form>
     {% endif %}
-    <form method="post" action="/orders/{{ o.order_id }}/shipped" style="display:inline">
+    <form method="post" action="/orders/{{ o.order_id }}/shipped" id="markShippedForm" style="display:inline">
+      <input type="hidden" name="ship_method" id="markShipMethod">
+      <input type="hidden" name="shipped_date" id="markShippedDate">
       <button type="submit" class="ghost" {{ 'disabled' if o.ship_status!='待出貨' }}>標記已出貨</button></form>
     <form method="post" action="/orders/{{ o.order_id }}/copy" style="display:inline"
           onsubmit="return confirm('確定要複製這張訂單嗎?會建立一張新的訂單(品項、客戶、管道相同,收款/出貨狀態重新開始)。')">
@@ -33,6 +35,8 @@
 {% if request.query_params.get('done') == 'shipped' %}<div class="ok">已標記為「已出貨」,出貨日填今天。</div>{% endif %}
 {% if request.query_params.get('rok') %}<div class="ok">退貨 / 折讓已登記。</div>{% endif %}
 {% if request.query_params.get('rerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">沖減金額要大於 0。</div>{% endif %}
+{% if request.query_params.get('payerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">收款狀態選了「已收款 / 部分收款」,但沒填實收金額——請在下面「收款」卡填金額,或改用上面「標記已收款」按鈕。</div>{% endif %}
+{% if request.query_params.get('shiperr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">出貨狀態選了「已出貨」,但出貨方式 / 出貨日沒填——請在下面「出貨」卡補上,或改用上面「標記已出貨」按鈕。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
 
 <form method="post" action="/orders/{{ o.order_id }}" id="orderForm">
@@ -109,7 +113,7 @@
   <div class="card">
     <h3 class="serif">出貨</h3>
     <div class="grid" style="grid-template-columns:1fr 1fr">
-      <div><label>出貨方式</label><select name="ship_method"><option value="">—</option>
+      <div><label>出貨方式</label><select name="ship_method" id="shipMethodField"><option value="">—</option>
         {% for s in ship_methods %}<option {{ 'selected' if o.ship_method==s }}>{{ s }}</option>{% endfor %}</select></div>
       <div><label>物流商</label><input name="carrier" value="{{ o.carrier or '' }}"></div>
       <div><label>物流單號</label><input name="tracking_no" value="{{ o.tracking_no or '' }}"></div>
@@ -117,7 +121,7 @@
       <div><label>運費由誰負擔</label><select name="ship_payer">
         {% for s in ship_payers %}<option {{ 'selected' if o.ship_payer==s }}>{{ s }}</option>{% endfor %}
       </select></div>
-      <div><label>出貨日</label><input type="date" name="shipped_date" value="{{ o.shipped_date or '' }}"></div>
+      <div><label>出貨日</label><input type="date" name="shipped_date" id="shippedDateField" value="{{ o.shipped_date or '' }}"></div>
       <div><label>到貨日</label><input type="date" name="delivered_date" value="{{ o.delivered_date or '' }}"></div>
       <div><label>出貨狀態</label><select name="ship_status">
         {% for s in ship_status %}<option {{ 'selected' if o.ship_status==s }}>{{ s }}</option>{% endfor %}</select></div>
@@ -283,6 +287,25 @@
       document.getElementById('markPaidAmount').value = amt;
       var dateField = document.getElementById('paidDateField');
       document.getElementById('markPaidDate').value = (dateField && dateField.value) || '';
+    });
+  }
+
+  // --- 標記已出貨:直接沿用「出貨」卡裡的出貨方式/出貨日,沒填就提醒 ---
+  var markShippedForm = document.getElementById('markShippedForm');
+  if (markShippedForm) {
+    markShippedForm.addEventListener('submit', function (e) {
+      var methodField = document.getElementById('shipMethodField');
+      var method = methodField ? methodField.value : '';
+      if (!method) {
+        e.preventDefault();
+        alert('請先在下面「出貨」卡選出貨方式,再標記已出貨。');
+        if (methodField) methodField.focus();
+        return;
+      }
+      var dateField2 = document.getElementById('shippedDateField');
+      var today = new Date().toISOString().slice(0, 10);
+      document.getElementById('markShipMethod').value = method;
+      document.getElementById('markShippedDate').value = (dateField2 && dateField2.value) || today;
     });
   }
   recalc();
