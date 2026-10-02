@@ -19,7 +19,7 @@
     <form method="post" action="/orders/{{ o.order_id }}/shipped" id="markShippedForm" style="display:inline">
       <input type="hidden" name="ship_method" id="markShipMethod">
       <input type="hidden" name="shipped_date" id="markShippedDate">
-      <button type="submit" class="ghost" {{ 'disabled' if o.ship_status!='待出貨' }}>標記已出貨</button></form>
+      <button type="submit" {{ 'disabled' if o.ship_status!='待出貨' }}>標記已出貨</button></form>
     <form method="post" action="/orders/{{ o.order_id }}/copy" style="display:inline"
           onsubmit="return confirm('確定要複製這張訂單嗎?會建立一張新的訂單(品項、客戶、管道相同,收款/出貨狀態重新開始)。')">
       <button type="submit" class="ghost">複製訂單</button></form>

@@ -161,7 +161,7 @@
     if (force || !priceInput.value) priceInput.value = std;
   }
   body.addEventListener('change', function (e) {
-    if (e.target.name === 'product_id') { fillRow(e.target.closest('tr'), false); recalc(); }
+    if (e.target.name === 'product_id') { fillRow(e.target.closest('tr'), true); recalc(); }
   });
 
   // --- 可搜尋客戶選單 + 確認卡 ---
