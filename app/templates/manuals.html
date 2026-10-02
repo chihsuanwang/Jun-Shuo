@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}下載手冊 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div><div class="sup">桂圓帳房</div><h1 class="serif">下載手冊</h1></div></div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 18px">
+  下載下來是單一個 .html 檔,圖片都內嵌在裡面,雙擊就能用瀏覽器開,不用連網路、不用裝其他軟體。
+  手冊內容更新時,這裡下載到的永遠是當下最新版本。
+</p>
+
+<div class="grid" style="grid-template-columns:repeat(2,1fr)">
+  {% for it in items %}
+  <div class="card">
+    <h3 class="serif" style="margin:0 0 6px">{{ it.title }}</h3>
+    <div class="muted" style="font-size:12.5px;line-height:1.6;margin-bottom:14px">{{ it.desc }}</div>
+    <a href="/manuals/{{ it.key }}/download"><button type="button">下載 {{ it.title }}(.html)</button></a>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

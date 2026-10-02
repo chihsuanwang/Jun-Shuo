@@ -12,6 +12,7 @@ import queries as Q
 import db as _db
 import ledger
 import order_import as OI
+import manual_export as ME
 from db import q, q1, execute
 
 HERE = paths.RES_DIR
@@ -2372,3 +2373,19 @@ def shipping_foodlabel(request: Request):
         request=request, active="ship", data=data, copies=copies, sender=SENDER,
         products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
         pid=pid or ""))
+
+
+# ---------- 下載手冊(核心手冊即時轉成自包含 HTML)-------------
+@app.get("/manuals", response_class=HTMLResponse)
+def manuals_page(request: Request):
+    items = [dict(key=k, title=t, desc=d) for k, (_, t, d) in ME.CORE_MANUALS.items()]
+    return tpl.TemplateResponse("manuals.html", dict(request=request, active="manuals", items=items))
+
+@app.get("/manuals/{key}/download")
+def manuals_download(key: str):
+    if key not in ME.CORE_MANUALS:
+        return RedirectResponse("/manuals", status_code=303)
+    from urllib.parse import quote
+    title, content = ME.export_html(key)
+    cd = f"attachment; filename=manual.html; filename*=UTF-8''{quote(title)}.html"
+    return Response(content, media_type="text/html; charset=utf-8", headers={"Content-Disposition": cd})
