@@ -65,8 +65,11 @@
   var cashName = document.getElementById('cashName'), cashCredit = document.getElementById('cashCredit');
   var balCheck = document.getElementById('balCheck');
   var docType = document.getElementById('docType'), invoiceNoField = document.getElementById('invoiceNoField');
+  var invoiceNo = document.getElementById('invoiceNo');
   function toggleInvoiceNo() {
-    invoiceNoField.hidden = docType.value.indexOf('發票') === -1;
+    var show = docType.value.indexOf('發票') !== -1;
+    invoiceNoField.hidden = !show;
+    invoiceNo.required = show;   // 藏起來的時候要拿掉 required,不然瀏覽器會擋住整個表單送不出去
   }
   docType.addEventListener('change', toggleInvoiceNo);
   toggleInvoiceNo();
