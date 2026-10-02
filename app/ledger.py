@@ -77,6 +77,7 @@ PURCHASE_ACCOUNTS = {
 EXPENSE_ACCOUNTS = {
     "直接人工":   ("6110-01", "薪資支出-直接人工"),
     "人事":       ("6110-02", "薪資支出-人事"),
+    "運費":       ("6188-11", "其他費用-運費(待確認)"),
     "驗證費":     ("6188-07", "其他費用-檢驗費"),
     "研發":       ("6188-12", "其他費用-研發"),
     "場地・倉儲": ("6111", "租金支出"),
@@ -185,10 +186,15 @@ def compose_expense_entries(category, amount, tax_amount=0, payment_account=None
     return legs
 
 
-def compose_order_sale_entries(lines, order_kind):
+def compose_order_sale_entries(lines, order_kind, shipping_cost=0):
     """訂單成立分錄:不管收沒收到錢都記。lines 是每個訂單明細的
     (product_group_name 或 None, revenue, cogs) 三元組列表。
-    order_kind 不是「銷售」(贈送/樣品/內部領用等)回傳空 list,不記這筆。"""
+    order_kind 不是「銷售」(贈送/樣品/內部領用等)回傳空 list,不記這筆。
+    shipping_cost(2026-10-02 新增):訂單的「運費(花多少錢)」欄位——家易出貨當下
+    現場付現(拿去超商或叫物流來收),真的有花錢就跟著這張傳票一起記借:運費
+    / 貸:現金,不然這筆真實的現金支出完全不會進總帳(本來只進 queries.py 的
+    管理報表,正式帳本看不到)。只處理「銷售」訂單;贈送/樣品等非銷售訂單即使
+    有填運費,目前還是不記(那批訂單整張傳票都不記,維持原本的簡化規則)。"""
     if order_kind != "銷售":
         return []
     rev_by_line, cogs_by_line = {}, {}
@@ -199,7 +205,8 @@ def compose_order_sale_entries(lines, order_kind):
         cogs_by_line[pg_name] = cogs_by_line.get(pg_name, 0) + cogs
         total_rev += revenue
         total_cogs += cogs
-    if total_rev == 0 and total_cogs == 0:
+    shipping_cost = shipping_cost or 0
+    if total_rev == 0 and total_cogs == 0 and shipping_cost <= 0:
         return []
     legs = [dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=total_rev, credit=0)]
     for pg_name, amt in rev_by_line.items():
@@ -215,6 +222,10 @@ def compose_order_sale_entries(lines, order_kind):
                 continue
             code, name = COGS_INVENTORY_ACCOUNTS.get(pg_name, COGS_INVENTORY_DEFAULT)
             legs.append(dict(account_code=code, account_name=name, debit=0, credit=amt))
+    if shipping_cost > 0:
+        ship_code, ship_name = EXPENSE_ACCOUNTS["運費"]
+        legs.append(dict(account_code=ship_code, account_name=ship_name, debit=shipping_cost, credit=0))
+        legs.append(dict(account_code=CASH_ACCOUNT[0], account_name=CASH_ACCOUNT[1], debit=0, credit=shipping_cost))
     return legs
 
 

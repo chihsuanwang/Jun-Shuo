@@ -1238,7 +1238,7 @@ def _post_order_ledger(oid):
         return
     sale_lines = [(l["pg_name"], l["line_subtotal"] or 0, (l["qty"] or 0) * (l["unit_cost"] or 0))
                   for l in lines if not l["is_gift"]]
-    sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"])
+    sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_cost_actual"])
     ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, "S", note=f"訂單 {o['order_no']}")
 
     pay_legs = ledger.compose_order_payment_entries(o["paid_amount"], o["payment_account"])
