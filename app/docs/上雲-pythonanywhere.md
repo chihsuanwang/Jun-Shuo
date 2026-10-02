@@ -94,13 +94,41 @@ Web 分頁最上面綠色 **Reload** 按鈕。
 
 ## 日常維護
 
-**更新程式碼**（在 Bash console)：
+**更新程式碼**:PythonAnywhere 不會自己盯著 GitHub、沒有「隨時都是最新版」這種語法,
+推上 GitHub 之後都要手動觸發一次更新——下面是三種做法,照需求選一種就好,不用全部做。
+
+### A. 一鍵腳本(建議,2026-10-02 定案)
+
+在 Bash console 存一個小腳本(只要做一次):
 ```bash
+cat > ~/deploy.sh << 'EOF'
+#!/bin/bash
 cd ~/Jun-Shuo && git pull
-# 若 requirements.txt 有變:
-pip install -r app/requirements.txt
+~/.virtualenvs/guiyuan/bin/pip install -r app/requirements.txt
+EOF
+chmod +x ~/deploy.sh
 ```
-然後 Web 分頁按 **Reload**。
+以後想更新雲端網站,**開 Bash console 跑一次**:
+```bash
+bash ~/deploy.sh
+```
+再去 **Web** 分頁按一下 **Reload** 就完成了。配合既有的工作習慣——改完測完才 push,
+push 之後順手跑一次這個腳本就好,不用追求全自動。
+
+### B. 每天自動抓一次(想完全不用手動,免費版也有)
+
+**Tasks** 分頁可以排程,免費帳號有 1 個「每天固定時間跑一次」的額度,內容填
+`bash /home/你的帳號/deploy.sh`。好處是不用自己動手;**代價是不是即時的**——push 完
+網站要等到那個排程時間點才會更新,不是「隨時最新」,適合不太在意更新延遲的情況。
+排程本身不會幫你按 Reload,新程式碼要等下一次有人連進網站觸發重啟,或自己偶爾手動
+Reload 一次。
+
+### C. GitHub push 直接觸發自動部署(評估過,目前不做)
+
+技術上可行(GitHub webhook 打一個網站自己的端點 → 端點驗證簽章後跑 `git pull` + 透過
+PythonAnywhere API 觸發 Reload),但要多維護 webhook 密鑰、簽章驗證、API token 這些東西。
+這是一個主要兩人(使用者 + 家易)在用的試用網站,更新頻率不高,換來的自動化不划算,
+2026-10-02 討論後決定先不做,方案 A 就夠用。
 
 **重置示範資料**：
 ```bash
