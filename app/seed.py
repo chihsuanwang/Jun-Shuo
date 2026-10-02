@@ -4,7 +4,8 @@
 方便邊測功能邊驗證。不做大量隨機訂單。
 
 用法:  py seed.py          (存在則詢問覆蓋)
-       py seed.py --force  (直接重建)
+       py seed.py --force  (直接重建,灌示範資料)
+       py seed.py --empty  (直接重建,只套 schema,不灌任何資料——給教學擷圖 / 交付用)
 """
 import sqlite3, os, sys, datetime as dt
 import ledger
@@ -18,7 +19,7 @@ except Exception:
     SQL  = os.path.join(HERE, "schema.sql")
 
 if os.path.exists(DB):
-    if "--force" not in sys.argv:
+    if "--force" not in sys.argv and "--empty" not in sys.argv:
         ans = input(f"{DB} 已存在,要重建嗎? (y/N) ").strip().lower()
         if ans != "y":
             print("取消。"); sys.exit(0)
@@ -28,6 +29,12 @@ cx = sqlite3.connect(DB, isolation_level=None)   # 自動 commit——2026-09-23
 # 存新銀行帳戶時會另外開一條連線寫 bank_account,這條連線不能一直握著沒 commit 的交易,
 # 不然會跟那條連線互相卡住(database is locked)。
 cx.executescript(open(SQL, encoding="utf-8").read())
+
+if "--empty" in sys.argv:
+    cx.close()
+    print(f"OK(空白,無資料)→ {DB}")
+    sys.exit(0)
+
 c = cx.cursor()
 
 # ---- 總帳分錄小工具(方案B試點:只給有代表性的幾筆示範資料寫分錄,-----

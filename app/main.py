@@ -1262,6 +1262,15 @@ def order_import_page(request: Request):
         channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id")))
 
 
+@app.get("/orders/import/template")
+def order_import_template():
+    products = q("SELECT name FROM product WHERE status='在售' ORDER BY sku")
+    header = ["時間戳記", "客戶姓名", "客戶電話", "收件地址", "付款方式", "備註"] + [p["name"] for p in products]
+    example = ["2026/10/2 下午 3:00:00", "王小明", "0933-111-222", "南投縣中寮鄉", "銀行匯款", "這是範例,請刪除這一列"]
+    example += (["2"] + [""] * (len(products) - 1)) if products else []
+    return csv_response("訂單匯入範本.csv", header, [example])
+
+
 @app.post("/orders/import/preview")
 async def order_import_preview(request: Request):
     f = await request.form()

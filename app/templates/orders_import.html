@@ -30,13 +30,17 @@
   <p class="muted" style="font-size:12.5px;margin:-4px 0 12px">
     支援 .csv / .xlsx。Google 表單的回覆試算表可以直接「檔案 → 下載 → 逗號分隔值(.csv)」。
   </p>
+  <p style="font-size:12.5px;margin:0 0 12px">
+    不確定欄位要怎麼打?<a href="/orders/import/template">下載範本(.csv)→</a>
+    裡面已經列好正確的欄位名稱(含現在「在售」的每一項商品),照範例那一列的格式填就對了。
+  </p>
   <input type="file" name="file" accept=".csv,.xlsx" required>
 </div>
 
 <div class="card" style="margin-bottom:16px;max-width:620px;background:var(--paper-2);font-size:12.5px;color:var(--ink-2);line-height:1.7">
   <div>上傳後會先進「預覽」畫面,逐列顯示配對結果 —— <b>確認無誤才會真的寫進訂單,不會上傳就直接建立。</b></div>
   <div>同一份檔案重新上傳也沒關係,之前已經匯入過的列會自動略過,不會變成兩筆重複訂單。</div>
-  <div>檔案的表頭要用固定格式(時間戳記 / 客戶姓名 / 客戶電話 / 收件地址 / 付款方式 / 備註,其餘每欄對應一個商品品名或 SKU),細節看工作日誌。</div>
+  <div>檔案的表頭要用固定格式(時間戳記 / 客戶姓名 / 客戶電話 / 收件地址 / 付款方式 / 備註,其餘每欄對應一個商品品名或 SKU)——上面的範本已經照目前的商品清單排好,直接下載用最準。</div>
 </div>
 
 <div style="max-width:620px;text-align:right">
