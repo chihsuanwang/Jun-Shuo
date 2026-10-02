@@ -206,6 +206,7 @@ ORDERS = [
     (dt.date(2026, 8, 10), "一品園有機商店", "銷售",     [("LG-MEAT-600", 6, False)],                      "自行配送", "已收款", None,   2026),
     (dt.date(2025, 11, 15), "張宜彤",        "銷售",     [("GY-DRY-300", 5, False), ("GX-STICK", 1, True)], "宅配",     "已收款", None,   2025),
     (dt.date(2025, 12, 20), "一品園有機商店", "銷售",    [("GY-GIFT", 8, False)],                          "自行配送", "已收款", None,   2025),
+    (dt.date(2026, 5, 15), "一品園有機商店", "銷售",     [("GY-FRESH-TCHIN", 15, False)],                  "自行配送", "已收款", None,   2026),  # 全鏈路毛利分析示範:讓「龍眼鮮果」這條線也有真實數字
 ]
 oids = [make_order(*row) for row in ORDERS]
 
@@ -397,6 +398,16 @@ c.execute("""INSERT INTO manual_entry(entry_date,debit_code,debit_name,credit_co
 adj_id = c.lastrowid
 legs = ledger.compose_manual_entries("1102", "現金", bank_code, bank_name, 500)
 add_voucher("M", "2026-09-10", legs, "manual_adjustment", adj_id, "帳務調整示範")
+
+# 全鏈路毛利分析示範(2026-10-02):四條產品線各示範一種情境,方便跟家易解說——
+# 龍眼鮮果刻意不填(示範「還沒填過,預設顯示 0」);龍眼乾示範供應端有賺(正常情況);
+# 龍眼肉示範供應端估算倒賠(觸發紅字提醒);蜂蜜只存 2025 年的值、不存 2026,示範換季時
+# 自動帶上一季的估算值當預設(畫面上會註明「目前帶的是 2025 產季的估算值」)。
+c.executemany("""INSERT INTO chain_cost_param(season,pg_name,supply_cost) VALUES(?,?,?)""", [
+    (2026, "龍眼乾", 2000),
+    (2026, "龍眼肉", 3500),
+    (2025, "蜂蜜",   300),
+])
 
 cx.commit()
 n_ord = c.execute('SELECT COUNT(*) FROM "order"').fetchone()[0]

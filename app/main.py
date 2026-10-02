@@ -2140,6 +2140,32 @@ async def pricing_save(request: Request):
     return RedirectResponse("/pricing", status_code=303)
 
 
+# ---------- 全鏈路毛利分析(管理視角估算,不進帳本) --------------
+#   只有「產季」這個時間軸,沒有西曆年版本(供應端估算本來就是跟著產季抓的),
+#   所以不借用 _season_ctx(那個會連帶帶出依產季/依西曆年切換,這頁用不到)。
+@app.get("/chain-margin", response_class=HTMLResponse)
+def chain_margin_page(request: Request):
+    seasons = Q.seasons()
+    sv = request.query_params.get("season", "")
+    season = int(sv) if sv.isdigit() and int(sv) in seasons else (seasons[-1] if seasons else None)
+    data = Q.chain_margin(season) if season else []
+    return tpl.TemplateResponse("chain_margin.html", dict(
+        request=request, active="chainmargin", season=season, seasons=seasons, data=data))
+
+@app.post("/chain-margin")
+async def chain_margin_save(request: Request):
+    f = await request.form()
+    season = int(f.get("season"))
+    for pg in Q.CHAIN_PRODUCT_LINES:
+        sc = float((f.get(f"supply_cost_{pg}") or "0").strip() or 0)
+        execute("""INSERT INTO chain_cost_param(season,pg_name,supply_cost)
+                   VALUES(?,?,?)
+                   ON CONFLICT(season,pg_name) DO UPDATE SET
+                     supply_cost=excluded.supply_cost, updated_at=datetime('now','localtime')""",
+                (season, pg, sc))
+    return RedirectResponse(f"/chain-margin?season={season}", status_code=303)
+
+
 # ---------- 產季目標 ------------------------------------------
 @app.get("/targets", response_class=HTMLResponse)
 def targets_page(request: Request):

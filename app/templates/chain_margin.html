@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}全鏈路毛利分析 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 看數字</div><h1 class="serif">全鏈路毛利分析</h1></div>
+  <form method="get" class="filterbar">
+    <span>產季</span>
+    <select name="season" onchange="this.form.submit()">
+      {% for s in seasons %}<option value="{{ s }}" {{ 'selected' if s == season }}>{{ s }}</option>{% endfor %}
+    </select>
+  </form>
+</div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 16px">
+  這裡的「供應端成本」是<b>估算</b>,不是真的採購單——公司付出去的採購款金額不會因為
+  填了這裡而改變,<b>總帳跟正式報表都不會被這頁影響</b>。這頁只是把已經付的採購款往前
+  拆解,估算供應端(不管是鮮果還是加工品,不管是跟誰買的)大概賺多少、公司大概賺多少,
+  給自己決策參考用。四條線不分是公司自己加工、還是買現成加工品——同一條線每季供應方式
+  可能不一樣,自己估一個數字就好,不用糾結細節。
+</p>
+
+{% if not seasons %}
+<p class="muted">還沒有任何產季資料。</p>
+{% else %}
+<form method="post" action="/chain-margin">
+  <input type="hidden" name="season" value="{{ season }}">
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+    {% for g in data %}
+    <div class="card">
+      <h3 class="serif" style="margin-bottom:2px">{{ g.pg_name }}</h3>
+      <div class="muted" style="font-size:11px;margin-bottom:12px">{{ season }} 產季 · 賣出 {{ g.qty|round(0) }}</div>
+
+      <div class="pc-rows">
+        <div class="pc-row"><span>營收(實收)</span><span class="v">{{ g.revenue|money }}</span></div>
+        <div class="pc-row"><span>− 公司付出去的採購款</span><span class="v">−{{ g.direct_material|money }}</span></div>
+        <div class="pc-row"><span>− 運費</span><span class="v">−{{ g.ship_cost|money }}</span></div>
+        <div class="pc-row total"><span>= 公司端毛利(真實)</span><span class="v">{{ g.company_profit|money }}</span></div>
+      </div>
+
+      <div class="muted" style="font-size:11px;margin:14px 0 6px">
+        往下拆解採購款(金額不變,只是估算怎麼分的)
+        {% if g.src_season and g.src_season != season %}
+        · 目前帶的是 <b>{{ g.src_season }}</b> 產季的估算值,可以直接改
+        {% endif %}
+      </div>
+      <div style="margin-bottom:8px">
+        <label style="font-size:12px">供應端生產成本估算(整季)</label>
+        <input type="number" step="any" name="supply_cost_{{ g.pg_name }}" value="{{ g.supply_cost }}">
+        <div class="muted" style="font-size:11px;margin-top:3px">
+          不管這批是鮮果還是加工品、不管公司有沒有再加工——大概估一個供應端自己的成本就好。
+        </div>
+      </div>
+
+      <div class="pc-rows">
+        <div class="pc-row"><span>採購款</span><span class="v">{{ g.direct_material|money }}</span></div>
+        <div class="pc-row"><span>− 供應端估算成本</span><span class="v">−{{ g.supply_cost|money }}</span></div>
+        <div class="pc-row total {{ 'neg' if g.supply_profit < 0 }}">
+          <span>= 供應端估算淨利</span><span class="v">{{ g.supply_profit|money }}</span>
+        </div>
+      </div>
+      {% if g.supply_profit < 0 %}
+      <p class="muted" style="font-size:11px;color:var(--seal);margin-top:4px">
+        估算供應端倒賠——可能是估算數字偏高,或採購價真的壓得比較低,提醒自己留意。
+      </p>
+      {% endif %}
+
+      <div class="pc-compare" style="margin-top:14px">
+        <span>全鏈路毛利率</span><b>{{ g.chain_margin_pct|pct }}</b>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div style="margin-top:18px">
+    <button type="submit">儲存這一季的估算</button>
+    <span class="muted" style="font-size:12px;margin-left:10px">四條產品線一起存。</span>
+  </div>
+</form>
+{% endif %}
+
+<style>
+  .pc-rows{border-top:1px solid var(--rule-2)}
+  .pc-row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--rule-2);font-size:13px}
+  .pc-row .v{font-weight:600;font-variant-numeric:tabular-nums}
+  .pc-row.total{border-top:1px solid var(--ink-3);border-bottom:none;margin-top:2px;padding-top:8px;font-weight:700}
+  .pc-row.total.neg .v{color:var(--seal)}
+  .pc-compare{padding-top:10px;border-top:2px solid var(--rule);font-size:13px;color:var(--ink-2);display:flex;justify-content:space-between}
+  .pc-compare b{color:var(--ink);font-variant-numeric:tabular-nums}
+</style>
+{% endblock %}

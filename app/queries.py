@@ -845,6 +845,58 @@ def product_line_pnl(season=None, basis="rev", mode="season", year=None):
                 window=(f"{lo} ~ {hi}" if lo else "全部"))
 
 
+# ---------- 全鏈路毛利分析(2026-10,管理視角估算)---------------------
+#   公司角度(總帳/正式三表/各產品線損益)一律從「公司付出去的採購款」算起,供應端自己
+#   的生產成本不會出現在公司帳上(郡碩沒有自己的果園,但老闆家易自己有果園——郡碩是跟
+#   他買鮮果或加工品,買鮮果可能自己加工再賣、也可能買加工品直接包裝賣)。這裡把那筆
+#   採購款往前拆解——估算裡面大概多少是供應端自己的成本、供應端大概賺多少——純粹給
+#   家易決策參考,不寫回任何真實帳目,金額總和不會因為這頁而改變。四條產品線結構完全
+#   一樣,不去判斷是哪種供應方式,交給家易自己估。
+CHAIN_PRODUCT_LINES = ("龍眼鮮果", "龍眼乾", "龍眼肉", "蜂蜜")
+
+
+def chain_cost_params(season):
+    """這一季 4 條產品線的供應端生產成本估算。這一季還沒填過的產品線,不補 0,往回找
+    最近一個已經填過的產季當預設值——使用者沒有按儲存之前,這只是顯示用的預設,不會
+    真的寫進這一季的列。全部都沒有歷史值的才是 0。"""
+    out = {}
+    for pg in CHAIN_PRODUCT_LINES:
+        r = q1("""SELECT supply_cost, season AS src_season FROM chain_cost_param
+                  WHERE pg_name=? AND season<=? ORDER BY season DESC LIMIT 1""", (pg, season))
+        out[pg] = dict(supply_cost=r.get("supply_cost", 0) or 0, src_season=r.get("src_season"))
+    return out
+
+
+def chain_margin(season):
+    """全鏈路毛利分析主表:4 條產品線各一列,真實數字(營收/採購款/運費,重用
+    product_line_pnl 的結果,不碰那邊的共同費用分攤/折舊——那是另一套口徑,混進來
+    會讓「供應端估算淨利」失去意義)+ 估算數字(chain_cost_params)。四條線結構完全
+    一樣,不分「公司自己加工 vs 買現成加工品」——郡碩沒有自有果園,但老闆家易自己有
+    果園,郡碩跟他買鮮果或加工品,買鮮果可能自己加工再賣、也可能買加工品直接包裝賣,
+    同一條產品線每季供應方式都可能不同,系統不判斷、也不需要判斷,交給家易自己估。"""
+    real = {g["name"]: g for g in product_line_pnl(season)["lines"]}
+    params = chain_cost_params(season)
+    out = []
+    for pg in CHAIN_PRODUCT_LINES:
+        g = real.get(pg, {})
+        revenue = g.get("revenue", 0) or 0
+        direct_material = g.get("direct_material", 0) or 0
+        ship_cost = g.get("ship_cost", 0) or 0
+        p = params[pg]
+        supply_cost = p["supply_cost"]
+        supply_profit = direct_material - supply_cost
+        company_profit = revenue - direct_material - ship_cost
+        out.append(dict(
+            pg_name=pg, revenue=revenue, qty=g.get("qty", 0) or 0,
+            direct_material=direct_material, ship_cost=ship_cost,
+            supply_cost=supply_cost, src_season=p["src_season"],
+            supply_profit=supply_profit, company_profit=company_profit,
+            chain_profit=company_profit + supply_profit,
+            chain_margin_pct=((company_profit + supply_profit) / revenue) if revenue else 0,
+        ))
+    return out
+
+
 def finance_summary(season=None, mode="season", year=None):
     """儀表板用:單一產季(或西曆年)→ season_finance/calendar_year_finance;
     多個 / 全部 → 相加。"""

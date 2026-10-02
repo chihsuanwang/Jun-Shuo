@@ -412,3 +412,21 @@ CREATE TABLE bank_account (
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+
+-- 24. 全鏈路毛利分析(2026-10,管理視角估算,不進總帳/不影響報稅)----------
+--     供應端生產成本是「整季估算總額」,不是單價。2026-10-02 定案:四條產品線不分
+--     「公司自己加工 vs 跟供應端買現成加工品」,也不特定是外部小農——郡碩沒有自有
+--     果園,但老闆(家易)自己有果園,郡碩是跟他買鮮果或加工品,買了鮮果可能自己加工
+--     再賣、也可能買加工品直接包裝賣,同一條產品線每季供應方式都可能不同,系統沒辦法
+--     判斷、也不需要判斷——只用一個不預設情境的欄位,讓家易自己估「這筆採購款裡面
+--     大概多少算供應端自己的成本」就好,不拆成田間管理/採收工資兩類。依產季各存一組,
+--     不是只有一個「現在最新值」,查不到當季資料時由 queries.chain_cost_params() 往回
+--     找最近一季的值當預設,不在這裡自動補列。
+CREATE TABLE chain_cost_param (
+  season        INTEGER NOT NULL,
+  pg_name       TEXT NOT NULL,      -- 龍眼鮮果/龍眼乾/龍眼肉/蜂蜜,跟 ledger.COGS_INVENTORY_ACCOUNTS 同一組字串
+  supply_cost   REAL NOT NULL DEFAULT 0,   -- 供應端生產成本估算(整季總額)
+  note          TEXT,
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  PRIMARY KEY (season, pg_name)
+);
