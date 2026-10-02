@@ -1,7 +1,6 @@
 """WSGI 進入點 —— 給只吃 WSGI 的雲端主機用(PythonAnywhere 等)。
 
-本機開發 / 免安裝 exe 不用這支(那邊走 uvicorn / launch.py)。
-它把 ASGI 的 FastAPI app 包成 WSGI:
+本機開發不用這支(那邊走 uvicorn)。它把 ASGI 的 FastAPI app 包成 WSGI:
 
     from wsgi import application
 
