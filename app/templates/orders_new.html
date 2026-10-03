@@ -120,6 +120,11 @@
   });
 
   // --- 小計與應收合計 ---
+  // 運費由誰負擔選「客戶付」時,客人要付的錢含運費,這裡的即時預覽要跟存檔後的
+  // order_total 算法一致(見 main.py order_create/order_update),不然畫面上看到的
+  // 應收合計會跟存檔後不一樣,造成誤會。
+  var shipPayerSel = document.querySelector('select[name="ship_payer"]');
+  var shipCostInput = document.querySelector('input[name="shipping_cost_actual"]');
   function recalc() {
     var sum = 0;
     body.querySelectorAll('tr.line').forEach(function (row) {
@@ -130,12 +135,17 @@
       if (cell) cell.textContent = sub.toLocaleString();
       sum += sub;
     });
+    if (shipPayerSel && shipPayerSel.value === '客戶付' && shipCostInput) {
+      sum += parseFloat(shipCostInput.value) || 0;
+    }
     var t = document.getElementById('ordertotal');
     if (t) t.textContent = sum.toLocaleString();
   }
   body.addEventListener('input', function (e) {
     if (e.target.name === 'qty' || e.target.name === 'unit_price') recalc();
   });
+  if (shipPayerSel) shipPayerSel.addEventListener('change', recalc);
+  if (shipCostInput) shipCostInput.addEventListener('input', recalc);
 
   // --- 依客戶分級自動帶標準價 + 現貨提示 ---
   var PRICES = {{ prices_json | safe }};

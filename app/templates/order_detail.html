@@ -221,6 +221,11 @@
   });
 
   // --- 小計與應收合計(不含贈品) ---
+  // 運費由誰負擔選「客戶付」時,客人要付的錢含運費,這裡的即時預覽要跟存檔後的
+  // order_total 算法一致(見 main.py order_update),不然畫面上看到的應收合計會跟
+  // 存檔後不一樣,造成誤會。
+  var shipPayerSel = document.querySelector('select[name="ship_payer"]');
+  var shipCostInput = document.querySelector('input[name="shipping_cost_actual"]');
   function recalc() {
     var sum = 0;
     body.querySelectorAll('tr.line').forEach(function (row) {
@@ -233,6 +238,9 @@
       if (cell) cell.textContent = Math.round(sub).toLocaleString();
       sum += sub;
     });
+    if (shipPayerSel && shipPayerSel.value === '客戶付' && shipCostInput) {
+      sum += parseFloat(shipCostInput.value) || 0;
+    }
     var t = document.getElementById('ordertotal');
     if (t) t.textContent = Math.round(sum).toLocaleString();
   }
@@ -242,6 +250,8 @@
   body.addEventListener('change', function (e) {
     if (e.target.name === 'is_gift') recalc();
   });
+  if (shipPayerSel) shipPayerSel.addEventListener('change', recalc);
+  if (shipCostInput) shipCostInput.addEventListener('input', recalc);
 
   // 改客戶
   var search = document.getElementById('custSearch'),

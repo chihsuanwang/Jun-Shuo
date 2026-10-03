@@ -186,7 +186,7 @@ def compose_expense_entries(category, amount, tax_amount=0, payment_account=None
     return legs
 
 
-def compose_order_sale_entries(lines, order_kind, shipping_cost=0):
+def compose_order_sale_entries(lines, order_kind, shipping_cost=0, ship_payer="店家吸收"):
     """訂單成立分錄:不管收沒收到錢都記。lines 是每個訂單明細的
     (product_group_name 或 None, revenue, cogs) 三元組列表。
     order_kind 不是「銷售」(贈送/樣品/內部領用等)回傳空 list,不記這筆。
@@ -194,7 +194,12 @@ def compose_order_sale_entries(lines, order_kind, shipping_cost=0):
     現場付現(拿去超商或叫物流來收),真的有花錢就跟著這張傳票一起記借:運費
     / 貸:現金,不然這筆真實的現金支出完全不會進總帳(本來只進 queries.py 的
     管理報表,正式帳本看不到)。只處理「銷售」訂單;贈送/樣品等非銷售訂單即使
-    有填運費,目前還是不記(那批訂單整張傳票都不記,維持原本的簡化規則)。"""
+    有填運費,目前還是不記(那批訂單整張傳票都不記,維持原本的簡化規則)。
+    ship_payer(2026-10-03 新增)=「客戶付」時,客人真正付的錢裡含運費,應收帳款
+    (`order_total`,main.py 那邊已經把運費算進去)要跟著多收這筆,運費科目則借貸
+    各記一次互相沖平——家易還是要真的付錢給物流商(借運費/貸現金不變),但客人
+    多付的這筆用貸記同一個運費科目沖銷,淨額歸零,對公司損益沒有影響,正確反映
+    「這筆錢只是經手、不是公司賺的或花的」。"""
     if order_kind != "銷售":
         return []
     rev_by_line, cogs_by_line = {}, {}
@@ -224,6 +229,9 @@ def compose_order_sale_entries(lines, order_kind, shipping_cost=0):
             legs.append(dict(account_code=code, account_name=name, debit=0, credit=amt))
     if shipping_cost > 0:
         ship_code, ship_name = EXPENSE_ACCOUNTS["運費"]
+        if ship_payer == "客戶付":
+            legs[0]["debit"] += shipping_cost   # 應收帳款多收這筆運費(客人真正要付的總額)
+            legs.append(dict(account_code=ship_code, account_name=ship_name, debit=0, credit=shipping_cost))
         legs.append(dict(account_code=ship_code, account_name=ship_name, debit=shipping_cost, credit=0))
         legs.append(dict(account_code=CASH_ACCOUNT[0], account_name=CASH_ACCOUNT[1], debit=0, credit=shipping_cost))
     return legs

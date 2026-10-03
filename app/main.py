@@ -1193,8 +1193,13 @@ async def order_create(request: Request):
     subtotal = sum(qv * up for _, qv, up, _, _ in lines)
     # 每列的成交價已是實收價;discount_total 只放使用者另外填的整單折讓。
     # 「賣得比定價低」的差額改由 list_price 於報表即時計算,不重複扣。
-    # 應收金額不含運費(運費只是家易花多少錢的紀錄,不跟客人收的部分另外拆帳)。
-    total = subtotal - discount_total
+    # 應收金額本來不含運費(運費只是家易花多少錢的紀錄,不跟客人收的部分另外拆帳)——
+    # 但「運費由誰負擔」選「客戶付」時,客人真正要付的錢裡面有包含運費,這裡要算進去,
+    # 不然收款時會把應收帳款沖過頭(見 2026-10-03 討論,ledger.py 那邊會把運費科目借貸
+    # 互相沖平,對公司損益淨影響還是 0,只是應收/收款金額要對)。
+    ship_payer = one("ship_payer", "店家吸收")
+    shipping_cost_actual = flt("shipping_cost_actual")
+    total = subtotal - discount_total + (shipping_cost_actual if ship_payer == "客戶付" else 0)
     invoiced = 1 if one("invoiced") else 0
     if invoiced and not one("tax_doc_no"):
         return RedirectResponse("/orders/new?err=invoice", status_code=303)
@@ -1205,7 +1210,7 @@ async def order_create(request: Request):
                   (next_order_no(), order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
                    discount_total, total,
                    one("payment_method") or None, one("payment_status", "待收款"),
-                   flt("shipping_cost_actual"), one("ship_payer", "店家吸收"), one("ship_method") or None,
+                   shipping_cost_actual, ship_payer, one("ship_method") or None,
                    invoiced, one("tax_doc_no") or None))
     for p, qv, up, b, lp in lines:
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal)
@@ -1238,7 +1243,7 @@ def _post_order_ledger(oid):
         return
     sale_lines = [(l["pg_name"], l["line_subtotal"] or 0, (l["qty"] or 0) * (l["unit_cost"] or 0))
                   for l in lines if not l["is_gift"]]
-    sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_cost_actual"])
+    sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_cost_actual"], o["ship_payer"])
     ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, "S", note=f"訂單 {o['order_no']}")
 
     pay_legs = ledger.compose_order_payment_entries(o["paid_amount"], o["payment_account"])
@@ -1523,7 +1528,11 @@ async def order_update(request: Request, oid: int):
 
     subtotal = sum(qv * up for _, qv, up, _, gf in new_lines if not gf)
     disc = o["discount_total"] or 0  # 折扣欄位已不開放編輯,沿用原值(通常是 0)
-    total = subtotal - disc
+    ship_payer = g("ship_payer") or "店家吸收"
+    shipping_cost_actual = flt("shipping_cost_actual")
+    # 「客戶付」時客人真正要付的錢裡含運費,應收要算進去,不然收款時應收帳款會沖過頭
+    # (見 2026-10-03 討論,ledger.py 會把運費科目借貸互相沖平,對損益淨影響還是 0)。
+    total = subtotal - disc + (shipping_cost_actual if ship_payer == "客戶付" else 0)
 
     if f.get("invoiced") and not g("tax_doc_no"):
         return RedirectResponse(f"/orders/{oid}?err=invoice", status_code=303)
@@ -1542,8 +1551,8 @@ async def order_update(request: Request, oid: int):
                 ship_method=g("ship_method"), carrier=g("carrier"), tracking_no=g("tracking_no"),
                 shipped_date=g("shipped_date"), delivered_date=g("delivered_date"),
                 ship_status=g("ship_status") or "待出貨",
-                shipping_cost_actual=flt("shipping_cost_actual"),
-                ship_payer=g("ship_payer") or "店家吸收", note=g("note"),
+                shipping_cost_actual=shipping_cost_actual,
+                ship_payer=ship_payer, note=g("note"),
                 invoiced=(1 if f.get("invoiced") else 0), tax_doc_no=g("tax_doc_no"))
     if cust_id and cust_id.isdigit():
         cols["customer_id"] = int(cust_id)

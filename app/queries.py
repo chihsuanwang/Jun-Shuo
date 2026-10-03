@@ -99,12 +99,16 @@ def _S(season, alias="o", mode="season", date_col="order_date", year=None):
 #   「營收」一律用實收(paid_amount,家易標記已收款時填的金額),不是訂單金額 ——
 #   他在意的是收支情況,錢真的進來才算數。還沒收到錢的訂單,先不計入營收/毛利,
 #   但照樣可以出貨(出貨跟庫存不受付款狀態影響)。
+#   ship_payer='客戶付' 的訂單,paid_amount 含運費(代收代付,不是公司的營收),算營收時要扣掉;
+#   運費支出(ship_cost)也只算 ship_payer='店家吸收' 的訂單,因為客戶付的運費對公司是淨零。
 PAID_O = "o.payment_status IN ('已收款','部分收款')"
 
 def kpi(season=None, asof=None, mode="season", year=None):
     a = as_of(asof)
     sc, sp = _S(season, mode=mode, year=year)
-    rev = q1(f"SELECT COALESCE(SUM(o.paid_amount),0) v FROM \"order\" o WHERE {sc} AND order_kind='銷售' AND {PAID_O}", sp)["v"]
+    rev = q1(f"""SELECT COALESCE(SUM(CASE WHEN o.ship_payer='客戶付' THEN o.paid_amount-o.shipping_cost_actual
+                      ELSE o.paid_amount END),0) v
+               FROM \"order\" o WHERE {sc} AND order_kind='銷售' AND {PAID_O}""", sp)["v"]
     m = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) cogs
                FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                JOIN product p ON p.product_id=ol.product_id
@@ -114,7 +118,7 @@ def kpi(season=None, asof=None, mode="season", year=None):
     gp = net_rev - (m["cogs"] - ret_cogs)
     oc = q1(f"SELECT COUNT(*) n FROM \"order\" o WHERE {sc} AND order_kind='銷售'", sp)["n"]
     paid_oc = q1(f"SELECT COUNT(*) n FROM \"order\" o WHERE {sc} AND order_kind='銷售' AND {PAID_O}", sp)["n"]
-    ship_cost = q1(f"SELECT COALESCE(SUM(shipping_cost_actual),0) v FROM \"order\" o WHERE {sc}", sp)["v"]
+    ship_cost = q1(f"SELECT COALESCE(SUM(shipping_cost_actual),0) v FROM \"order\" o WHERE {sc} AND ship_payer='店家吸收'", sp)["v"]
     ar = q1(f"""SELECT COALESCE(SUM(order_total - COALESCE(paid_amount,0)),0) v, COUNT(*) n FROM "order" o
                 WHERE {sc} AND payment_status IN ('待收款','部分收款')""", sp)
     pr = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
@@ -180,7 +184,9 @@ def alerts(season=None, asof=None, mode="season", year=None):
 def monthly(season=None, mode="season", year=None):
     """依訂單日期歸月,金額用實收(只算已收款 / 部分收款的訂單)。"""
     sc, sp = _S(season, mode=mode, year=year)
-    rev_rows = q(f"""SELECT strftime('%Y-%m', o.order_date) ym, COALESCE(SUM(o.paid_amount),0) rev
+    rev_rows = q(f"""SELECT strftime('%Y-%m', o.order_date) ym,
+                            COALESCE(SUM(CASE WHEN o.ship_payer='客戶付' THEN o.paid_amount-o.shipping_cost_actual
+                                 ELSE o.paid_amount END),0) rev
                      FROM "order" o WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}
                      GROUP BY ym""", sp)
     cogs_rows = q(f"""SELECT strftime('%Y-%m', o.order_date) ym,
@@ -530,14 +536,15 @@ def finance_months(season=None, mode="season", year=None):
     return [m for m in mw if season_of(m + "-01") in ss]
 
 def finance_month(ym):
-    rev = q1(f"""SELECT COALESCE(SUM(paid_amount),0) v FROM "order" o
+    rev = q1(f"""SELECT COALESCE(SUM(CASE WHEN ship_payer='客戶付' THEN paid_amount-shipping_cost_actual
+                      ELSE paid_amount END),0) v FROM "order" o
                 WHERE order_kind='銷售' AND {PAID_O} AND strftime('%Y-%m',order_date)=?""", (ym,))["v"]
     cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
                  WHERE o.order_kind='銷售' AND {PAID_O} AND strftime('%Y-%m',o.order_date)=?""", (ym,))["v"]
     ship_cost = q1("""SELECT COALESCE(SUM(shipping_cost_actual),0) v
-                       FROM "order" WHERE strftime('%Y-%m',order_date)=?""", (ym,))["v"]
+                       FROM "order" WHERE strftime('%Y-%m',order_date)=? AND ship_payer='店家吸收'""", (ym,))["v"]
     by_cat = {}
     for r in opex_rows(ym, ym):
         by_cat[r["category"]] = by_cat.get(r["category"], 0) + r["amt"]
@@ -653,14 +660,15 @@ def season_finance(season):
     產季全長是 4 月初~隔年 3 月底共 12 個月,但還沒發生的月份不預先算進費用裡
     (進行中的產季只算「已經過去的月份」,不會因為費用先算滿 12 個月而顯得稅前利潤一大包負的)。
     銷貨退回 / 折讓依「發生產季」沖減(cogs 為回沖後淨額)。"""
-    rev = q1(f"""SELECT COALESCE(SUM(paid_amount),0) v FROM "order" o
+    rev = q1(f"""SELECT COALESCE(SUM(CASE WHEN ship_payer='客戶付' THEN paid_amount-shipping_cost_actual
+                      ELSE paid_amount END),0) v FROM "order" o
                 WHERE season=? AND order_kind='銷售' AND {PAID_O}""", (season,))["v"]
     cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
                  WHERE o.season=? AND o.order_kind='銷售' AND {PAID_O}""", (season,))["v"]
     ship_cost = q1("""SELECT COALESCE(SUM(shipping_cost_actual),0) v
-                       FROM "order" WHERE season=?""", (season,))["v"]
+                       FROM "order" WHERE season=? AND ship_payer='店家吸收'""", (season,))["v"]
     ret_gross, ret_cogs = _returns_agg(season)
     cogs_net = cogs - ret_cogs
     net_rev = rev - ret_gross
@@ -683,14 +691,15 @@ def calendar_year_finance(year):
     1~12 月,給經營報表「依西曆年」檢視用。回傳 dict 用 year= 取代 season= 當 key
     (模板沒有地方直接讀 fin.season,已確認安全)。"""
     yr = str(int(year))
-    rev = q1(f"""SELECT COALESCE(SUM(paid_amount),0) v FROM "order" o
+    rev = q1(f"""SELECT COALESCE(SUM(CASE WHEN ship_payer='客戶付' THEN paid_amount-shipping_cost_actual
+                      ELSE paid_amount END),0) v FROM "order" o
                 WHERE strftime('%Y',order_date)=? AND order_kind='銷售' AND {PAID_O}""", (yr,))["v"]
     cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
                  WHERE strftime('%Y',o.order_date)=? AND o.order_kind='銷售' AND {PAID_O}""", (yr,))["v"]
     ship_cost = q1("""SELECT COALESCE(SUM(shipping_cost_actual),0) v
-                       FROM "order" WHERE strftime('%Y',order_date)=?""", (yr,))["v"]
+                       FROM "order" WHERE strftime('%Y',order_date)=? AND ship_payer='店家吸收'""", (yr,))["v"]
     ret_gross, ret_cogs = _returns_agg(None, mode="calendar", year=int(year))
     cogs_net = cogs - ret_cogs
     net_rev = rev - ret_gross
@@ -762,7 +771,7 @@ def product_line_pnl(season=None, basis="rev", mode="season", year=None):
                    WHERE {sc} AND o.order_kind='銷售'""", sp):
         seg.setdefault(r["oid"], []).append((r["pg"], r["sub"] or 0))
     for o in q(f"""SELECT order_id oid, shipping_cost_actual ship
-                   FROM "order" o WHERE {sc} AND order_kind='銷售'""", sp):
+                   FROM "order" o WHERE {sc} AND order_kind='銷售' AND ship_payer='店家吸收'""", sp):
         parts = seg.get(o["oid"], [])
         tot = sum(s for _, s in parts) or 1
         for pg, s in parts:
