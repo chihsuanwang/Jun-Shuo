@@ -1096,7 +1096,7 @@ def _display_balance(account_code, balance):
 
 PNL_SUMMARY_ACCOUNT = ("3353", "本期損益")  # 同事截圖給的代碼;只有這個沒被 9/23 列為待確認,視為已確認
 
-def trial_balance(as_of):
+def trial_balance(as_of, all_accounts=False):
     """試算表:每個用過的科目,累計到 as_of(含)為止的借貸合計 = 期末餘額。含已經貼過的
     年度結轉傳票——結轉會把已結束年度的 4~7 開頭科目沖平、餘額留到累積盈虧,試算表才會對。
     順便算一個檢核值(比照同事的檢核規則,理論上永遠是 0,因為每張傳票本來就借貸相等,
@@ -1106,7 +1106,11 @@ def trial_balance(as_of):
     結轉的年度 4~7 開頭淨額)——**這一列是算出來的,底層沒有真的傳票**,所以先把 debit_side
     / credit_side / check 用「真的有過帳的列」算完,才把這列加進 rows 顯示(同事說的「要填入
     數字但加總[檢核]時不計算他」)。資產負債表 / 其他要看權益的地方,直接篩 `tb['rows']`
-    代碼開頭 3 就會自動含這列,不用再像以前那樣另外呼叫一次 `_unclosed_pnl` 重算。"""
+    代碼開頭 3 就會自動含這列,不用再像以前那樣另外呼叫一次 `_unclosed_pnl` 重算。
+
+    all_accounts=True(2026-10-08 同仁回饋,試算表頁 / 下載用):沒有金額的科目也列出來,
+    借貸都是 0。科目清單 = ledger.ALL_ACCOUNTS(系統會記到的所有科目)+ 銀行帳戶主檔。
+    資產負債表不傳這個參數,維持只列有餘額的科目。"""
     rows = q("""SELECT account_code, account_name, SUM(debit) db, SUM(credit) cr
                 FROM ledger_entry WHERE entry_date<=?
                 GROUP BY account_code, account_name
@@ -1116,6 +1120,17 @@ def trial_balance(as_of):
         r["balance"] = (r["db"] or 0) - (r["cr"] or 0)
         r["disp"] = _display_balance(r["account_code"], r["balance"])
         r["synthetic"] = False
+    if all_accounts:
+        import ledger
+        have = {r["account_code"] for r in rows}
+        chart = list(ledger.ALL_ACCOUNTS) + [(b["account_code"], f"銀行存款-{b['name']}")
+                                             for b in q("SELECT name, account_code FROM bank_account")]
+        for code, name in chart:
+            if code in have or code == PNL_SUMMARY_ACCOUNT[0]:
+                continue
+            have.add(code)
+            rows.append(dict(account_code=code, account_name=name, db=0, cr=0, balance=0, disp=0,
+                             synthetic=False))
     debit_side  = sum(r["disp"] for r in rows if _is_debit_normal(r["account_code"]))
     credit_side = sum(r["disp"] for r in rows if not _is_debit_normal(r["account_code"]))
 

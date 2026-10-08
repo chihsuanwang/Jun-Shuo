@@ -39,18 +39,19 @@
 
 {% if tab == 'trial' %}
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">
-  截至 {{ tb.as_of }} 為止,每個用過的科目累計借貸餘額。含已經結轉過的年度——那些年份的
+  截至 {{ tb.as_of }} 為止,所有科目的累計借貸餘額(沒有金額的科目也列出來,顯示 0)。含已經結轉過的年度——那些年份的
   收入/成本/費用科目已經歸零,餘額轉進了累積盈虧。「3353 本期損益」這列是算出來的(還沒
   結轉的年度損益),底下沒有真的傳票,下面的借貸合計檢核不含這列。
 </p>
+<p style="margin:-6px 0 14px"><a href="/statements/trial.csv?year={{ year }}"><button type="button" class="ghost">下載試算表(Excel 可開)</button></a></p>
 <div class="card" style="margin-bottom:16px">
   <table>
     <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>借方合計</th><th data-num>貸方合計</th><th data-num>餘額</th></tr></thead>
     <tbody>{% for r in tb.rows %}
       <tr style="{{ 'background:var(--paper-2)' if r.synthetic }}">
         <td>{{ r.account_code }}</td><td>{{ r.account_name }}{{ '(算出來的)' if r.synthetic }}</td>
-        <td class="r">{{ r.db|money if r.db else '—' }}</td>
-        <td class="r">{{ r.cr|money if r.cr else '—' }}</td>
+        <td class="r">{{ '—' if r.synthetic else (r.db or 0)|money }}</td>
+        <td class="r">{{ '—' if r.synthetic else (r.cr or 0)|money }}</td>
         <td class="r {{ 'neg' if r.disp < 0 }}">{{ r.disp|money }}</td>
       </tr>
     {% else %}<tr><td colspan="5" class="muted" style="text-align:left">還沒有總帳資料。</td></tr>{% endfor %}</tbody>

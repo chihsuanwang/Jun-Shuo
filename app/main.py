@@ -1876,12 +1876,28 @@ def statements_page(request: Request):
     data = dict(request=request, active="statement", tab=tab, tabs=STATEMENT_TABS,
                 years=years, year=year, closed=closed)
     if tab == "trial":
-        data["tb"] = Q.trial_balance(as_of)
+        data["tb"] = Q.trial_balance(as_of, all_accounts=True)
     elif tab == "bs":
         data["bs"] = Q.balance_sheet(as_of)
     elif tab == "is":
         data["is_"] = Q.income_statement(year)
     return tpl.TemplateResponse("statements.html", data)
+
+@app.get("/statements/trial.csv")
+def trial_balance_csv(request: Request):
+    """試算表下載(2026-10-08):跟畫面一樣列出所有科目,沒有金額的也列。"""
+    years = Q.statement_years()
+    yv = request.query_params.get("year")
+    year = int(yv) if yv and yv.isdigit() and int(yv) in years else years[-1]
+    tb = Q.trial_balance(f"{year}-12-31", all_accounts=True)
+    rows = [[r["account_code"], r["account_name"] + ("(算出來的,不計入檢核)" if r["synthetic"] else ""),
+             "" if r["synthetic"] else round(r["db"] or 0), "" if r["synthetic"] else round(r["cr"] or 0),
+             round(r["disp"] or 0)] for r in tb["rows"]]
+    rows += [[], ["", "借方正常餘額合計", "", "", round(tb["debit_side"])],
+             ["", "貸方正常餘額合計", "", "", round(tb["credit_side"])],
+             ["", "檢核(應該 = 0)", "", "", round(tb["check"])]]
+    return csv_response(f"試算表_{year}年_截至{tb['as_of']}.csv",
+                        ["科目代碼", "科目名稱", "借方合計", "貸方合計", "餘額"], rows)
 
 @app.post("/statements/close-year")
 async def statements_close_year(request: Request):
