@@ -43,11 +43,11 @@
   </div>
 
   <table style="margin-top:14px">
-    <thead><tr><th>科目</th><th data-num>借方</th><th data-num>貸方</th></tr></thead>
+    <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>借方</th><th data-num>貸方</th></tr></thead>
     <tbody>
-      <tr><td>{{ primary_account_name }}</td><td class="r">{{ amount|money }}</td><td class="r">—</td></tr>
-      <tr id="taxRow" hidden><td>進項稅額</td><td class="r" id="taxDebit"></td><td class="r">—</td></tr>
-      <tr><td id="cashName">現金</td><td class="r">—</td><td class="r" id="cashCredit">{{ amount|money }}</td></tr>
+      <tr><td>{{ primary_account_code }}</td><td>{{ primary_account_name }}</td><td class="r">{{ amount|money }}</td><td class="r">—</td></tr>
+      <tr id="taxRow" hidden><td>{{ tax_account[0] }}</td><td>{{ tax_account[1] }}</td><td class="r" id="taxDebit"></td><td class="r">—</td></tr>
+      <tr><td id="cashCode">{{ cash_account[0] }}</td><td id="cashName">{{ cash_account[1] }}</td><td class="r">—</td><td class="r" id="cashCredit">{{ amount|money }}</td></tr>
     </tbody>
   </table>
   <div class="muted" style="font-size:12px;margin-top:8px">借貸合計:<span id="balCheck"></span></div>
@@ -63,6 +63,7 @@
   var taxAmt = document.getElementById('taxAmt'), payAcct = document.getElementById('payAcct');
   var taxRow = document.getElementById('taxRow'), taxDebit = document.getElementById('taxDebit');
   var cashName = document.getElementById('cashName'), cashCredit = document.getElementById('cashCredit');
+  var cashCode = document.getElementById('cashCode'), BANK_CODES = {{ bank_codes | tojson }};
   var balCheck = document.getElementById('balCheck');
   var docType = document.getElementById('docType'), invoiceNoField = document.getElementById('invoiceNoField');
   var invoiceNo = document.getElementById('invoiceNo');
@@ -79,7 +80,10 @@
     taxRow.hidden = tax <= 0;
     taxDebit.textContent = money(tax);
     var acct = (payAcct.value || '').trim();
-    cashName.textContent = (!acct || acct === '現金') ? '現金' : ('銀行存款-' + acct);
+    var isCash = !acct || acct === '現金';
+    cashName.textContent = isCash ? '{{ cash_account[1] }}' : ('銀行存款-' + acct);
+    // 銀行代碼是第一次用到時才自動編號,還沒用過的新帳戶這裡先寫「存檔後編號」
+    cashCode.textContent = isCash ? '{{ cash_account[0] }}' : (BANK_CODES[acct] || '存檔後編號');
     var total = amount + tax;
     cashCredit.textContent = money(total);
     balCheck.textContent = money(amount) + ' + ' + money(tax) + ' = ' + money(total) + '(借貸平衡)';

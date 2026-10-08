@@ -68,14 +68,14 @@
     <div class="muted" style="font-size:12px">{{ v.note or '' }}</div>
   </div>
   <table style="margin-top:8px">
-    <thead><tr><th>科目</th><th data-num>借方</th><th data-num>貸方</th></tr></thead>
+    <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>借方</th><th data-num>貸方</th></tr></thead>
     <tbody>
       {% for l in v.lines %}
-      <tr><td>{{ l.account_code }} {{ l.account_name }}</td>
+      <tr><td>{{ l.account_code }}</td><td>{{ l.account_name }}</td>
         <td class="r">{{ l.debit|money if l.debit else '—' }}</td>
         <td class="r">{{ l.credit|money if l.credit else '—' }}</td></tr>
       {% endfor %}
-      <tr class="sum"><td>合計</td><td class="r">{{ v.total_debit|money }}</td><td class="r">{{ v.total_credit|money }}</td></tr>
+      <tr class="sum"><td colspan="2">合計</td><td class="r">{{ v.total_debit|money }}</td><td class="r">{{ v.total_credit|money }}</td></tr>
     </tbody>
   </table>
 </div>

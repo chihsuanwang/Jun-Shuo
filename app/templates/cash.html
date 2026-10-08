@@ -22,7 +22,10 @@
   {% endfor %}
 </div>
 
-<div class="grid" style="grid-template-columns:1fr;margin-bottom:16px">
+{% set parts = (sel or '|').split('|', 1) %}
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:16px">
+  <div class="card kpi"><div class="lab">科目代碼</div><div class="val">{{ parts[0] }}</div></div>
+  <div class="card kpi"><div class="lab">科目名稱</div><div class="val" style="font-size:20px">{{ parts[1] }}</div></div>
   <div class="card kpi" style="border-top-color:var(--leaf)"><div class="lab">目前餘額</div><div class="val">{{ bal|money }}</div></div>
 </div>
 
