@@ -44,8 +44,9 @@
   結轉的年度損益),底下沒有真的傳票,下面的借貸合計檢核不含這列。
 </p>
 <p style="margin:-6px 0 14px"><a href="/statements/trial.csv?year={{ year }}"><button type="button" class="ghost">下載試算表(Excel 可開)</button></a></p>
-<div class="card" style="margin-bottom:16px">
-  <table>
+<div class="card stmt-card" style="margin-bottom:16px">
+  <table class="stmt">
+    <colgroup><col class="c-code"><col class="c-name"><col class="c-amt"><col class="c-amt"><col class="c-amt"></colgroup>
     <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>借方合計</th><th data-num>貸方合計</th><th data-num>餘額</th></tr></thead>
     <tbody>{% for r in tb.rows %}
       <tr style="{{ 'background:var(--paper-2)' if r.synthetic }}">
@@ -75,9 +76,10 @@
 {% if tab == 'bs' %}
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">截至 {{ bs.as_of }} 為止。</p>
 <div style="display:flex;gap:20px;flex-wrap:wrap">
-  <div class="card" style="flex:1;min-width:280px">
+  <div class="card stmt-card">
     <h3 class="serif">資產</h3>
-    <table>
+    <table class="stmt">
+      <colgroup><col class="c-code"><col class="c-name"><col class="c-amt"></colgroup>
       <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>餘額</th></tr></thead>
       <tbody>{% for r in bs.assets %}
         <tr><td>{{ r.account_code }}</td><td>{{ r.account_name }}</td><td class="r">{{ r.disp|money }}</td></tr>
@@ -85,9 +87,10 @@
       <tfoot><tr><td colspan="2"><b>資產合計</b></td><td class="r"><b>{{ bs.total_assets|money }}</b></td></tr></tfoot>
     </table>
   </div>
-  <div class="card" style="flex:1;min-width:280px">
+  <div class="card stmt-card">
     <h3 class="serif">負債</h3>
-    <table>
+    <table class="stmt">
+      <colgroup><col class="c-code"><col class="c-name"><col class="c-amt"></colgroup>
       <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>餘額</th></tr></thead>
       <tbody>{% for r in bs.liabilities %}
         <tr><td>{{ r.account_code }}</td><td>{{ r.account_name }}</td><td class="r">{{ r.disp|money }}</td></tr>
@@ -95,7 +98,8 @@
       <tfoot><tr><td colspan="2"><b>負債合計</b></td><td class="r"><b>{{ bs.total_liab|money }}</b></td></tr></tfoot>
     </table>
     <h3 class="serif" style="margin-top:16px">權益</h3>
-    <table>
+    <table class="stmt">
+      <colgroup><col class="c-code"><col class="c-name"><col class="c-amt"></colgroup>
       <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>餘額</th></tr></thead>
       <tbody>
         {% for r in bs.equity %}
@@ -122,8 +126,9 @@
   {{ is_.window }}(進行中的年份只算到今天)。已經結轉過的年度,這裡看到的還是原始收入/
   費用明細——結轉傳票本身不算進來,不然會整批顯示 0。
 </p>
-<div class="card" style="margin-bottom:16px">
-  <table>
+<div class="card stmt-card" style="margin-bottom:16px">
+  <table class="stmt">
+    <colgroup><col class="c-code"><col class="c-name"><col class="c-amt"></colgroup>
     <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>金額</th></tr></thead>
     <tbody>{% for r in is_.rows %}
       <tr><td>{{ r.account_code }}</td><td>{{ r.account_name }}</td>

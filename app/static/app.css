@@ -148,6 +148,15 @@ button.ghost{background:none;color:var(--ink-2);border:1px solid var(--rule)}
   .filterbar { flex-wrap: wrap; row-gap: 6px; }
 }
 
+/* --- 正式報表(試算表 / 資產負債表 / 綜合損益表):固定欄寬,不跟著視窗拉寬(2026-10-08) --- */
+.stmt-card { width: fit-content; max-width: 100%; }
+.main table.stmt { width: auto; min-width: 0; table-layout: fixed; }
+table.stmt col.c-code { width: 96px; }
+table.stmt col.c-name { width: 250px; }
+table.stmt col.c-amt  { width: 120px; }
+table.stmt td { overflow-wrap: anywhere; }
+table.stmt thead th:nth-child(2), table.stmt tbody td:nth-child(2) { text-align: left; }
+
 /* --- 列印(揀貨單 / 標籤 / 食品標示) --- */
 @media print {
   .side, .print-hide, .head a, .head button, nav { display: none !important; }
