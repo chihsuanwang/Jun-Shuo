@@ -182,6 +182,8 @@ CREATE TABLE order_line (
   list_price      REAL,                           -- 當下標準價(帶入自 price_list)
   line_discount   REAL    NOT NULL DEFAULT 0,
   line_subtotal   REAL    NOT NULL DEFAULT 0,     -- qty*unit_price - line_discount
+  unit_cost       REAL,                           -- 開單當下的商品單位成本(2026-10-08):之後商品目錄改成本,
+                                                  -- 舊訂單照當初的成本算,欠小農的金額不會跟著變;NULL 才退回用商品目錄的
   is_gift         INTEGER NOT NULL DEFAULT 0 CHECK (is_gift IN (0,1)),
   expiry_stated   TEXT                            -- 歷史「保存期限」原值,保留欄
 );

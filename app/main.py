@@ -118,6 +118,13 @@ def migrate_db():
                 execute("UPDATE product SET unit_cost=? WHERE product_id=?", (r["v"], r["pid"]))
             print("[migrate] product.unit_cost 已補上(用舊批次成本帶初值)")
         execute("CREATE TABLE IF NOT EXISTS pricing_param (key TEXT PRIMARY KEY, value REAL NOT NULL)")
+        lcols = [r["name"] for r in q("PRAGMA table_info(order_line)")]
+        if "unit_cost" not in lcols:
+            execute("ALTER TABLE order_line ADD COLUMN unit_cost REAL")
+            # 舊訂單先用商品目錄現在的成本補上,之後就固定不變
+            execute("""UPDATE order_line SET unit_cost=(SELECT unit_cost FROM product p
+                       WHERE p.product_id=order_line.product_id)""")
+            print("[migrate] order_line.unit_cost 已補上(用商品目錄目前的成本)")
         if "sales_tax" not in ocols:
             execute('ALTER TABLE "order" ADD COLUMN sales_tax REAL NOT NULL DEFAULT 0')
             print("[migrate] order.sales_tax 已補上")
@@ -1015,10 +1022,16 @@ async def order_create(request: Request):
                    shipping_cost_actual, ship_payer, one("ship_method") or None,
                    invoiced, one("tax_doc_no") or None))
     for p, qv, up, b, lp in lines:
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal)
-                   VALUES(?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up))
+        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,unit_cost)
+                   VALUES(?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up, _product_cost(p)))
     _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
+
+
+def _product_cost(pid):
+    """商品目錄目前的單位成本——開單當下抄一份存進訂單明細(order_line.unit_cost),
+    之後商品目錄改成本不會回頭影響舊訂單。"""
+    return q1("SELECT unit_cost FROM product WHERE product_id=?", (pid,)).get("unit_cost") or 0
 
 
 def _post_order_ledger(oid):
@@ -1148,8 +1161,8 @@ async def order_import_confirm(request: Request):
                       (next_order_no(), row["order_date"], Q.season_of(row["order_date"]), cid, channel_id,
                        subtotal, row.get("payment_method"), row["source_ref"], row.get("note") or None))
         for pid, qty, up in built_lines:
-            execute("""INSERT INTO order_line(order_id,product_id,qty,unit_price,line_subtotal)
-                       VALUES(?,?,?,?,?)""", (oid, pid, qty, up, qty * up))
+            execute("""INSERT INTO order_line(order_id,product_id,qty,unit_price,line_subtotal,unit_cost)
+                       VALUES(?,?,?,?,?,?)""", (oid, pid, qty, up, qty * up, _product_cost(pid)))
         _post_order_ledger(oid)
         imported += 1
 
@@ -1264,10 +1277,14 @@ async def order_update(request: Request, oid: int):
         pid = int(p)
         is_gift = 1 if (i < len(gl) and gl[i] == "是") else 0
         new_lines.append((pid, qv, up if not is_gift else 0, None, is_gift))
+    # 明細整批重建,但成本沿用開單當下存的那個(同一個商品);新加進來的商品才用目前的成本
+    old_cost = {r["product_id"]: r["unit_cost"] for r in
+                q("SELECT product_id, unit_cost FROM order_line WHERE order_id=? AND unit_cost IS NOT NULL", (oid,))}
     execute("DELETE FROM order_line WHERE order_id=?", (oid,))
     for p, qv, up, b, gf in new_lines:
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift)
-                   VALUES(?,?,?,?,?,?,?)""", (oid, p, b, qv, up, qv * up, gf))
+        cost = old_cost[p] if p in old_cost else _product_cost(p)
+        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,unit_cost)
+                   VALUES(?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, qv * up, gf, cost))
 
     subtotal = sum(qv * up for _, qv, up, _, gf in new_lines if not gf)
     disc = o["discount_total"] or 0  # 折扣欄位已不開放編輯,沿用原值(通常是 0)
@@ -1323,10 +1340,11 @@ def order_copy(oid: int):
     subtotal = 0
     for l in lines:
         subtotal += 0 if l["is_gift"] else (l["qty"] * l["unit_price"])
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,is_gift)
-                   VALUES(?,?,?,?,?,?,?,?)""",
+        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,is_gift,unit_cost)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
                 (noid, l["product_id"], l["batch_id"], l["qty"], l["unit_price"],
-                 l["list_price"], 0 if l["is_gift"] else l["qty"] * l["unit_price"], l["is_gift"]))
+                 l["list_price"], 0 if l["is_gift"] else l["qty"] * l["unit_price"], l["is_gift"],
+                 _product_cost(l["product_id"])))
     execute('UPDATE "order" SET order_total=?, sales_tax=? WHERE order_id=?',
             (subtotal, o["sales_tax"] or 0, noid))
     _post_order_ledger(noid)
@@ -1422,8 +1440,9 @@ async def issue_update(request: Request, iid: int):
                        (next_order_no(), dt.date.today().isoformat(), o["season"], o["customer_id"],
                         o["channel_id"], f"由 {o['order_no']} 的{si['issue_type']}理賠重寄"))
         for l in lines:
-            execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift)
-                       VALUES(?,?,?,?,0,0,1)""", (noid, l["product_id"], l["batch_id"], l["qty"]))
+            execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,unit_cost)
+                       VALUES(?,?,?,?,0,0,1,?)""", (noid, l["product_id"], l["batch_id"], l["qty"],
+                                                   _product_cost(l["product_id"])))
         execute("UPDATE shipment_issue SET linked_reship_order_id=? WHERE issue_id=?", (noid, iid))
         return RedirectResponse("/issues", status_code=303)
 

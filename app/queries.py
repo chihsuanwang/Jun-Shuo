@@ -117,7 +117,7 @@ def kpi(season=None, asof=None, mode="season", year=None):
     sc, sp = _S(season, mode=mode, year=year)
     rev = q1(f"""SELECT COALESCE(SUM({REV_PAID}),0) v
                FROM \"order\" o WHERE {sc} AND order_kind='銷售' AND {PAID_O}""", sp)["v"]
-    m = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) cogs
+    m = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(ol.unit_cost,p.unit_cost,0)),0) cogs
                FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                JOIN product p ON p.product_id=ol.product_id
                WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}""", sp)
@@ -129,7 +129,7 @@ def kpi(season=None, asof=None, mode="season", year=None):
     ship_cost = q1(f"SELECT COALESCE(SUM(shipping_cost_actual),0) v FROM \"order\" o WHERE {sc} AND ship_payer='店家吸收'", sp)["v"]
     ar = q1(f"""SELECT COALESCE(SUM(order_total - COALESCE(paid_amount,0)),0) v, COUNT(*) n FROM "order" o
                 WHERE {sc} AND payment_status IN ('待收款','部分收款')""", sp)
-    pr = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
+    pr = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(ol.unit_cost,p.unit_cost,0)),0) v
                 FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                 JOIN product p ON p.product_id=ol.product_id
                 WHERE {sc} AND o.order_kind<>'銷售'""", sp)["v"]
@@ -189,7 +189,7 @@ def monthly(season=None, mode="season", year=None):
                      FROM "order" o WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}
                      GROUP BY ym""", sp)
     cogs_rows = q(f"""SELECT strftime('%Y-%m', o.order_date) ym,
-                             COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) cogs
+                             COALESCE(SUM(ol.qty*COALESCE(ol.unit_cost,p.unit_cost,0)),0) cogs
                       FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                       JOIN product p ON p.product_id=ol.product_id
                       WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}
@@ -220,7 +220,7 @@ def by_channel(season=None, mode="season", year=None):
         (SELECT COUNT(*) FROM "order" o WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') orders,
         (SELECT COALESCE(SUM({LINE_NET}),0) FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
            WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') rev,
-        (SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
+        (SELECT COALESCE(SUM(ol.qty*COALESCE(ol.unit_cost,p.unit_cost,0)),0) FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
            JOIN product p ON p.product_id=ol.product_id
            WHERE o.channel_id=c.channel_id AND {sc} AND o.order_kind='銷售') cogs
         FROM channel c""", sp * 3)
@@ -359,7 +359,7 @@ def order_get(oid):
                      (SELECT name FROM channel WHERE channel_id=o.channel_id) chan
               FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
               WHERE o.order_id=?""", (oid,))
-    lines = q("""SELECT ol.*, p.name pname, p.uom, p.unit_cost, pg.name pg_name
+    lines = q("""SELECT ol.*, p.name pname, p.uom, COALESCE(ol.unit_cost, p.unit_cost) unit_cost, pg.name pg_name
                  FROM order_line ol JOIN product p ON p.product_id=ol.product_id
                  LEFT JOIN product_group pg ON pg.pg_id=p.product_group_id
                  WHERE ol.order_id=? ORDER BY ol.line_id""", (oid,))
@@ -385,8 +385,8 @@ def profit_by_product(season=None, mode="season", year=None):
                         SUM({LINE_NET}) rev,
                         SUM(CASE WHEN ol.list_price>ol.unit_price
                                  THEN (ol.list_price-ol.unit_price)*ol.qty ELSE 0 END) disc,
-                        AVG(NULLIF(p.unit_cost,0)) unit_cost,
-                        SUM({LINE_NET} - ol.qty*COALESCE(p.unit_cost,0)) gp,
+                        AVG(NULLIF(COALESCE(ol.unit_cost,p.unit_cost),0)) unit_cost,
+                        SUM({LINE_NET} - ol.qty*COALESCE(ol.unit_cost,p.unit_cost,0)) gp,
                         AVG(NULLIF(ol.unit_price,0)) avg_price,
                         AVG(NULLIF(ol.list_price,0)) list_price
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
@@ -512,7 +512,7 @@ def finance_months(season=None, mode="season", year=None):
 def finance_month(ym):
     rev = q1(f"""SELECT COALESCE(SUM({REV_PAID}),0) v FROM "order" o
                 WHERE order_kind='銷售' AND {PAID_O} AND strftime('%Y-%m',order_date)=?""", (ym,))["v"]
-    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
+    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(ol.unit_cost,p.unit_cost,0)),0) v
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
                  WHERE o.order_kind='銷售' AND {PAID_O} AND strftime('%Y-%m',o.order_date)=?""", (ym,))["v"]
@@ -625,7 +625,7 @@ def season_finance(season):
     銷貨退回 / 折讓依「發生產季」沖減(cogs 為回沖後淨額)。"""
     rev = q1(f"""SELECT COALESCE(SUM({REV_PAID}),0) v FROM "order" o
                 WHERE season=? AND order_kind='銷售' AND {PAID_O}""", (season,))["v"]
-    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
+    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(ol.unit_cost,p.unit_cost,0)),0) v
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
                  WHERE o.season=? AND o.order_kind='銷售' AND {PAID_O}""", (season,))["v"]
@@ -655,7 +655,7 @@ def calendar_year_finance(year):
     yr = str(int(year))
     rev = q1(f"""SELECT COALESCE(SUM({REV_PAID}),0) v FROM "order" o
                 WHERE strftime('%Y',order_date)=? AND order_kind='銷售' AND {PAID_O}""", (yr,))["v"]
-    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(p.unit_cost,0)),0) v
+    cogs = q1(f"""SELECT COALESCE(SUM(ol.qty*COALESCE(ol.unit_cost,p.unit_cost,0)),0) v
                  FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
                  JOIN product p ON p.product_id=ol.product_id
                  WHERE strftime('%Y',o.order_date)=? AND o.order_kind='銷售' AND {PAID_O}""", (yr,))["v"]
@@ -713,7 +713,7 @@ def product_line_pnl(season=None, basis="rev", mode="season", year=None):
     # 營收 / 銷量 / 直接材料(商品單位成本)
     for r in q(f"""SELECT p.product_group_id pg, ol.qty,
                           {LINE_NET} sub,
-                          ol.qty * COALESCE(p.unit_cost,0) bcost
+                          ol.qty * COALESCE(ol.unit_cost,p.unit_cost,0) bcost
                    FROM order_line ol
                    JOIN "order" o ON o.order_id=ol.order_id
                    JOIN product p ON p.product_id=ol.product_id

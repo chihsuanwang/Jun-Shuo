@@ -189,8 +189,9 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
         sub = 0 if gift else round(qty * tier)
         bid = None if sku.startswith(("HNY", "GY-FRESH")) else bat[bcode]
         c.execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,
-                     line_discount,line_subtotal,is_gift) VALUES(?,?,?,?,?,?,?,?,?)""",
-                  (oid, prod[sku]["id"], bid, qty, tier, tier, 0, sub, 1 if gift else 0))
+                     line_discount,line_subtotal,is_gift,unit_cost) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                  (oid, prod[sku]["id"], bid, qty, tier, tier, 0, sub, 1 if gift else 0,
+                   prod[sku]["unit_cost"]))
 
     # 記帳:訂單成立分錄 + 收款分錄(邏輯跟 main.py 的 _post_order_ledger 一致)
     sale_lines = [(prod[sku]["pg_name"], 0 if gift else round(qty * price_of(sku, seg)),
