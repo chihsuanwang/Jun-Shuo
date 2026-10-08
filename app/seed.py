@@ -40,12 +40,12 @@ c = cx.cursor()
 # ---- 總帳分錄小工具(方案B試點:只給有代表性的幾筆示範資料寫分錄,-----
 #      不是每月 108 筆營運費用都寫,那樣 /ledger 會塞爆,失去示範的意義)----
 _voucher_seq = {}
-def add_voucher(prefix, date, legs, source_type, source_id, note=None):
+def add_voucher(date, legs, source_type, source_id, note=None):
     if not legs:
         return
-    key = (prefix, date.replace("-", ""))
+    key = date.replace("-", "")
     _voucher_seq[key] = _voucher_seq.get(key, 0) + 1
-    vno = f"{prefix}{key[1]}-{_voucher_seq[key]:03d}"
+    vno = f"GL{key}{_voucher_seq[key]:03d}"
     for leg in legs:
         c.execute("""INSERT INTO ledger_entry(voucher_no,entry_date,account_code,account_name,
                      debit,credit,source_type,source_id,note) VALUES(?,?,?,?,?,?,?,?,?)""",
@@ -196,9 +196,9 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
                    qty * prod[sku]["unit_cost"])
                   for sku, qty, gift in lines if not gift]
     sale_legs = ledger.compose_order_sale_entries(sale_lines, kind)
-    add_voucher("S", d.isoformat(), sale_legs, "order_sale", oid, f"訂單 S{order_no:04d}")
+    add_voucher(d.isoformat(), sale_legs, "order_sale", oid, f"訂單 S{order_no:04d}")
     pay_legs = ledger.compose_order_payment_entries(paid_amount, "郵局" if pm == "銀行匯款" else None)
-    add_voucher("R", d.isoformat(), pay_legs, "order_payment", oid, f"訂單 S{order_no:04d} 收款")
+    add_voucher(d.isoformat(), pay_legs, "order_payment", oid, f"訂單 S{order_no:04d} 收款")
     return oid
 
 # d, 客戶, 種類, 明細[(sku,數量,贈品)], 出貨方式, 收款狀態, 出貨狀態, 產季
@@ -241,7 +241,7 @@ def _return_ledger(rid, oid, date, kind, amount, pid=None, qty=None, restock=0):
         pgn = pr[1]
     legs = ledger.compose_sales_return_entries(kind, amount, already_paid, o[1],
                                                 cogs_amount, pgn)
-    add_voucher("T", date, legs, "sales_return", rid, f"{kind}:訂單#{oid}")
+    add_voucher(date, legs, "sales_return", rid, f"{kind}:訂單#{oid}")
 
 c.execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,restock,reason)
              VALUES(?,?,?,?,?,?,?)""",
@@ -292,10 +292,10 @@ for ym in opex_months:
         opx(ym, "直接人工", 8000, "龍眼肉")
         opx(ym, "直接人工", 3000, "蜂蜜")
 rnd_id = opx("2025-07", "研發", 120000, None, 24)     # 研發費 12 萬,分 24 個月攤
-add_voucher("E", "2025-07-01", ledger.compose_expense_entries("研發", 120000, 0, "現金"),
+add_voucher("2025-07-01", ledger.compose_expense_entries("研發", 120000, 0, "現金"),
             "op_expense", rnd_id, "營運費用:研發")
 cert_id = opx("2026-06", "驗證費", 15000, "龍眼乾")     # 年度產銷履歷驗證費
-add_voucher("E", "2026-06-01", ledger.compose_expense_entries("驗證費", 15000, 0, "現金"),
+add_voucher("2026-06-01", ledger.compose_expense_entries("驗證費", 15000, 0, "現金"),
             "op_expense", cert_id, "營運費用:驗證費")
 
 # ---- 供應商(2)+ 進貨單(3,其中 1 筆設備待建卡)------------
@@ -326,7 +326,7 @@ for d, sname, cat, pgname, amt, tax, ded, doc, inv, fa, note in purchases:
     pur_id = c.lastrowid
     buy_id[note] = pur_id
     legs = ledger.compose_purchase_entries(cat, amt, tax, "現金", is_fixed_asset=bool(fa))
-    add_voucher("P", d, legs, "purchase", pur_id, f"進貨:{cat}")
+    add_voucher(d, legs, "purchase", pur_id, f"進貨:{cat}")
 
 # ---- 固定資產卡(2:柴焙灶〔有政府補助〕/ 搖蜜機〔由進貨帶入〕)----
 # 名稱, 類別, 產品線, 取得日, 成本, 補助, 殘值 None=自動, 年數, 來源進貨 note
@@ -343,7 +343,7 @@ for name, cat, pgname, adate, cost, grant, sv, life, src_note in assets:
                buy_id.get(src_note), "現金", None))
     asset_id = c.lastrowid
     legs = ledger.compose_asset_acquire_entries(cat, cost, grant, "現金")
-    add_voucher("K", adate, legs, "asset_acquire", asset_id, f"設備取得:{name}")
+    add_voucher(adate, legs, "asset_acquire", asset_id, f"設備取得:{name}")
     # 折舊分錄留給 /assets 頁第一次打開時自動補上(sync_depreciation_vouchers),
     # 這裡不預先寫,才是走跟真實使用一樣的路徑
 
@@ -384,19 +384,19 @@ c.execute("""INSERT INTO stock_move(move_date,product_id,qty,move_type,note)
              VALUES(?,?,?,'生產入庫',?)""", ("2026-09-05", prod_id, 30, "示範:9 月第一批龍眼乾入庫"))
 move_id = c.lastrowid
 legs = ledger.compose_production_in_entries("龍眼乾", 30 * prod["GY-DRY-300"]["unit_cost"])
-add_voucher("F", "2026-09-05", legs, "production_in", move_id, "生產入庫示範")
+add_voucher("2026-09-05", legs, "production_in", move_id, "生產入庫示範")
 
 c.execute("""INSERT INTO other_income(income_date,category,amount,tax_amount,payment_account,note)
              VALUES(?,?,?,?,?,?)""", ("2026-08-31", "利息收入", 85, 0, "郵局", "示範:8 月存款利息"))
 inc_id = c.lastrowid
 legs = ledger.compose_other_income_entries("利息收入", 85, 0, "郵局")
-add_voucher("I", "2026-08-31", legs, "other_income", inc_id, "其他收益示範")
+add_voucher("2026-08-31", legs, "other_income", inc_id, "其他收益示範")
 
 c.execute("""INSERT INTO equity_txn(txn_date,txn_type,amount,payment_account,note)
              VALUES(?,?,?,?,?)""", ("2025-04-01", "現金增資", 50000, "現金", "示範:開業資本額出資"))
 eq_id = c.lastrowid
 legs = ledger.compose_equity_entries("現金增資", 50000, "現金")
-add_voucher("Q", "2025-04-01", legs, "equity", eq_id, "資本異動示範")
+add_voucher("2025-04-01", legs, "equity", eq_id, "資本異動示範")
 
 bank_code, bank_name = ledger._cash_account("郵局")   # 2026-09-23 起代碼是自動指派的,不再硬寫死 1103
 c.execute("""INSERT INTO manual_entry(entry_date,debit_code,debit_name,credit_code,credit_name,amount,note)
@@ -404,7 +404,7 @@ c.execute("""INSERT INTO manual_entry(entry_date,debit_code,debit_name,credit_co
           ("2026-09-10", "1102", "現金", bank_code, bank_name, 500, "示範:提領零用金(帳戶間轉帳,套不進其他 8 類)"))
 adj_id = c.lastrowid
 legs = ledger.compose_manual_entries("1102", "現金", bank_code, bank_name, 500)
-add_voucher("M", "2026-09-10", legs, "manual_adjustment", adj_id, "帳務調整示範")
+add_voucher("2026-09-10", legs, "manual_adjustment", adj_id, "帳務調整示範")
 
 # 全鏈路毛利分析示範(2026-10-02):四條產品線各示範一種情境,方便跟家易解說——
 # 龍眼鮮果刻意不填(示範「還沒填過,預設顯示 0」);龍眼乾示範供應端有賺(正常情況);

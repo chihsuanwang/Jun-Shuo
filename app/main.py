@@ -655,7 +655,7 @@ async def purchase_confirm(request: Request):
     new_id = _purchase_upsert(cols, pid)
     legs = ledger.compose_purchase_entries(cols["category"], cols["amount"], tax_amount,
                                             payment_account, is_fixed_asset=False)
-    ledger.save_voucher("purchase", new_id, cols["purchase_date"], legs, "P",
+    ledger.save_voucher("purchase", new_id, cols["purchase_date"], legs,
                          note=f"進貨:{cols['category'] or ''}")
     return RedirectResponse("/purchases", status_code=303)
 
@@ -739,7 +739,7 @@ async def asset_save(request: Request):
         keys = ",".join(cols)
         new_id = execute(f"INSERT INTO fixed_asset({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
     legs = ledger.compose_asset_acquire_entries(category, cost, grant, payment_account)
-    ledger.save_voucher("asset_acquire", new_id, date, legs, "K", note=f"設備取得:{name}")
+    ledger.save_voucher("asset_acquire", new_id, date, legs, note=f"設備取得:{name}")
     return RedirectResponse("/assets", status_code=303)
 
 
@@ -1244,11 +1244,11 @@ def _post_order_ledger(oid):
     sale_lines = [(l["pg_name"], l["line_subtotal"] or 0, (l["qty"] or 0) * (l["unit_cost"] or 0))
                   for l in lines if not l["is_gift"]]
     sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_cost_actual"], o["ship_payer"])
-    ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, "S", note=f"訂單 {o['order_no']}")
+    ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, note=f"訂單 {o['order_no']}")
 
     pay_legs = ledger.compose_order_payment_entries(o["paid_amount"], o["payment_account"])
     pay_date = o["paid_date"] or o["order_date"]
-    ledger.save_voucher("order_payment", oid, pay_date, pay_legs, "R", note=f"訂單 {o['order_no']} 收款")
+    ledger.save_voucher("order_payment", oid, pay_date, pay_legs, note=f"訂單 {o['order_no']} 收款")
 
 
 # ---------- 訂單管理:清單 / 明細 / 更新 -----------------------
@@ -1407,7 +1407,7 @@ def _post_return_ledger(rid, oid, date, kind, amount, product_id, qty, restock):
         pg_name = p.get("pg_name")
     legs = ledger.compose_sales_return_entries(kind, amount, already_paid, o.get("payment_account"),
                                                 cogs_amount, pg_name)
-    ledger.save_voucher("sales_return", rid, date, legs, "T", note=f"{kind}:訂單#{oid}")
+    ledger.save_voucher("sales_return", rid, date, legs, note=f"{kind}:訂單#{oid}")
 
 @app.get("/returns", response_class=HTMLResponse)
 def returns_page(request: Request):
@@ -1828,7 +1828,7 @@ async def finance_expense_confirm(request: Request):
         note=g("note"))
     new_id = _expense_upsert(cols, eid)
     legs = ledger.compose_expense_entries(cat, cols["amount"], tax_amount, payment_account)
-    ledger.save_voucher("op_expense", new_id, f"{ym}-01", legs, "E", note=f"營運費用:{cat}")
+    ledger.save_voucher("op_expense", new_id, f"{ym}-01", legs, note=f"營運費用:{cat}")
     return RedirectResponse("/finance/expenses", status_code=303)
 
 
@@ -1901,7 +1901,7 @@ async def other_income_save(request: Request):
         keys = ",".join(cols)
         new_id = execute(f"INSERT INTO other_income({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
     legs = ledger.compose_other_income_entries(cat, cols["amount"], cols["tax_amount"], cols["payment_account"])
-    ledger.save_voucher("other_income", new_id, date, legs, "I", note=f"其他收益:{cat}")
+    ledger.save_voucher("other_income", new_id, date, legs, note=f"其他收益:{cat}")
     return RedirectResponse("/other-income", status_code=303)
 
 
@@ -1951,7 +1951,7 @@ async def equity_save(request: Request):
         keys = ",".join(cols)
         new_id = execute(f"INSERT INTO equity_txn({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
     legs = ledger.compose_equity_entries(ttype, cols["amount"], cols["payment_account"])
-    ledger.save_voucher("equity", new_id, date, legs, "Q", note=f"資本異動:{ttype}")
+    ledger.save_voucher("equity", new_id, date, legs, note=f"資本異動:{ttype}")
     return RedirectResponse("/equity", status_code=303)
 
 
@@ -2002,7 +2002,7 @@ async def adjustment_save(request: Request):
         keys = ",".join(cols)
         new_id = execute(f"INSERT INTO manual_entry({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
     legs = ledger.compose_manual_entries(debit_code, debit_name, credit_code, credit_name, cols["amount"])
-    ledger.save_voucher("manual_adjustment", new_id, date, legs, "M", note=g("note"))
+    ledger.save_voucher("manual_adjustment", new_id, date, legs, note=g("note"))
     return RedirectResponse("/adjustments", status_code=303)
 
 
@@ -2112,7 +2112,7 @@ async def statements_close_year(request: Request):
     year = int(f.get("year"))
     if not q("SELECT 1 FROM ledger_entry WHERE source_type='year_closing' AND source_id=?", (year,)):
         legs = ledger.compose_year_closing_entries(year)
-        ledger.save_voucher("year_closing", year, f"{year}-12-31", legs, "Y", note=f"{year} 年度結轉")
+        ledger.save_voucher("year_closing", year, f"{year}-12-31", legs, note=f"{year} 年度結轉")
     return RedirectResponse(f"/statements?tab=trial&year={year}", status_code=303)
 
 @app.post("/statements/reopen-year")
@@ -2320,7 +2320,7 @@ async def stock_produce(request: Request):
                LEFT JOIN product_group pg ON pg.pg_id = p.product_group_id
                WHERE p.product_id=?""", (pid,))
     legs = ledger.compose_production_in_entries(pg.get("pg_name") if pg else None, amount)
-    ledger.save_voucher("production_in", move_id, date, legs, "F", note=note)
+    ledger.save_voucher("production_in", move_id, date, legs, note=note)
     return RedirectResponse("/stock", status_code=303)
 
 

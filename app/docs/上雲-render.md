@@ -80,13 +80,21 @@ Dashboard 右上 **New** → **Web Service**。選 **Build and deploy from a Git
 
 ## 日常維護
 
-**更新程式碼**:Render 預設 **Auto-Deploy 是開著的**——`git push` 到 `main` 分支,
-Render 會自動偵測、自動重新部署,**不用做任何事**,幾分鐘後網站就是最新版。
+**更新程式碼(2026-10-08 起改成手動)**:**Auto-Deploy 已經設成 Off**(Settings →
+Build & Deploy → Auto-Deploy)。同仁已經在網站上試用,不希望「一推上 GitHub 網站就跟著
+換」,所以 `git push` 現在只是把程式碼存到 GitHub,**網站不會自動更新**。確認要上線時:
+Dashboard 該服務 → **Manual Deploy** → **Deploy latest commit**。
 
-想手動觸發(不想等自動偵測):Dashboard 該服務 → **Manual Deploy** → **Deploy latest commit**。
+更新時注意:
 
-想暫停自動部署(怕推上去的東西還沒測好就直接上線):**Settings** 分頁 →
-**Auto-Deploy** 關掉,之後都要自己按 Manual Deploy 才會更新。
+- **網站會斷線一兩分鐘**——有掛持久硬碟的服務,Render 沒辦法做無中斷部署。挑同仁沒在用
+  的時段,改好一整批再一次更新,不要每改一條就更新一次。
+- **資料不會被洗掉**——資料庫在 `/data` 持久硬碟上,跟程式碼分開。
+- **資料表加欄位要特別小心**——SQLite 不會自動跟著 `schema.sql` 改,程式碼需要新欄位
+  但網站上的舊資料庫沒有,一更新就會出錯。有 schema 異動的版本,更新前要先處理網站上的
+  資料庫。
+- **更新後出問題**:**Events** 分頁找上一次成功的部署 → **Rollback** 退回上一版(只換
+  程式碼,資料不受影響)。
 
 **重置示範資料**:**Shell** 分頁(Starter 方案才有這個功能)開一個終端機,跑:
 ```bash
@@ -114,6 +122,6 @@ base64 /data/guiyuan_ledger.db
 |---|---|
 | 部署後開網站是 "Service Unavailable" / 502 | 該服務的 **Logs** 分頁(即時滾動的記錄),看最後面幾行錯誤;常見是 Start Command 打錯、或某個套件裝不起來 |
 | 要看伺服器在跑什麼 / debug | **Logs** 分頁——跟 PythonAnywhere 分 Error log / Server log 兩份不同,Render 只有一份即時 log |
-| 更新後網站看起來還是舊的 | 先確認 Auto-Deploy 真的有觸發(Dashboard 看部署紀錄),再試試瀏覽器無痕視窗(排除快取) |
+| 更新後網站看起來還是舊的 | Auto-Deploy 已關,先確認有沒有按 **Manual Deploy**(Dashboard 看部署紀錄),再試試瀏覽器無痕視窗(排除快取) |
 | 密碼怎麼都登不進去 | 確認 `GY_PASSWORD` 環境變數有存對、存檔後有沒有觸發重新部署(改環境變數通常會自動重啟一次) |
 | 想要自己的網域(不是 `onrender.com`) | **Settings** → **Custom Domain**,功能本身免費,但要自己已經有網域名稱 |

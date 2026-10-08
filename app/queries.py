@@ -618,7 +618,7 @@ def sync_depreciation_vouchers():
         legs = ledger.compose_depreciation_entries(monthly)
         for i in range(n):
             ym = _add_months(start, i)
-            ledger.save_voucher_if_new("asset_depreciation", a["asset_id"], f"{ym}-01", legs, "D",
+            ledger.save_voucher_if_new("asset_depreciation", a["asset_id"], f"{ym}-01", legs,
                                         note=f"折舊:{a['name']}")
 
 # ---------- 銷貨退回 / 折讓(v2 回合 8) ----------------------

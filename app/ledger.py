@@ -462,28 +462,23 @@ def _all_accounts():
 ALL_ACCOUNTS = _all_accounts()
 
 
-def next_voucher_no(prefix, date):
-    """prefix 依來源類別(P=進貨、E=營運費用),同一天同 prefix 序號累加。"""
+def next_voucher_no(date):
+    """傳票號碼一律 GL + 傳票日期 YYYYMMDD + 當天 3 碼流水號(例 GL20260921001,共 13 碼),
+    不分來源類別,同一天所有傳票共用一組流水號。"""
     ymd = date.replace("-", "")
-    like = f"{prefix}{ymd}-%"
-    rows = q("SELECT voucher_no FROM ledger_entry WHERE voucher_no LIKE ? ORDER BY voucher_no DESC LIMIT 1",
-             (like,))
-    n = 1
-    if rows:
-        try:
-            n = int(rows[0]["voucher_no"].rsplit("-", 1)[1]) + 1
-        except (IndexError, ValueError):
-            n = 1
-    return f"{prefix}{ymd}-{n:03d}"
+    rows = q("SELECT MAX(CAST(SUBSTR(voucher_no, 11) AS INTEGER)) m FROM ledger_entry WHERE voucher_no LIKE ?",
+             (f"GL{ymd}%",))
+    n = (rows[0]["m"] or 0) + 1
+    return f"GL{ymd}{n:03d}"
 
 
-def save_voucher(source_type, source_id, date, legs, prefix, note=None):
+def save_voucher(source_type, source_id, date, legs, note=None):
     """整張傳票重開:先刪掉這個來源既有的分錄列,再依 legs 插入新的一組。
     legs 為空(例:設備採購)時只清空、不產生新傳票。"""
     execute("DELETE FROM ledger_entry WHERE source_type=? AND source_id=?", (source_type, source_id))
     if not legs:
         return None
-    voucher_no = next_voucher_no(prefix, date)
+    voucher_no = next_voucher_no(date)
     for leg in legs:
         execute("""INSERT INTO ledger_entry(voucher_no, entry_date, account_code, account_name,
                      debit, credit, source_type, source_id, note)
@@ -493,7 +488,7 @@ def save_voucher(source_type, source_id, date, legs, prefix, note=None):
     return voucher_no
 
 
-def save_voucher_if_new(source_type, source_id, date, legs, prefix, note=None):
+def save_voucher_if_new(source_type, source_id, date, legs, note=None):
     """累加式記錄(不是整張重開):給折舊這種「同一個來源、很多筆歷史分錄」的情境用——
     這個來源 + 這個日期已經記過就跳過,不存在才補插入一筆。過去記過的月份不會被動到。"""
     if not legs:
@@ -502,7 +497,7 @@ def save_voucher_if_new(source_type, source_id, date, legs, prefix, note=None):
                  (source_type, source_id, date))
     if existing:
         return None
-    voucher_no = next_voucher_no(prefix, date)
+    voucher_no = next_voucher_no(date)
     for leg in legs:
         execute("""INSERT INTO ledger_entry(voucher_no, entry_date, account_code, account_name,
                      debit, credit, source_type, source_id, note)

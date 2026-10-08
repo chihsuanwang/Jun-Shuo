@@ -343,7 +343,7 @@ CREATE INDEX ix_sret_season ON sales_return(season);
 --     「營運費用」——設備採購走固定資產,不在這批範圍。
 CREATE TABLE ledger_entry (
   entry_id     INTEGER PRIMARY KEY,
-  voucher_no   TEXT NOT NULL,          -- 同一張傳票共用,例:P20260917-001
+  voucher_no   TEXT NOT NULL,          -- 同一張傳票共用,例:GL20260917001(GL+日期+當天流水號)
   entry_date   TEXT NOT NULL,
   account_code TEXT NOT NULL,
   account_name TEXT NOT NULL,
