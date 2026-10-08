@@ -1793,7 +1793,7 @@ def ledger_page(request: Request):
                "asset_acquire", "asset_depreciation", "sales_return", "year_closing"):
         where.append("source_type=?"); args.append(src)
     rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
-                 ORDER BY entry_date DESC, voucher_no DESC, entry_id""", args)
+                 ORDER BY voucher_no, entry_id""", args)   # 2026-10-08 同仁回饋:預設依傳票號碼由小到大
     vouchers = []
     seen = {}
     for r in rows:
