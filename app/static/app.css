@@ -156,6 +156,8 @@ table.stmt col.c-name { width: 250px; }
 table.stmt col.c-amt  { width: 120px; }
 table.stmt td { overflow-wrap: anywhere; }
 table.stmt thead th:nth-child(2), table.stmt tbody td:nth-child(2) { text-align: left; }
+/* 總帳傳票表格:科目名稱靠左(合計列第二格是金額,不套) */
+table.vt thead th:nth-child(2), table.vt tbody tr:not(.sum) td:nth-child(2) { text-align: left; }
 
 /* --- 列印(揀貨單 / 標籤 / 食品標示) --- */
 @media print {

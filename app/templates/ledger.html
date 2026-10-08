@@ -9,11 +9,9 @@
 <p class="muted" style="font-size:13px;margin:-4px 0 14px">
   營運費用、訂單、付小農貨款、退款/退回小農、其他收益/資本異動/帳務調整這幾個畫面存檔時,依對照表
   自動組出的分錄。營運費用要改分錄,回去編輯那筆重新確認一次即可;其他都是背景自動記的,
-  改來源內容就會自動更新。這裡不能直接改內容,但可以勾選整張傳票刪除——<b>刪除會連同來源那筆
-  紀錄(那張訂單/那筆費用…)一起刪掉,刪之前系統一樣會套用該筆原本的刪除規則</b>。
-  「設備取得」「折舊」這兩類沒有勾選框——折舊一台設備會對到很多張月份傳票,要改內容、
-  處分、或整台刪除,請回<a href="/assets">固定資產</a>頁操作。「年度結轉」也沒有勾選框,
-  要撤銷請回<a href="/statements">正式報表</a>頁操作。
+  改來源內容就會自動更新。要刪除或編輯傳票,用下面「刪除或編輯傳票」先篩出指定日期的那一張,
+  <b>刪除會連同來源那筆紀錄(那張訂單/那筆費用…)一起刪掉</b>;編輯是回到來源那筆資料修改。
+  「設備取得」「折舊」要到<a href="/assets">固定資產</a>頁處理,「年度結轉」要到<a href="/statements">正式報表</a>頁撤銷。
 </p>
 
 <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
@@ -40,9 +38,38 @@
   <span id="fCount" class="muted" style="font-size:12px"></span>
 </div>
 
-<form method="post" action="/ledger/delete" id="delForm"
-      onsubmit="return confirm('確定刪除勾選的傳票?連同來源那筆紀錄(訂單/費用/其他收益…)一起刪掉,不能復原。')">
-<button type="submit" class="ghost" style="margin-bottom:12px">刪除勾選的傳票</button>
+{% if request.query_params.get('deleted') %}<div class="ok">傳票 {{ request.query_params.get('deleted') }} 已刪除(來源那筆紀錄也一起刪了)。</div>{% endif %}
+{% if request.query_params.get('delerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">找不到這個日期的這張傳票,或這類傳票不能從這裡刪,沒有刪除任何東西。</div>{% endif %}
+
+<div class="card" style="max-width:680px;margin-bottom:16px">
+  <h3 class="serif">刪除或編輯傳票</h3>
+  <p class="muted" style="font-size:12px;margin:-4px 0 10px">先選日期,再選那一天的傳票號碼,篩出那一張之後才能刪除或編輯。一次只處理一整張傳票。</p>
+  <form method="get" action="/ledger" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+    <div><label>日期</label><input type="date" name="date" id="pickDate" value="{{ pick_date }}" required style="width:auto"></div>
+    <div><label>傳票號碼</label><select name="voucher" id="pickNo" required style="min-width:180px"></select></div>
+    <button type="submit">篩選</button>
+    {% if pick_date or pick_no %}<a href="/ledger" style="align-self:center">清除篩選</a>{% endif %}
+  </form>
+  {% if pick_date and pick_no and not picked %}
+  <p class="neg" style="font-size:13px;margin-top:10px">{{ pick_date }} 沒有 {{ pick_no }} 這張傳票。</p>
+  {% endif %}
+  {% if picked %}
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;align-items:center">
+    {% if picked.deletable %}
+    <form method="post" action="/ledger/delete" style="display:inline"
+          onsubmit="return confirm('確定刪除傳票 {{ picked.voucher_no }}?{% if picked.source_type in ('order_sale','order_payment') %}這張傳票來自訂單,會把整張訂單(含成立、收款兩張傳票)一起刪掉。{% else %}產生這張傳票的原始紀錄也會一起刪掉。{% endif %}不能復原。')">
+      <input type="hidden" name="date" value="{{ picked.entry_date }}">
+      <input type="hidden" name="voucher_no" value="{{ picked.voucher_no }}">
+      <button type="submit" style="background:var(--seal);border-color:var(--seal)">刪除整張傳票</button>
+    </form>
+    {% endif %}
+    {% if picked.edit_url %}<a href="{{ picked.edit_url }}"><button type="button" class="ghost">編輯(到原始資料修改)</button></a>{% endif %}
+    {% if not picked.deletable %}
+    <span class="muted" style="font-size:12px">{% if picked.source_type == 'year_closing' %}年度結轉要到「正式報表」撤銷{% else %}設備取得 / 折舊要到「固定資產」頁處理{% endif %},這裡不能直接刪。</span>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
 
 {% for v in vouchers %}
 <div class="card voucher-card" data-date="{{ v.entry_date }}"
@@ -50,14 +77,7 @@
      style="max-width:680px;margin-bottom:14px">
   <div style="display:flex;justify-content:space-between;align-items:baseline">
     <div>
-      {% if v.source_type in ('asset_acquire', 'asset_depreciation', 'year_closing') %}
       <b>{{ v.voucher_no }}</b>
-      {% else %}
-      <label style="display:inline-flex;align-items:center;gap:6px;margin:0">
-        <input type="checkbox" name="voucher" value="{{ v.source_type }}:{{ v.source_id }}" style="width:auto">
-        <b>{{ v.voucher_no }}</b>
-      </label>
-      {% endif %}
       <span class="muted" style="font-size:12px;margin-left:8px">
         {{ {'op_expense':'營運費用','order_sale':'訂單成立','order_payment':'訂單收款',
             'farmer_payment':'付小農貨款','other_income':'其他收益','equity':'資本異動',
@@ -67,7 +87,7 @@
       </span></div>
     <div class="muted" style="font-size:12px">{{ v.note or '' }}</div>
   </div>
-  <table style="margin-top:8px">
+  <table class="vt" style="margin-top:8px">
     <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>借方</th><th data-num>貸方</th></tr></thead>
     <tbody>
       {% for l in v.lines %}
@@ -82,9 +102,27 @@
 {% else %}
 <p class="muted">還沒有分錄。開一張訂單或記一筆營運費用,存檔後就會出現在這裡。</p>
 {% endfor %}
-</form>
 
 <script>
+(function () {
+  // 刪除 / 編輯的篩選:選了日期才列出那一天的傳票號碼
+  var ALL = {{ all_vouchers | tojson }}, pickDate = document.getElementById('pickDate'),
+      pickNo = document.getElementById('pickNo'), cur = {{ pick_no | tojson }};
+  function fillNos() {
+    var d = pickDate.value, list = ALL.filter(function (x) { return x[0] === d; });
+    pickNo.innerHTML = '';
+    var first = document.createElement('option');
+    first.value = ''; first.textContent = d ? (list.length ? '— 選傳票號碼 —' : '這天沒有傳票') : '— 先選日期 —';
+    pickNo.appendChild(first);
+    list.forEach(function (x) {
+      var o = document.createElement('option'); o.value = x[1]; o.textContent = x[1];
+      if (x[1] === cur) o.selected = true;
+      pickNo.appendChild(o);
+    });
+  }
+  pickDate.addEventListener('change', function () { cur = ''; fillNos(); });
+  fillNos();
+})();
 (function () {
   var cards = [].slice.call(document.querySelectorAll('.voucher-card'));
   var d1 = document.getElementById('fDate1'), d2 = document.getElementById('fDate2'),

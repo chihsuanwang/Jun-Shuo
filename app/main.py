@@ -1806,8 +1806,40 @@ def ledger_page(request: Request):
         v["lines"].append(r)
         v["total_debit"] += r["debit"] or 0
         v["total_credit"] += r["credit"] or 0
+    # 2026-10-08 同仁回饋:要刪除 / 編輯傳票,必須先篩選「指定日期 + 指定傳票號碼」,
+    # 篩到那一張才出現刪除 / 編輯按鈕,一次只處理一整張傳票,不能批次勾選。
+    pick_date = request.query_params.get("date") or ""
+    pick_no = request.query_params.get("voucher") or ""
+    picked = None
+    if pick_date and pick_no:
+        picked = next((v for v in vouchers if v["voucher_no"] == pick_no and v["entry_date"] == pick_date), None)
+        if picked:
+            picked["edit_url"] = _voucher_edit_url(picked["source_type"], picked["source_id"])
+            picked["deletable"] = picked["source_type"] in _LEDGER_DELETERS
+            vouchers = [picked]
     return tpl.TemplateResponse("ledger.html", dict(
-        request=request, active="ledger", vouchers=vouchers, src=src))
+        request=request, active="ledger", vouchers=vouchers, src=src,
+        pick_date=pick_date, pick_no=pick_no, picked=picked,
+        all_vouchers=[(v["entry_date"], v["voucher_no"]) for v in seen.values()]))
+
+
+def _voucher_edit_url(source_type, source_id):
+    """傳票的「編輯」= 回到產生它的那筆原始資料改,改完系統會自動重開傳票。"""
+    if source_type == "sales_return":
+        r = q1("SELECT order_id FROM sales_return WHERE return_id=?", (source_id,))
+        return f"/orders/{r['order_id']}" if r else None
+    return {
+        "op_expense": f"/finance/expenses/{source_id}/edit",
+        "order_sale": f"/orders/{source_id}",
+        "order_payment": f"/orders/{source_id}",
+        "farmer_payment": "/farmer-payments",
+        "other_income": f"/other-income/{source_id}/edit",
+        "equity": f"/equity/{source_id}/edit",
+        "manual_adjustment": f"/adjustments/{source_id}/edit",
+        "asset_acquire": f"/assets/{source_id}/edit",
+        "asset_depreciation": f"/assets/{source_id}/edit",
+        "year_closing": "/statements",
+    }.get(source_type)
 
 
 # ---------- 銀行帳戶主檔(2026-09-23,每家銀行固定子代碼)-------
@@ -2080,16 +2112,16 @@ _LEDGER_DELETERS = {
 
 @app.post("/ledger/delete")
 async def ledger_delete(request: Request):
+    """一次只刪一整張傳票,而且日期跟傳票號碼都要對得上(2026-10-08 同仁回饋)。"""
     f = await request.form()
-    done = set()
-    for v in f.getlist("voucher"):
-        source_type, _, source_id = v.partition(":")
-        key = (source_type, source_id)
-        if key in done or source_type not in _LEDGER_DELETERS:
-            continue
-        done.add(key)
-        _LEDGER_DELETERS[source_type](int(source_id))
-    return RedirectResponse("/ledger", status_code=303)
+    date = (f.get("date") or "").strip()
+    vno = (f.get("voucher_no") or "").strip()
+    r = q1("SELECT source_type, source_id FROM ledger_entry WHERE voucher_no=? AND entry_date=? LIMIT 1",
+           (vno, date)) if (date and vno) else {}
+    if not r or r["source_type"] not in _LEDGER_DELETERS:
+        return RedirectResponse("/ledger?delerr=1", status_code=303)
+    _LEDGER_DELETERS[r["source_type"]](int(r["source_id"]))
+    return RedirectResponse(f"/ledger?deleted={vno}", status_code=303)
 
 
 # ---------- 出貨作業:揀貨單 / 標籤 / 食品標示 ---------------
