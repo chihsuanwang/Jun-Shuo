@@ -42,7 +42,7 @@
       <input name="invoice_no" id="invoiceNo" value="{{ invoice_no or '' }}" placeholder="例:YW46458" required></div>
   </div>
 
-  <table style="margin-top:14px">
+  <table class="vt" style="margin-top:14px">
     <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>借方</th><th data-num>貸方</th></tr></thead>
     <tbody>
       <tr><td>{{ primary_account_code }}</td><td>{{ primary_account_name }}</td><td class="r">{{ amount|money }}</td><td class="r">—</td></tr>

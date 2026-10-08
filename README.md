@@ -52,6 +52,8 @@ REM 啟動(或直接雙擊 啟動.bat)
 
 **雲端架站(2026-10 起的主要交付方式)**:部署到 Render(Starter 方案,$7.25 美金/月),
 家易開固定網址就能用,不用裝任何東西。步驟見 [app/docs/上雲-render.md](app/docs/上雲-render.md)。
+**2026-10-08 起 Render 的 Auto-Deploy 已關**:`git push` 只是存到 GitHub,網站要到 Render 按
+「Manual Deploy → Deploy latest commit」才會更新;有改資料表結構的版本,部署前要先處理網站上的資料庫。
 (原本評估過 PythonAnywhere 免費版,但它只吃 WSGI、FastAPI 是 ASGI,兩次部署都卡死
 被砍掉,已經放棄這條路,詳情見該文件開頭說明。)
 
