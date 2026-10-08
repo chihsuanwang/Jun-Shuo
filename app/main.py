@@ -483,8 +483,10 @@ async def product_line_assign(request: Request):
 
 
 # ---------- 固定資產卡 + 折舊(v2 回合 3) -------------------
-ASSET_CATS = {"機器設備": 5, "生財器具": 5, "運輸設備": 5,
-              "電腦設備": 3, "房屋建築": 30, "其他": 5}
+# 2026-10-08 同仁回饋:耐用年數最少 10 年(畫面跟存檔都擋),殘值一律 0
+ASSET_MIN_LIFE = 10
+ASSET_CATS = {"機器設備": 10, "生財器具": 10, "運輸設備": 10,
+              "電腦設備": 10, "房屋建築": 30, "其他": 10}
 
 @app.get("/assets", response_class=HTMLResponse)
 def assets_page(request: Request):
@@ -502,7 +504,7 @@ def assets_page(request: Request):
 
 def _asset_form_ctx(request, a, prefill=None):
     return dict(request=request, active="asset", a=a, prefill=prefill,
-               cats=ASSET_CATS, today=dt.date.today().isoformat(),
+               cats=ASSET_CATS, min_life=ASSET_MIN_LIFE, today=dt.date.today().isoformat(),
                bank_names=Q.payment_account_names())
 
 @app.get("/assets/new", response_class=HTMLResponse)
@@ -531,13 +533,23 @@ async def asset_save(request: Request):
     date = (f.get("acquire_date") or "").strip()
     if not (name and date):
         return RedirectResponse("/assets", status_code=303)
-    life = int(f.get("life_years") or 5) or 5
+    try:
+        life = int(f.get("life_years") or ASSET_MIN_LIFE)
+    except ValueError:
+        life = 0
+    if life < ASSET_MIN_LIFE:   # 畫面已經擋了,這裡是防有人繞過畫面直接送
+        back = f"/assets/{aid}/edit" if aid else "/assets/new"
+        return RedirectResponse(f"{back}?err=life", status_code=303)
     cost = fl("cost")
     grant = fl("grant_amount")
-    sv = (f.get("salvage") or "").strip()
-    salvage = float(sv) if sv else round(max(0.0, cost - grant) / (life + 1))
+    salvage = 0   # 殘值一律 0,不開放填
     category = g("category")
     payment_account = g("payment_account")
+    if payment_account == "__new__":   # 下拉選「其他帳戶」→ 用手動輸入的名稱(第一次用到會自動建帳戶代碼)
+        payment_account = g("payment_account_new")
+        if not payment_account:
+            back = f"/assets/{aid}/edit" if aid else "/assets/new"
+            return RedirectResponse(f"{back}?err=acct", status_code=303)
     cols = dict(
         name=name, category=category,
         acquire_date=date, cost=cost, grant_amount=grant, salvage=salvage,

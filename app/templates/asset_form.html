@@ -8,6 +8,8 @@
 </div></div>
 <hr class="rule">
 
+{% if request.query_params.get('err') == 'life' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">耐用年數最少要 {{ min_life }} 年。</div>{% endif %}
+{% if request.query_params.get('err') == 'acct' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">選了「其他帳戶」,請輸入帳戶名稱。</div>{% endif %}
 <form method="post" action="/assets">
 {% if a %}<input type="hidden" name="asset_id" value="{{ a.asset_id }}">{% endif %}
 <div class="card" style="max-width:680px">
@@ -21,14 +23,18 @@
     <div><label>取得日</label><input name="acquire_date" type="date" value="{{ d.acquire_date or today }}" required></div>
     <div><label>取得成本</label><input name="cost" id="cost" type="number" step="1" value="{{ d.cost|round(0) if d.cost else '' }}" required></div>
     <div><label>政府補助款(沒有填 0)</label><input name="grant_amount" id="grant" type="number" step="1" value="{{ d.grant_amount|round(0) if d.grant_amount else 0 }}"></div>
-    <div><label>耐用年數</label><input name="life_years" id="life" type="number" min="1" step="1" value="{{ a.life_years if a else (d.life_years or 5) }}" required></div>
-    <div><label>殘值(留白 = 自動算)</label>
-      <input name="salvage" id="salvage" type="number" step="1" value="{{ a.salvage|round(0) if a else '' }}" placeholder="自動 =(成本−補助)÷(年數+1)">
-    </div>
+    <div><label>耐用年數<span class="muted">(最少 {{ min_life }} 年)</span></label><input name="life_years" id="life" type="number" min="{{ min_life }}" step="1" value="{{ a.life_years if a else (d.life_years or min_life) }}" required></div>
+    <div><label>殘值</label><input value="0" disabled>
+      <div class="muted" style="font-size:11px;margin-top:3px">殘值一律算 0,不用填</div></div>
     <div><label>付款帳戶</label>
-      <input name="payment_account" value="{{ d.payment_account or '' }}" placeholder="現金" list="bankNames">
-      <datalist id="bankNames">{% for b in bank_names %}<option value="{{ b }}">{% endfor %}</datalist>
-      <div class="muted" style="font-size:11px;margin-top:3px">留白 = 現金;要記銀行帳戶就打帳戶名——同一個帳戶每次要打一樣的名稱</div>
+      {% set cur = d.payment_account or '現金' %}
+      <select name="payment_account" id="payAcct">
+        <option value="現金" {{ 'selected' if cur == '現金' }}>現金</option>
+        {% for b in bank_names %}<option value="{{ b }}" {{ 'selected' if cur == b }}>{{ b }}</option>{% endfor %}
+        {% if cur != '現金' and cur not in bank_names %}<option value="{{ cur }}" selected>{{ cur }}</option>{% endif %}
+        <option value="__new__">其他帳戶(手動輸入)…</option>
+      </select>
+      <input name="payment_account_new" id="payAcctNew" placeholder="輸入銀行帳戶名稱,例:合庫" hidden style="margin-top:6px">
     </div>
   </div>
   <div class="muted" style="font-size:12px;margin-top:10px" id="hint"></div>
@@ -51,7 +57,7 @@
 (function () {
   var cat = document.getElementById('cat'), life = document.getElementById('life');
   var cost = document.getElementById('cost'), grant = document.getElementById('grant');
-  var salv = document.getElementById('salvage'), hint = document.getElementById('hint');
+  var hint = document.getElementById('hint');
   cat.addEventListener('change', function () {
     var o = cat.selectedOptions[0];
     if (o && o.dataset.life) life.value = o.dataset.life;
@@ -59,15 +65,21 @@
   });
   function calc() {
     var c = +cost.value || 0, gr = +grant.value || 0, ly = +life.value || 0;
-    var sv = salv.value ? (+salv.value || 0) : Math.round(Math.max(0, c - gr) / (ly + 1));
-    var base = Math.max(0, c - gr - sv);
+    var base = Math.max(0, c - gr);
     var yr = ly ? base / ly : 0;
     hint.textContent = ly && c
       ? '可提折舊基礎 ' + Math.round(base).toLocaleString() + ' · 每年折舊約 ' + Math.round(yr).toLocaleString()
-        + ' · 每月約 ' + Math.round(yr / 12).toLocaleString() + (salv.value ? '' : '(殘值自動抓 ' + Math.round(sv).toLocaleString() + ')')
+        + ' · 每月約 ' + Math.round(yr / 12).toLocaleString()
       : '';
   }
-  [cost, grant, life, salv].forEach(function (el) { el.addEventListener('input', calc); });
+  var pay = document.getElementById('payAcct'), payNew = document.getElementById('payAcctNew');
+  function togglePay() {
+    payNew.hidden = pay.value !== '__new__';
+    payNew.required = !payNew.hidden;   // 藏起來時拿掉 required,不然表單送不出去
+  }
+  pay.addEventListener('change', togglePay);
+  togglePay();
+  [cost, grant, life].forEach(function (el) { el.addEventListener('input', calc); });
   calc();
 })();
 </script>

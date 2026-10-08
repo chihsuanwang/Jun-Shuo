@@ -295,13 +295,13 @@ for f_date, f_note in [("2026-07-10", "示範:5~6 月貨款")]:   # 7 月以後�
                 c.lastrowid, f"付小農貨款:{f_note}")
 
 # ---- 固定資產卡(2:柴焙灶〔有政府補助〕/ 搖蜜機)----
-# 名稱, 類別, 產品線, 取得日, 成本, 補助, 殘值 None=自動, 年數
+# 名稱, 類別, 產品線, 取得日, 成本, 補助, 殘值(一律 0,欄位保留), 年數(最少 10)
 assets = [
-    ("智慧柴焙灶(含溫控)", "機器設備", "龍眼乾", "2025-08-01", 200000, 80000, None, 5),
-    ("搖蜜機",             "機器設備", "蜂蜜",   "2026-04-20",  20000,     0, None, 5),
+    ("智慧柴焙灶(含溫控)", "機器設備", "龍眼乾", "2025-08-01", 200000, 80000, 0, 10),
+    ("搖蜜機",             "機器設備", "蜂蜜",   "2026-04-20",  20000,     0, 0, 10),
 ]
 for name, cat, pgname, adate, cost, grant, sv, life in assets:
-    salvage = sv if sv is not None else round(max(0, cost - grant) / (life + 1))
+    salvage = 0   # 2026-10-08:殘值一律 0
     c.execute("""INSERT INTO fixed_asset(name,category,product_group_id,acquire_date,cost,
                  grant_amount,salvage,life_years,method,payment_account,note)
                  VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
