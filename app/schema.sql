@@ -43,7 +43,6 @@ CREATE TABLE product (
   barcode         TEXT,
   gift_only       INTEGER NOT NULL DEFAULT 0 CHECK (gift_only IN (0,1)),
   status          TEXT    NOT NULL DEFAULT '在售' CHECK (status IN ('在售','停售')),
-  low_stock       INTEGER,              -- 低庫存警戒量;NULL = 不設
   product_group_id INTEGER REFERENCES product_group(pg_id),   -- 歸屬產品群組;NULL = 尚未歸類
   unit_cost       REAL    NOT NULL DEFAULT 0,   -- 每單位成本(算毛利用,不分批次)
   note            TEXT
@@ -142,6 +141,7 @@ CREATE TABLE "order" (
   shipping_fee_charged REAL NOT NULL DEFAULT 0,   -- 向客戶收取的運費(收入面)
   platform_fee    REAL    NOT NULL DEFAULT 0,     -- 通路抽成金額
   order_total     REAL    NOT NULL DEFAULT 0,     -- 應收 = 小計 - 折讓 + 向客收運費
+  sales_tax       REAL    NOT NULL DEFAULT 0,     -- 銷項稅額(2026-10-08:售價含稅,家易手動填,系統不算)
   payment_method  TEXT    CHECK (payment_method IN ('現金','銀行匯款','貨到付款','行動支付','信用卡','平台代收','未收款')),
   payment_account TEXT,                 -- 郵局 / 合庫 …
   payment_status  TEXT    NOT NULL DEFAULT '待收款'
@@ -241,51 +241,6 @@ CREATE TABLE op_expense (
 );
 CREATE INDEX ix_opexp_ym ON op_expense(ym);
 
--- 13. 庫存異動(SKU 層,可追溯批次) ---------------------
-CREATE TABLE stock_move (
-  move_id      INTEGER PRIMARY KEY,
-  move_date    TEXT NOT NULL DEFAULT (date('now','localtime')),
-  product_id   INTEGER NOT NULL REFERENCES product(product_id),
-  batch_id     INTEGER REFERENCES batch(batch_id),
-  qty          REAL NOT NULL,            -- 正 = 入庫,負 = 出庫
-  move_type    TEXT NOT NULL,            -- 期初庫存 / 分裝入庫 / 銷售出庫 / 贈送出庫 / 盤點調整 / 損耗報廢 / 退貨入庫
-  ref_order_id INTEGER REFERENCES "order"(order_id),
-  note         TEXT,
-  created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-);
-CREATE INDEX ix_move_product ON stock_move(product_id);
-CREATE INDEX ix_move_order   ON stock_move(ref_order_id);
-
--- 14. 供應商主檔(v2 回合 2) ---------------------------
-CREATE TABLE supplier (
-  supplier_id INTEGER PRIMARY KEY,
-  name        TEXT NOT NULL,
-  tax_id      TEXT,                    -- 統一編號
-  category    TEXT CHECK (category IN ('原料','包材','委外加工','設備','服務','其他')),
-  phone       TEXT,
-  note        TEXT
-);
-
--- 15. 進貨單(買進來的成本:原料 / 包材 / 委外 / 設備)(v2 回合 2) ---
---     只做「登錄」;真正接進產品線損益是回合 6(避免和批次單位成本重複計算)。
-CREATE TABLE purchase (
-  purchase_id      INTEGER PRIMARY KEY,
-  purchase_date    TEXT NOT NULL,                        -- YYYY-MM-DD
-  supplier_id      INTEGER REFERENCES supplier(supplier_id),
-  category         TEXT CHECK (category IN ('原料','包材','委外加工','設備','服務','其他')),
-  product_group_id INTEGER REFERENCES product_group(pg_id),   -- 歸哪條產品線;NULL = 共同
-  amount           REAL NOT NULL DEFAULT 0,              -- 未稅金額
-  tax_amount       REAL NOT NULL DEFAULT 0,              -- 進項稅額
-  tax_deductible   INTEGER NOT NULL DEFAULT 1 CHECK (tax_deductible IN (0,1)),
-  doc_type         TEXT CHECK (doc_type IN ('三聯式發票','二聯式發票','收據','農民收據','無憑證')),
-  invoice_no       TEXT,                -- 發票號碼(憑證類型選發票才需要填)
-  is_fixed_asset   INTEGER NOT NULL DEFAULT 0 CHECK (is_fixed_asset IN (0,1)),  -- 打勾標記;固定資產卡回合 3 才建
-  payment_account  TEXT,               -- 用哪個帳戶付款(自由文字,例:現金 / 合庫);方案B分錄用
-  note             TEXT,
-  created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-);
-CREATE INDEX ix_purchase_date ON purchase(purchase_date);
-
 -- 16. 固定資產卡(v2 回合 3) --------------------------------
 --     平均法折舊:每年 = (成本 − 補助 − 殘值) ÷ 耐用年數;每月 = 年 ÷ 12。
 --     折舊費用由 queries.opex_rows() 動態算入「折舊」類別,不存成 op_expense 列。
@@ -300,7 +255,6 @@ CREATE TABLE fixed_asset (
   salvage      REAL NOT NULL DEFAULT 0,          -- 殘值(平均法稅法建議 = 成本 ÷ (年數+1))
   life_years   INTEGER NOT NULL DEFAULT 5,       -- 耐用年數
   method       TEXT NOT NULL DEFAULT '平均法',
-  source_purchase_id INTEGER REFERENCES purchase(purchase_id),  -- 從哪筆進貨建卡(可空)
   disposed_date TEXT,                            -- 處分日;NULL = 在用
   payment_account TEXT,               -- 用哪個帳戶付款(自由文字,例:現金 / 合庫);總帳分錄用
   note         TEXT,
@@ -314,27 +268,34 @@ CREATE TABLE pricing_param (
   value REAL NOT NULL
 );
 
--- 18. 銷貨退回 / 折讓(v2 回合 8) -----------------------------
---     針對某張「銷售」單,在退貨 / 折讓「發生的期間」沖減營收。
---     restock=1:好貨退回可再賣 → 產生一筆「退貨入庫」;成本也回沖。
---     restock=0:折讓或壞貨報廢 → 只沖營收,成本已沉沒。
+-- 18. 訂單退款 / 退貨(2026-10-08 貿易公司模式,取代原本的銷貨退回 / 折讓) ----
+--     退貨又退款 → 直接刪訂單,不記在這裡。
+--     kind='退款':只退款不退貨,一律算其他支出(6499 其他損失)。
+--     kind='退回小農':退貨但不退款,貨退給小農、小農退採購成本(沖應付帳款 / 銷貨成本)。
 CREATE TABLE sales_return (
   return_id    INTEGER PRIMARY KEY,
   order_id     INTEGER NOT NULL REFERENCES "order"(order_id) ON DELETE CASCADE,
-  return_date  TEXT NOT NULL,                    -- 退貨 / 折讓發生日(認列期間看這個)
+  return_date  TEXT NOT NULL,                    -- 發生日(認列期間看這個)
   season       INTEGER NOT NULL,                 -- 由 return_date 推
-  kind         TEXT NOT NULL DEFAULT '退貨' CHECK (kind IN ('退貨','折讓')),
-  amount       REAL NOT NULL DEFAULT 0,          -- 沖減的營收金額(正數)
-  product_id   INTEGER REFERENCES product(product_id),   -- 有退實體貨才填
-  qty          REAL,                             -- 退回數量
-  batch_id     INTEGER REFERENCES batch(batch_id),
-  restock      INTEGER NOT NULL DEFAULT 0 CHECK (restock IN (0,1)),  -- 1=進庫可再賣;0=報廢 / 純折讓
+  kind         TEXT NOT NULL DEFAULT '退款' CHECK (kind IN ('退款','退回小農')),
+  amount       REAL NOT NULL DEFAULT 0,          -- 退款:退給客人的錢;退回小農:小農退回的成本(正數)
   reason       TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX ix_sret_order ON sales_return(order_id);
 CREATE INDEX ix_sret_date  ON sales_return(return_date);
 CREATE INDEX ix_sret_season ON sales_return(season);
+
+-- 18b. 付小農貨款(2026-10-08) --------------------------------------
+--     訂單成立時欠小農的錢記在應付帳款,真的付錢時在這裡登記一筆沖掉。小農只有一個,不分人。
+CREATE TABLE farmer_payment (
+  payment_id      INTEGER PRIMARY KEY,
+  pay_date        TEXT NOT NULL,
+  amount          REAL NOT NULL DEFAULT 0,
+  payment_account TEXT,               -- 從哪個帳戶付(自由文字,例:現金 / 合庫)
+  note            TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
 
 -- 19. 總帳明細(方案 B 試點:進貨 / 營運費用 自動過帳,2026-09) ----
 --     家易照舊填業務表單,系統依 ledger.py 的對照表組出分錄,存檔前在確認畫面
@@ -349,10 +310,10 @@ CREATE TABLE ledger_entry (
   account_name TEXT NOT NULL,
   debit        REAL NOT NULL DEFAULT 0,
   credit       REAL NOT NULL DEFAULT 0,
-  source_type  TEXT NOT NULL CHECK (source_type IN ('purchase','op_expense','order_sale','order_payment',
-                 'production_in','other_income','equity','manual_adjustment',
+  source_type  TEXT NOT NULL CHECK (source_type IN ('op_expense','order_sale','order_payment',
+                 'farmer_payment','other_income','equity','manual_adjustment',
                  'asset_acquire','asset_depreciation','sales_return','year_closing')),
-  source_id    INTEGER NOT NULL,       -- 對應 purchase.purchase_id 或 op_expense.expense_id
+  source_id    INTEGER NOT NULL,       -- 對應來源資料表的主鍵(例:op_expense.expense_id)
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );

@@ -118,20 +118,16 @@ def migrate_db():
                 execute("UPDATE product SET unit_cost=? WHERE product_id=?", (r["v"], r["pid"]))
             print("[migrate] product.unit_cost 已補上(用舊批次成本帶初值)")
         execute("CREATE TABLE IF NOT EXISTS pricing_param (key TEXT PRIMARY KEY, value REAL NOT NULL)")
-        execute("""CREATE TABLE IF NOT EXISTS sales_return (
-          return_id    INTEGER PRIMARY KEY,
-          order_id     INTEGER NOT NULL REFERENCES "order"(order_id) ON DELETE CASCADE,
-          return_date  TEXT NOT NULL,
-          season       INTEGER NOT NULL,
-          kind         TEXT NOT NULL DEFAULT '退貨' CHECK (kind IN ('退貨','折讓')),
-          amount       REAL NOT NULL DEFAULT 0,
-          product_id   INTEGER REFERENCES product(product_id),
-          qty          REAL,
-          batch_id     INTEGER REFERENCES batch(batch_id),
-          restock      INTEGER NOT NULL DEFAULT 0 CHECK (restock IN (0,1)),
-          reason       TEXT,
-          created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-        )""")
+        if "sales_tax" not in ocols:
+            execute('ALTER TABLE "order" ADD COLUMN sales_tax REAL NOT NULL DEFAULT 0')
+            print("[migrate] order.sales_tax 已補上")
+        # 2026-10-08 改成貿易公司模式(沒有存貨、退貨/折讓改成退款/退回小農):總帳的
+        # source_type CHECK 跟 sales_return 的 kind CHECK 都換了,SQLite 沒辦法直接改 CHECK,
+        # 舊資料庫要整個重建(seed.py --force 或 --empty),這裡只提醒、不自動動資料。
+        lsql = q1("SELECT sql FROM sqlite_master WHERE name='ledger_entry'").get("sql") or ""
+        if lsql and "farmer_payment" not in lsql:
+            print("[migrate] 警告:資料庫還是改版前的結構(有存貨/進貨那一版),"
+                  "付小農貨款、退款/退回小農會存不進去,請重建資料庫")
     except Exception as e:
         print("[migrate] 略過:", e)
 
@@ -479,187 +475,6 @@ async def product_line_assign(request: Request):
     return RedirectResponse("/product-lines", status_code=303)
 
 
-# ---------- 供應商 + 進貨單(v2 回合 2) ---------------------
-SUP_CATS  = ['原料', '包材', '委外加工', '設備', '服務', '其他']
-DOC_TYPES = ['三聯式發票', '二聯式發票', '收據', '農民收據', '無憑證']
-
-@app.get("/suppliers", response_class=HTMLResponse)
-def suppliers_page(request: Request):
-    rows = q("""SELECT s.*,
-                  (SELECT COUNT(*) FROM purchase p WHERE p.supplier_id=s.supplier_id) n_buy,
-                  (SELECT COALESCE(SUM(p.amount + p.tax_amount),0) FROM purchase p
-                     WHERE p.supplier_id=s.supplier_id) total
-                FROM supplier s ORDER BY s.supplier_id""")
-    return tpl.TemplateResponse("suppliers.html", dict(request=request, active="supplier", rows=rows))
-
-@app.get("/suppliers/new", response_class=HTMLResponse)
-def supplier_new(request: Request):
-    return tpl.TemplateResponse("supplier_form.html", dict(request=request, active="supplier", s=None, cats=SUP_CATS))
-
-@app.get("/suppliers/{sid}/edit", response_class=HTMLResponse)
-def supplier_edit(request: Request, sid: int):
-    s = q("SELECT * FROM supplier WHERE supplier_id=?", (sid,))
-    if not s:
-        return RedirectResponse("/suppliers", status_code=303)
-    return tpl.TemplateResponse("supplier_form.html", dict(request=request, active="supplier", s=s[0], cats=SUP_CATS))
-
-@app.post("/suppliers")
-async def supplier_save(request: Request):
-    f = await request.form()
-    g = lambda k: (f.get(k) or "").strip() or None
-    sid = f.get("supplier_id")
-    if f.get("_delete") and sid:
-        if not q("SELECT 1 FROM purchase WHERE supplier_id=?", (int(sid),)):
-            execute("DELETE FROM supplier WHERE supplier_id=?", (int(sid),))
-        return RedirectResponse("/suppliers", status_code=303)
-    name = (f.get("name") or "").strip()
-    if not name:
-        return RedirectResponse("/suppliers", status_code=303)
-    cols = dict(name=name, tax_id=g("tax_id"), category=g("category"),
-                phone=g("phone"), note=g("note"))
-    if sid:
-        sets = ",".join(f"{k}=:{k}" for k in cols)
-        execute(f"UPDATE supplier SET {sets} WHERE supplier_id=:id", {**cols, "id": int(sid)})
-    else:
-        keys = ",".join(cols)
-        execute(f"INSERT INTO supplier({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
-    return RedirectResponse("/suppliers", status_code=303)
-
-
-def _purchase_form_ctx(request, p):
-    return dict(request=request, active="purchase", p=p,
-               suppliers=q("SELECT supplier_id, name FROM supplier ORDER BY name"),
-               cats=SUP_CATS, docs=DOC_TYPES,
-               today=dt.date.today().isoformat())
-
-@app.get("/purchases", response_class=HTMLResponse)
-def purchases_page(request: Request):
-    ym = request.query_params.get("ym") or ""
-    where, args = ["1=1"], []
-    if ym:
-        where.append("substr(p.purchase_date,1,7)=?"); args.append(ym)
-    rows = q(f"""SELECT p.*, s.name sup_name,
-                        (SELECT COUNT(*) FROM fixed_asset fa WHERE fa.source_purchase_id=p.purchase_id) has_card
-                 FROM purchase p LEFT JOIN supplier s ON s.supplier_id=p.supplier_id
-                 WHERE {' AND '.join(where)}
-                 ORDER BY p.purchase_date DESC, p.purchase_id DESC""", args)
-    total = sum(r["amount"] for r in rows)
-    return tpl.TemplateResponse("purchases.html", dict(
-        request=request, active="purchase", rows=rows, total=total,
-        yms=[r["ym"] for r in q("SELECT DISTINCT substr(purchase_date,1,7) ym FROM purchase ORDER BY ym DESC")],
-        ym_sel=ym))
-
-@app.get("/purchases/new", response_class=HTMLResponse)
-def purchase_new(request: Request):
-    return tpl.TemplateResponse("purchase_form.html", _purchase_form_ctx(request, None))
-
-@app.get("/purchases/{pid}/edit", response_class=HTMLResponse)
-def purchase_edit(request: Request, pid: int):
-    p = q("SELECT * FROM purchase WHERE purchase_id=?", (pid,))
-    if not p:
-        return RedirectResponse("/purchases", status_code=303)
-    return tpl.TemplateResponse("purchase_form.html", _purchase_form_ctx(request, p[0]))
-
-def _purchase_upsert(cols, pid):
-    """寫入 purchase 主資料(不含分錄),回傳 purchase_id。"""
-    if pid:
-        sets = ",".join(f"{k}=:{k}" for k in cols)
-        execute(f"UPDATE purchase SET {sets} WHERE purchase_id=:id", {**cols, "id": int(pid)})
-        return int(pid)
-    keys = ",".join(cols)
-    return execute(f"INSERT INTO purchase({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
-
-
-def _purchase_delete(pid):
-    execute("DELETE FROM purchase WHERE purchase_id=?", (int(pid),))
-    ledger.delete_voucher_for("purchase", int(pid))
-
-@app.post("/purchases")
-async def purchase_save(request: Request):
-    f = await request.form()
-    g = lambda k: (f.get(k) or "").strip() or None
-    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
-    pid = f.get("purchase_id")
-    if f.get("_delete") and pid:
-        _purchase_delete(pid)
-        return RedirectResponse("/purchases", status_code=303)
-    date = (f.get("purchase_date") or "").strip()
-    if not date:
-        return RedirectResponse("/purchases", status_code=303)
-    is_fa = 1 if f.get("is_fixed_asset") else 0
-    cols = dict(
-        purchase_date=date,
-        supplier_id=(int(f.get("supplier_id")) if (f.get("supplier_id") or "").isdigit() else None),
-        category=g("category"),
-        amount=fl("amount"),
-        is_fixed_asset=is_fa,
-        note=g("note"))
-    if is_fa:
-        # 設備採購不記分錄(交給固定資產那條路),照舊直接存檔
-        _purchase_upsert(cols, pid)
-        return RedirectResponse("/purchases", status_code=303)
-
-    # 原料/包材/委外/服務/其他 → 先看確認畫面,存檔動作交給 /purchases/confirm
-    existing = q1("SELECT tax_amount, payment_account, doc_type, invoice_no FROM purchase WHERE purchase_id=?",
-                  (int(pid),)) if pid else {}
-    sup_name = None
-    if cols["supplier_id"]:
-        r = q1("SELECT name FROM supplier WHERE supplier_id=?", (cols["supplier_id"],))
-        sup_name = r.get("name")
-    acct_code, acct_name = ledger.PURCHASE_ACCOUNTS.get(cols["category"], ledger.PURCHASE_ACCOUNTS["其他"])
-    hidden = dict(cols)
-    if pid:
-        hidden["purchase_id"] = pid
-    back = f"/purchases/{pid}/edit" if pid else "/purchases/new"
-    return tpl.TemplateResponse("ledger_confirm.html", dict(
-        request=request, active="purchase",
-        source_label="進貨", back_url=back, commit_url="/purchases/confirm",
-        summary=[
-            dict(label="日期", value=date),
-            dict(label="供應商", value=sup_name or "—"),
-            dict(label="類別", value=cols["category"] or "—"),
-            dict(label="金額", value=f"{cols['amount']:,.0f}"),
-        ],
-        hidden=hidden,
-        amount=cols["amount"], primary_account_name=acct_name,
-        tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
-        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES, bank_names=Q.payment_account_names(),
-        invoice_no=existing.get("invoice_no"),
-    ))
-
-
-@app.post("/purchases/confirm")
-async def purchase_confirm(request: Request):
-    f = await request.form()
-    g = lambda k: (f.get(k) or "").strip() or None
-    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
-    pid = f.get("purchase_id")
-    tax_amount = fl("tax_amount")
-    payment_account = g("payment_account")
-    doc_type = g("doc_type")
-    invoice_no = g("invoice_no")
-    if doc_type and "發票" in doc_type and not invoice_no:
-        back = f"/purchases/{pid}/edit" if pid else "/purchases/new"
-        return RedirectResponse(f"{back}?ierr=1", status_code=303)
-    cols = dict(
-        purchase_date=(f.get("purchase_date") or "").strip(),
-        supplier_id=(int(f.get("supplier_id")) if (f.get("supplier_id") or "").isdigit() else None),
-        category=g("category"),
-        amount=fl("amount"),
-        is_fixed_asset=0,
-        tax_amount=tax_amount,
-        payment_account=payment_account,
-        doc_type=doc_type,
-        invoice_no=invoice_no,
-        note=g("note"))
-    new_id = _purchase_upsert(cols, pid)
-    legs = ledger.compose_purchase_entries(cols["category"], cols["amount"], tax_amount,
-                                            payment_account, is_fixed_asset=False)
-    ledger.save_voucher("purchase", new_id, cols["purchase_date"], legs,
-                         note=f"進貨:{cols['category'] or ''}")
-    return RedirectResponse("/purchases", status_code=303)
-
-
 # ---------- 固定資產卡 + 折舊(v2 回合 3) -------------------
 ASSET_CATS = {"機器設備": 5, "生財器具": 5, "運輸設備": 5,
               "電腦設備": 3, "房屋建築": 30, "其他": 5}
@@ -685,15 +500,7 @@ def _asset_form_ctx(request, a, prefill=None):
 
 @app.get("/assets/new", response_class=HTMLResponse)
 def asset_new(request: Request):
-    prefill = None
-    pv = request.query_params.get("purchase")
-    if pv and pv.isdigit():
-        r = q("SELECT * FROM purchase WHERE purchase_id=?", (int(pv),))
-        if r:
-            p = r[0]
-            prefill = dict(source_purchase_id=p["purchase_id"], name=(p["note"] or "設備"),
-                           acquire_date=p["purchase_date"], cost=p["amount"])
-    return tpl.TemplateResponse("asset_form.html", _asset_form_ctx(request, None, prefill))
+    return tpl.TemplateResponse("asset_form.html", _asset_form_ctx(request, None))
 
 @app.get("/assets/{aid}/edit", response_class=HTMLResponse)
 def asset_edit(request: Request, aid: int):
@@ -722,14 +529,12 @@ async def asset_save(request: Request):
     grant = fl("grant_amount")
     sv = (f.get("salvage") or "").strip()
     salvage = float(sv) if sv else round(max(0.0, cost - grant) / (life + 1))
-    spv = f.get("source_purchase_id") or ""
     category = g("category")
     payment_account = g("payment_account")
     cols = dict(
         name=name, category=category,
         acquire_date=date, cost=cost, grant_amount=grant, salvage=salvage,
         life_years=life, method="平均法",
-        source_purchase_id=(int(spv) if spv.isdigit() else None),
         disposed_date=g("disposed_date"), payment_account=payment_account, note=g("note"))
     if aid:
         sets = ",".join(f"{k}=:{k}" for k in cols)
@@ -779,18 +584,11 @@ def product_new(request: Request):
 def _product_delete_block_reason(pid):
     """商品不能刪除的白話原因;沒有卡住的地方回傳 None。"""
     n_orders = q("SELECT COUNT(DISTINCT order_id) n FROM order_line WHERE product_id=?", (pid,))[0]["n"]
-    on_hand = q("SELECT COALESCE(SUM(qty),0) v FROM stock_move WHERE product_id=?", (pid,))[0]["v"]
-    n_returns = q("SELECT COUNT(*) n FROM sales_return WHERE product_id=?", (pid,))[0]["n"]
     n_batch = q("SELECT COUNT(*) n FROM batch WHERE product_id=?", (pid,))[0]["n"]
     n_target = q("SELECT COUNT(*) n FROM sales_target WHERE product_id=?", (pid,))[0]["n"]
-    uom = (q("SELECT uom FROM product WHERE product_id=?", (pid,)) or [{}])[0].get("uom", "")
     reasons = []
     if n_orders:
         reasons.append(f"有 {n_orders} 張訂單用過這個商品")
-    if on_hand:
-        reasons.append(f"現有庫存還有 {round(on_hand)} {uom}")
-    if n_returns:
-        reasons.append(f"有 {n_returns} 筆退貨紀錄")
     if n_batch:
         reasons.append(f"有 {n_batch} 筆舊的焙製批次紀錄")
     if n_target:
@@ -1141,7 +939,7 @@ def order_new(request: Request):
         products=q("SELECT product_id,sku,name,uom FROM product WHERE status='在售' ORDER BY sku"),
         today=dt.date.today().isoformat(),
         prices_json=json.dumps(prices), cust_seg_json=json.dumps(cust_seg),
-        stock_json=json.dumps(Q.stock_on_hand_map()), ship_payers=SHIP_PAYERS,
+        ship_payers=SHIP_PAYERS,
     ))
 
 
@@ -1203,35 +1001,24 @@ async def order_create(request: Request):
     invoiced = 1 if one("invoiced") else 0
     if invoiced and not one("tax_doc_no"):
         return RedirectResponse("/orders/new?err=invoice", status_code=303)
+    # 銷項稅額(2026-10-08):售價含稅,家易自己填稅額,系統不算;只擋明顯打錯(負數或比商品金額還大)
+    sales_tax = flt("sales_tax") if order_kind == "銷售" else 0.0
+    if sales_tax < 0 or (sales_tax and sales_tax >= subtotal):
+        return RedirectResponse("/orders/new?err=tax", status_code=303)
     oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
-                     discount_total,order_total,payment_method,payment_status,
+                     discount_total,order_total,sales_tax,payment_method,payment_status,
                      shipping_cost_actual,ship_payer,ship_method,ship_status,invoiced,tax_doc_no)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
                   (next_order_no(), order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
-                   discount_total, total,
+                   discount_total, total, sales_tax,
                    one("payment_method") or None, one("payment_status", "待收款"),
                    shipping_cost_actual, ship_payer, one("ship_method") or None,
                    invoiced, one("tax_doc_no") or None))
     for p, qv, up, b, lp in lines:
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal)
                    VALUES(?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up))
-    sync_order_stock(oid)
     _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
-
-
-def sync_order_stock(oid):
-    """依訂單目前的明細,重建該訂單造成的出庫紀錄。"""
-    o = q('SELECT order_kind FROM "order" WHERE order_id=?', (oid,))
-    if not o:
-        return
-    mtype = "銷售出庫" if o[0]["order_kind"] == "銷售" else "贈送出庫"
-    execute("DELETE FROM stock_move WHERE ref_order_id=? AND move_type IN ('銷售出庫','贈送出庫')", (oid,))
-    d = q('SELECT order_date FROM "order" WHERE order_id=?', (oid,))[0]["order_date"]
-    for l in q("SELECT product_id, batch_id, qty FROM order_line WHERE order_id=?", (oid,)):
-        execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,ref_order_id)
-                   VALUES(?,?,?,?,?,?)""",
-                (d, l["product_id"], l["batch_id"], -abs(l["qty"] or 0), mtype, oid))
 
 
 def _post_order_ledger(oid):
@@ -1243,7 +1030,8 @@ def _post_order_ledger(oid):
         return
     sale_lines = [(l["pg_name"], l["line_subtotal"] or 0, (l["qty"] or 0) * (l["unit_cost"] or 0))
                   for l in lines if not l["is_gift"]]
-    sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_cost_actual"], o["ship_payer"])
+    sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_cost_actual"],
+                                                  o["ship_payer"], o["sales_tax"])
     ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, note=f"訂單 {o['order_no']}")
 
     pay_legs = ledger.compose_order_payment_entries(o["paid_amount"], o["payment_account"])
@@ -1362,7 +1150,6 @@ async def order_import_confirm(request: Request):
         for pid, qty, up in built_lines:
             execute("""INSERT INTO order_line(order_id,product_id,qty,unit_price,line_subtotal)
                        VALUES(?,?,?,?,?)""", (oid, pid, qty, up, qty * up))
-        sync_order_stock(oid)
         _post_order_ledger(oid)
         imported += 1
 
@@ -1387,34 +1174,27 @@ def order_detail(request: Request, oid: int):
         products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
         pay_methods=PAY_METHODS, pay_status=PAY_STATUS,
         ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, ship_payers=SHIP_PAYERS, kinds=ORDER_KINDS,
-        returns=Q.returns_list(oid), return_kinds=RETURN_KINDS,
-        stock_json=json.dumps(Q.stock_on_hand_map()),
+        returns=Q.returns_list(oid), return_kinds=ledger.RETURN_KINDS,
+        order_cost=sum((l["qty"] or 0) * (l["unit_cost"] or 0) for l in lines if not l["is_gift"]),
         today=dt.date.today().isoformat()))
 
 
-# ---------- 銷貨退回 / 折讓(v2 回合 8) ----------------------
-RETURN_KINDS = ['退貨', '折讓']
-
-def _post_return_ledger(rid, oid, date, kind, amount, product_id, qty, restock):
+# ---------- 訂單退款 / 退回小農(2026-10-08 貿易公司模式) -----------
+#   退貨又退款 → 直接刪訂單(order_delete 會連總帳一起刪),不走這裡。
+#   退款 = 只退款不退貨(其他損失);退回小農 = 退貨不退款(小農退成本,沖應付帳款)。
+def _post_return_ledger(rid, oid, date, kind, amount):
     o = q1('SELECT payment_status, payment_account FROM "order" WHERE order_id=?', (oid,))
-    already_paid = o.get("payment_status") == "已收款"
-    cogs_amount, pg_name = 0, None
-    if restock and product_id and qty:
-        p = q1("""SELECT p.unit_cost, pg.name pg_name FROM product p
-                   LEFT JOIN product_group pg ON pg.pg_id=p.product_group_id
-                   WHERE p.product_id=?""", (product_id,))
-        cogs_amount = abs(qty) * (p.get("unit_cost") or 0)
-        pg_name = p.get("pg_name")
-    legs = ledger.compose_sales_return_entries(kind, amount, already_paid, o.get("payment_account"),
-                                                cogs_amount, pg_name)
+    already_paid = o.get("payment_status") in ("已收款", "部分收款")
+    legs = ledger.compose_sales_return_entries(kind, amount, already_paid, o.get("payment_account"))
     ledger.save_voucher("sales_return", rid, date, legs, note=f"{kind}:訂單#{oid}")
 
 @app.get("/returns", response_class=HTMLResponse)
 def returns_page(request: Request):
     rows = Q.returns_list()
-    total = sum(r["amount"] for r in rows)
     return tpl.TemplateResponse("returns.html", dict(
-        request=request, active="returns", rows=rows, total=total))
+        request=request, active="returns", rows=rows,
+        refund_total=sum(r["amount"] for r in rows if r["kind"] == "退款"),
+        farmer_total=sum(r["amount"] for r in rows if r["kind"] == "退回小農")))
 
 @app.post("/orders/{oid}/return")
 async def order_return_create(request: Request, oid: int):
@@ -1422,63 +1202,26 @@ async def order_return_create(request: Request, oid: int):
     o, _ = Q.order_get(oid)
     if not o:
         return RedirectResponse("/orders", status_code=303)
-    g = lambda k: (f.get(k) or "").strip() or None
-    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
     date = (f.get("return_date") or "").strip() or dt.date.today().isoformat()
-    kind = (f.get("kind") or "退貨").strip()
-    if kind not in RETURN_KINDS:
-        kind = "退貨"
-    amount = fl("amount")
+    kind = (f.get("kind") or "").strip()
+    if kind not in ledger.RETURN_KINDS:
+        kind = "退款"
+    try:
+        amount = float(f.get("amount") or 0)
+    except ValueError:
+        amount = 0.0
     if amount <= 0:
         return RedirectResponse(f"/orders/{oid}?rerr=1", status_code=303)
-    pid = f.get("product_id") or ""
-    bid = f.get("batch_id") or ""
-    qty = fl("qty")
-    restock = 1 if f.get("restock") else 0
-    cols = dict(
-        order_id=oid, return_date=date, season=Q.season_of(date), kind=kind, amount=amount,
-        product_id=(int(pid) if pid.isdigit() else None),
-        qty=(qty or None),
-        batch_id=(int(bid) if bid.isdigit() else None),
-        restock=restock, reason=g("reason"))
-    keys = ",".join(cols)
-    rid = execute(f"INSERT INTO sales_return({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
-    # 好貨退回可再賣 → 產生一筆「退貨入庫」
-    if restock and cols["product_id"] and qty > 0:
-        execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,ref_order_id,note)
-                   VALUES(?,?,?,?,?,?,?)""",
-                (date, cols["product_id"], cols["batch_id"], abs(qty), "退貨入庫", oid,
-                 f"退貨單#{rid}"))
-    _post_return_ledger(rid, oid, date, kind, amount, cols["product_id"], qty, restock)
-    return RedirectResponse(f"/orders/{oid}?rok=1", status_code=303)
-
-@app.post("/orders/{oid}/return_all")
-async def order_return_all(request: Request, oid: int):
-    o, lines = Q.order_get(oid)
-    if not o:
-        return RedirectResponse("/orders", status_code=303)
-    date = dt.date.today().isoformat()
-    season = Q.season_of(date)
-    for ln in lines:
-        if ln["is_gift"] or not ln["line_subtotal"]:
-            continue
-        rid = execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,
-                     product_id,qty,batch_id,restock,reason)
-                     VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                (oid, date, season, "退貨", ln["line_subtotal"],
-                 ln["product_id"], ln["qty"], ln["batch_id"], 1, "整筆退單"))
-        execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,ref_order_id,note)
-                   VALUES(?,?,?,?,?,?,?)""",
-                (date, ln["product_id"], ln["batch_id"], abs(ln["qty"]), "退貨入庫", oid,
-                 f"退貨單#{rid}"))
-        _post_return_ledger(rid, oid, date, "退貨", ln["line_subtotal"], ln["product_id"], ln["qty"], 1)
+    reason = (f.get("reason") or "").strip() or None
+    rid = execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,reason)
+                     VALUES(?,?,?,?,?,?)""", (oid, date, Q.season_of(date), kind, amount, reason))
+    _post_return_ledger(rid, oid, date, kind, amount)
     return RedirectResponse(f"/orders/{oid}?rok=1", status_code=303)
 
 
 def _return_delete(rid):
     """回傳被刪那筆退貨所屬的 order_id(找不到就 None)。"""
     r = q("SELECT order_id FROM sales_return WHERE return_id=?", (rid,))
-    execute("DELETE FROM stock_move WHERE move_type='退貨入庫' AND note=?", (f"退貨單#{rid}",))
     execute("DELETE FROM sales_return WHERE return_id=?", (rid,))
     ledger.delete_voucher_for("sales_return", rid)
     return r[0]["order_id"] if r else None
@@ -1536,6 +1279,9 @@ async def order_update(request: Request, oid: int):
 
     if f.get("invoiced") and not g("tax_doc_no"):
         return RedirectResponse(f"/orders/{oid}?err=invoice", status_code=303)
+    sales_tax = flt("sales_tax") if (g("order_kind") or o["order_kind"]) == "銷售" else 0.0
+    if sales_tax < 0 or (sales_tax and sales_tax >= subtotal):
+        return RedirectResponse(f"/orders/{oid}?err=tax", status_code=303)
     # 收款狀態/出貨狀態不能用下拉選單直接跳成「已收款/部分收款」「已出貨」——
     # 要嘛走上面專門的「標記已收款」「標記已出貨」按鈕,要嘛在這裡把對應欄位一起填齊,
     # 不然會出現「狀態寫已收款,但總帳沒有收款分錄」這種看起來做了其實沒做的情況。
@@ -1547,7 +1293,7 @@ async def order_update(request: Request, oid: int):
     cols = dict(order_date=g("order_date"), order_kind=g("order_kind"),
                 payment_method=g("payment_method"), payment_status=g("payment_status") or "待收款",
                 paid_date=g("paid_date"), paid_amount=(flt("paid_amount") or None),
-                order_total=total,
+                order_total=total, sales_tax=sales_tax,
                 ship_method=g("ship_method"), carrier=g("carrier"), tracking_no=g("tracking_no"),
                 shipped_date=g("shipped_date"), delivered_date=g("delivered_date"),
                 ship_status=g("ship_status") or "待出貨",
@@ -1560,7 +1306,6 @@ async def order_update(request: Request, oid: int):
         cols["season"] = Q.season_of(cols["order_date"])
     sets = ",".join(f'{k}=:{k}' for k in cols)
     execute(f'UPDATE "order" SET {sets} WHERE order_id=:id', {**cols, "id": oid})
-    sync_order_stock(oid)
     _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
 
@@ -1582,8 +1327,8 @@ def order_copy(oid: int):
                    VALUES(?,?,?,?,?,?,?,?)""",
                 (noid, l["product_id"], l["batch_id"], l["qty"], l["unit_price"],
                  l["list_price"], 0 if l["is_gift"] else l["qty"] * l["unit_price"], l["is_gift"]))
-    execute('UPDATE "order" SET order_total=? WHERE order_id=?', (subtotal, noid))
-    sync_order_stock(noid)
+    execute('UPDATE "order" SET order_total=?, sales_tax=? WHERE order_id=?',
+            (subtotal, o["sales_tax"] or 0, noid))
     _post_order_ledger(noid)
     return RedirectResponse(f"/orders/{noid}?ok=1", status_code=303)
 
@@ -1592,7 +1337,6 @@ def order_delete(oid: int):
     o = q('SELECT order_id FROM "order" WHERE order_id=?', (oid,))
     if not o:
         return RedirectResponse("/orders", status_code=303)
-    execute("DELETE FROM stock_move WHERE ref_order_id=?", (oid,))
     execute("DELETE FROM shipment_issue WHERE order_id=?", (oid,))
     execute("UPDATE shipment_issue SET linked_reship_order_id=NULL WHERE linked_reship_order_id=?", (oid,))
     execute("UPDATE review_queue SET resolved_order_id=NULL WHERE resolved_order_id=?", (oid,))
@@ -1681,8 +1425,7 @@ async def issue_update(request: Request, iid: int):
             execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift)
                        VALUES(?,?,?,?,0,0,1)""", (noid, l["product_id"], l["batch_id"], l["qty"]))
         execute("UPDATE shipment_issue SET linked_reship_order_id=? WHERE issue_id=?", (noid, iid))
-        sync_order_stock(noid)
-    return RedirectResponse("/issues", status_code=303)
+        return RedirectResponse("/issues", status_code=303)
 
 
 # ---------- 各產品線損益(v2 回合 6) ------------------------
@@ -1721,6 +1464,8 @@ def finance_page(request: Request):
         request=request, active="finance",
         fin_json=json.dumps(fin), cats=Q.OPEX_CATS,
         seasons_fin=fin_totals, **ctx))
+
+DOC_TYPES = ['三聯式發票', '二聯式發票', '收據', '農民收據', '無憑證']   # 營運費用的憑證類型
 
 @app.get("/finance/expenses", response_class=HTMLResponse)
 def finance_expenses(request: Request):
@@ -1835,10 +1580,9 @@ async def finance_expense_confirm(request: Request):
 # ---------- 9 宮格 B 類:首頁入口 ----------------------------
 ENTRY_CARDS = [
     dict(title="銷售 / 出貨", href="/orders/new", desc="開一張訂單,存檔就自動記應收帳款/銷貨收入。"),
-    dict(title="採購物料", href="/purchases/new", desc="原料/包材/委外/服務進貨,存檔前會給你看一次分錄。"),
+    dict(title="付小農貨款", href="/farmer-payments", desc="訂單成立時欠小農的錢,真的付款時在這裡登記。"),
     dict(title="營運支出", href="/finance/expenses/new", desc="逐月費用登記,存檔前會給你看一次分錄。"),
     dict(title="設備相關", href="/assets/new", desc="機器/器具採購,建固定資產卡,系統會自動記分錄、每月提折舊。"),
-    dict(title="生產入庫", href="/stock#produce", desc="農產品/蜂蜜做好入庫,登記數量+價值。"),
     dict(title="其他收益", href="/other-income/new", desc="利息收入、政府補助等非銷售的進帳。"),
     dict(title="其他費用", href="/finance/expenses/new", desc="勞務費/檢驗費/規費等雜項費用,在「營運支出」的類別選單裡就找得到。"),
     dict(title="資本異動", href="/equity/new", desc="現金增資、盈餘轉列公積。"),
@@ -2011,8 +1755,8 @@ async def adjustment_save(request: Request):
 def ledger_page(request: Request):
     src = request.query_params.get("source") or ""
     where, args = ["1=1"], []
-    if src in ("purchase", "op_expense", "order_sale", "order_payment",
-               "production_in", "other_income", "equity", "manual_adjustment",
+    if src in ("op_expense", "order_sale", "order_payment",
+               "farmer_payment", "other_income", "equity", "manual_adjustment",
                "asset_acquire", "asset_depreciation", "sales_return", "year_closing"):
         where.append("source_type=?"); args.append(src)
     rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
@@ -2231,106 +1975,54 @@ async def targets_save(request: Request):
     return RedirectResponse("/targets", status_code=303)
 
 
-# ---------- 庫存 --------------------------------------------
-STOCK_IN_TYPES  = ["分裝入庫", "退貨入庫", "期初庫存"]
-STOCK_ADJ_TYPES = ["盤點調整", "損耗報廢"]
+# ---------- 付小農貨款(2026-10-08 貿易公司模式) -------------------
+#   訂單成立時成本記「借銷貨成本 / 貸應付帳款」,這裡登記真的付錢給小農(借應付帳款 /
+#   貸現金或銀行)。小農只有一個,不分人;目前欠多少直接看總帳 2171 的餘額。
+@app.get("/farmer-payments", response_class=HTMLResponse)
+def farmer_payments_page(request: Request):
+    owed = q1("""SELECT COALESCE(SUM(credit - debit),0) v FROM ledger_entry
+                 WHERE account_code=?""", (ledger.AP_ACCOUNT[0],))["v"]
+    rows = q("SELECT * FROM farmer_payment ORDER BY pay_date DESC, payment_id DESC")
+    return tpl.TemplateResponse("farmer_payments.html", dict(
+        request=request, active="farmer", rows=rows, owed=owed,
+        total_paid=sum(r["amount"] or 0 for r in rows),
+        bank_names=Q.payment_account_names(), today=dt.date.today().isoformat()))
 
-@app.get("/stock", response_class=HTMLResponse)
-def stock_page(request: Request):
-    return tpl.TemplateResponse("stock.html", dict(
-        request=request, active="stock",
-        rows=Q.stock_on_hand(),
-        products=q("SELECT product_id,sku,name FROM product WHERE status='在售' ORDER BY sku"),
-        in_types=STOCK_IN_TYPES, adj_types=STOCK_ADJ_TYPES))
-
-@app.get("/stock/value", response_class=HTMLResponse)
-def stock_value_page(request: Request):
-    today = dt.date.today()
-    lo = request.query_params.get("from") or today.replace(day=1).isoformat()
-    hi = request.query_params.get("to") or today.isoformat()
-    return tpl.TemplateResponse("stock_value.html", dict(
-        request=request, active="stock", lo=lo, hi=hi, rows=Q.stock_value_rows(lo, hi)))
-
-@app.get("/stock/moves", response_class=HTMLResponse)
-def stock_moves_page(request: Request):
-    pid = request.query_params.get("product_id")
-    return tpl.TemplateResponse("stock_moves.html", dict(
-        request=request, active="stock",
-        rows=Q.stock_moves(pid or None, request.query_params.get("type") or None),
-        products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
-        pid=pid or ""))
-
-@app.post("/stock/move")
-async def stock_move_add(request: Request):
+@app.post("/farmer-payments")
+async def farmer_payment_create(request: Request):
     f = await request.form()
+    date = (f.get("pay_date") or "").strip() or dt.date.today().isoformat()
     try:
-        pid = int(f.get("product_id"))
-        qty = float(f.get("qty") or 0)
-    except (TypeError, ValueError):
-        return RedirectResponse("/stock", status_code=303)
-    mtype = (f.get("move_type") or "分裝入庫").strip()
-    if qty == 0:
-        return RedirectResponse("/stock", status_code=303)
-    # 入庫類一律記正,調整類依使用者填的正負,損耗報廢一律記負
-    if mtype in ("分裝入庫", "退貨入庫", "期初庫存"):
-        qty = abs(qty)
-    elif mtype == "損耗報廢":
-        qty = -abs(qty)
-    execute("""INSERT INTO stock_move(move_date,product_id,qty,move_type,note)
-               VALUES(?,?,?,?,?)""",
-            (f.get("move_date") or dt.date.today().isoformat(), pid, qty, mtype,
-             (f.get("note") or "").strip() or None))
-    return RedirectResponse("/stock", status_code=303)
-
-def _stock_move_delete(mid):
-    """回傳 True=刪成功,False=被擋(這筆是訂單自動記的出貨/贈送出庫,不能單獨刪)。"""
-    r = q("SELECT ref_order_id FROM stock_move WHERE move_id=?", (mid,))
-    if not r or r[0]["ref_order_id"]:
-        return False
-    execute("DELETE FROM stock_move WHERE move_id=?", (mid,))
-    ledger.delete_voucher_for("production_in", mid)
-    return True
-
-@app.post("/stock/moves/{mid}/delete")
-async def stock_move_delete(request: Request, mid: int):
-    ok = _stock_move_delete(mid)
-    f = await request.form()
-    if not ok:
-        return RedirectResponse("/stock/moves?perr=1", status_code=303)
-    return RedirectResponse(f.get("next") or "/stock/moves", status_code=303)
-
-
-# ---------- 9 宮格 B 類:生產入庫(有價值,會記分錄)---------
-@app.post("/stock/produce")
-async def stock_produce(request: Request):
-    f = await request.form()
-    try:
-        pid = int(f.get("product_id"))
-        qty = abs(float(f.get("qty") or 0))
         amount = float(f.get("amount") or 0)
-    except (TypeError, ValueError):
-        return RedirectResponse("/stock", status_code=303)
-    if qty <= 0 or amount <= 0:
-        return RedirectResponse("/stock", status_code=303)
-    date = (f.get("move_date") or dt.date.today().isoformat()).strip()
+    except ValueError:
+        amount = 0.0
+    if amount <= 0:
+        return RedirectResponse("/farmer-payments?err=1", status_code=303)
+    acct = (f.get("payment_account") or "").strip() or None
     note = (f.get("note") or "").strip() or None
-    move_id = execute("""INSERT INTO stock_move(move_date,product_id,qty,move_type,note)
-               VALUES(?,?,?,'生產入庫',?)""", (date, pid, qty, note))
-    pg = q1("""SELECT pg.name pg_name FROM product p
-               LEFT JOIN product_group pg ON pg.pg_id = p.product_group_id
-               WHERE p.product_id=?""", (pid,))
-    legs = ledger.compose_production_in_entries(pg.get("pg_name") if pg else None, amount)
-    ledger.save_voucher("production_in", move_id, date, legs, note=note)
-    return RedirectResponse("/stock", status_code=303)
+    new_id = execute("INSERT INTO farmer_payment(pay_date,amount,payment_account,note) VALUES(?,?,?,?)",
+                     (date, amount, acct, note))
+    legs = ledger.compose_farmer_payment_entries(amount, acct)
+    ledger.save_voucher("farmer_payment", new_id, date, legs,
+                        note="付小農貨款" + (f":{note}" if note else ""))
+    return RedirectResponse("/farmer-payments?ok=1", status_code=303)
+
+def _farmer_payment_delete(pid):
+    execute("DELETE FROM farmer_payment WHERE payment_id=?", (pid,))
+    ledger.delete_voucher_for("farmer_payment", pid)
+
+@app.post("/farmer-payments/{pid}/delete")
+def farmer_payment_delete(pid: int):
+    _farmer_payment_delete(pid)
+    return RedirectResponse("/farmer-payments", status_code=303)
 
 
 # 傳票勾選刪除:連來源紀錄一起刪(重用各來源自己的刪除邏輯,不繞過既有規則)
 _LEDGER_DELETERS = {
-    "purchase": _purchase_delete,
     "op_expense": _expense_delete,
     "order_sale": order_delete,
     "order_payment": order_delete,
-    "production_in": _stock_move_delete,
+    "farmer_payment": _farmer_payment_delete,
     "other_income": _other_income_delete,
     "equity": _equity_delete,
     "manual_adjustment": _adjustment_delete,

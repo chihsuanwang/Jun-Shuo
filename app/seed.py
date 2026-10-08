@@ -86,15 +86,14 @@ products = [
 prod = {}
 for p in products:
     sku = p[0]
-    low = {"GY-DRY-300": 60, "GY-GIFT": 20}.get(sku)
     ingredients = "蜂蜜(南投中寮)" if sku.startswith("HNY") else "龍眼(南投中寮)"
     status = "停售" if sku == "GY-DRY-500" else "在售"
     c.execute("""INSERT INTO product(sku,name,product_type,type_code_raw,net_weight_g,gross_weight_g,
-                 package_form,uom,grams_per_uom,shelf_life_days,gift_only,ingredients,origin,status,low_stock,
+                 package_form,uom,grams_per_uom,shelf_life_days,gift_only,ingredients,origin,status,
                  product_group_id,unit_cost)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10],
-               ingredients, "南投中寮", status, low, pg[p[13]], p[14]))
+               ingredients, "南投中寮", status, pg[p[13]], p[14]))
     pid = c.lastrowid
     prod[sku] = dict(id=pid, retail=p[11], wholesale=p[12], unit_cost=p[14], uom=p[7], pg_name=p[13])
     for seg, price in (("零售", p[11]), ("批發", p[12]), ("團購", round(p[11] * 0.95)),
@@ -168,16 +167,18 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
         pm, pay_status, total = "未收款", "免收款", 0
     if ship_status is None:
         ship_status = "已送達" if pay_status == "已收款" else "已出貨"
+    # 銷項稅額(2026-10-08):售價含稅,家易手動填;示範資料用含稅總額 ÷ 1.05 拆出 5%
+    sales_tax = round(subtotal - subtotal / 1.05) if kind == "銷售" else 0
     invoiced = 1 if ci["seg"] in ("批發", "機構") else 0
     tax_doc_no = f"AA{order_no:08d}" if invoiced else None
     paid_amount = total if pay_status == "已收款" else (round(total * 0.5) if pay_status == "部分收款" else None)
     c.execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
-                 source_ref,discount_total,order_total,
+                 source_ref,discount_total,order_total,sales_tax,
                  payment_method,payment_account,payment_status,paid_date,paid_amount,
                  invoiced,tax_doc_no,ship_method,carrier,shipping_cost_actual,ship_status)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (f"S{order_no:04d}", d.isoformat(), season, cid, ch[chan], kind,
-               None, 0, total,
+               None, 0, total, sales_tax,
                pm, "郵局" if pm == "銀行匯款" else None, pay_status,
                d.isoformat() if pay_status == "已收款" else None, paid_amount,
                invoiced, tax_doc_no, ship_method, carrier, ship_cost, ship_status))
@@ -195,7 +196,7 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
     sale_lines = [(prod[sku]["pg_name"], 0 if gift else round(qty * price_of(sku, seg)),
                    qty * prod[sku]["unit_cost"])
                   for sku, qty, gift in lines if not gift]
-    sale_legs = ledger.compose_order_sale_entries(sale_lines, kind)
+    sale_legs = ledger.compose_order_sale_entries(sale_lines, kind, ship_cost, "店家吸收", sales_tax)
     add_voucher(d.isoformat(), sale_legs, "order_sale", oid, f"訂單 S{order_no:04d}")
     pay_legs = ledger.compose_order_payment_entries(paid_amount, "郵局" if pm == "銀行匯款" else None)
     add_voucher(d.isoformat(), pay_legs, "order_payment", oid, f"訂單 S{order_no:04d} 收款")
@@ -224,39 +225,21 @@ c.execute("""INSERT INTO shipment_issue(order_id,issue_type,issue_date,qty_affec
           (issue_oid, "破損", "2026-05-22", 1, None, 350, "黑貓 · 示範資料"))
 c.execute("UPDATE \"order\" SET ship_status='破損' WHERE order_id=?", (issue_oid,))
 
-# ---- 銷貨退回 / 折讓(v2 回合 8 示範:一筆折讓、一筆退貨進庫)----
-#      技術債 #2(2026-09-21):兩筆也補上總帳分錄,跟其他示範資料一樣的做法。
-gift_pid = prod["GY-GIFT"]["id"]
-b2025 = bat["2025-A"]
-
-def _return_ledger(rid, oid, date, kind, amount, pid=None, qty=None, restock=0):
+# ---- 退款 / 退回小農(2026-10-08 貿易公司模式示範,各一筆)----------
+#      退款:破損客訴,只退錢不退貨 → 其他損失。
+#      退回小農:客戶多訂退 2 盒但不退錢(已轉成下次訂單的抵用),貨退給小農、小農退成本。
+def _return_ledger(rid, oid, date, kind, amount):
     o = c.execute('SELECT payment_status, payment_account FROM "order" WHERE order_id=?', (oid,)).fetchone()
-    already_paid = o[0] == "已收款"
-    cogs_amount, pgn = 0, None
-    if restock and pid and qty:
-        pr = c.execute("""SELECT p.unit_cost, pg.name pg_name FROM product p
-                           LEFT JOIN product_group pg ON pg.pg_id=p.product_group_id
-                           WHERE p.product_id=?""", (pid,)).fetchone()
-        cogs_amount = abs(qty) * (pr[0] or 0)
-        pgn = pr[1]
-    legs = ledger.compose_sales_return_entries(kind, amount, already_paid, o[1],
-                                                cogs_amount, pgn)
+    already_paid = o[0] in ("已收款", "部分收款")
+    legs = ledger.compose_sales_return_entries(kind, amount, already_paid, o[1])
     add_voucher(date, legs, "sales_return", rid, f"{kind}:訂單#{oid}")
 
-c.execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,restock,reason)
-             VALUES(?,?,?,?,?,?,?)""",
-          (issue_oid, "2026-05-25", 2026, "折讓", 150, 0, "破損客訴,折讓不退貨"))
-_sr1 = c.lastrowid
-_return_ledger(_sr1, issue_oid, "2026-05-25", "折讓", 150)
-
-c.execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,product_id,qty,batch_id,restock,reason)
-             VALUES(?,?,?,?,?,?,?,?,?,?)""",
-          (oids[9], "2026-01-05", 2025, "退貨", 600, gift_pid, 2, b2025, 1, "客戶多訂,退 2 盒"))
-_sr2 = c.lastrowid
-c.execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,ref_order_id,note)
-             VALUES(?,?,?,?,?,?,?)""",
-          ("2026-01-05", gift_pid, b2025, 2, "退貨入庫", oids[9], f"退貨單#{_sr2}"))
-_return_ledger(_sr2, oids[9], "2026-01-05", "退貨", 600, gift_pid, 2, 1)
+for r_oid, r_date, r_season, r_kind, r_amt, r_reason in [
+        (issue_oid, "2026-05-25", 2026, "退款", 150, "破損客訴,退部分款項、不退貨"),
+        (oids[9], "2026-01-05", 2025, "退回小農", 2 * prod["GY-GIFT"]["unit_cost"], "客戶多訂 2 盒,退給小農")]:
+    c.execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,reason)
+                 VALUES(?,?,?,?,?,?)""", (r_oid, r_date, r_season, r_kind, r_amt, r_reason))
+    _return_ledger(c.lastrowid, r_oid, r_date, r_kind, r_amt)
 
 # ---- 產季目標 --------------------------------------------------
 c.execute("INSERT INTO sales_target(season,product_id,target_qty,target_amount) VALUES(2025,NULL,NULL,300000)")
@@ -298,94 +281,38 @@ cert_id = opx("2026-06", "驗證費", 15000, "龍眼乾")     # 年度產銷履�
 add_voucher("2026-06-01", ledger.compose_expense_entries("驗證費", 15000, 0, "現金"),
             "op_expense", cert_id, "營運費用:驗證費")
 
-# ---- 供應商(2)+ 進貨單(3,其中 1 筆設備待建卡)------------
-# 「中寮果農合作社」示範的是公司向小農採購農產品的標準做法(2026-10-01 定案):
-# category=原料、doc_type=農民收據,分錄走 PURCHASE_ACCOUNTS["原料"]——不再另外
-# 記一筆「田間管理」營運費用,那是小農自己的成本,已經含在這筆採購價裡了。
-suppliers = [
-    ("中寮果農合作社", "53912888", "原料", "049-2601234"),
-    ("永信包裝材料行", "27889011", "包材", "04-23015678"),
-]
-sup = {}
-for name, tid, cat, phone in suppliers:
-    c.execute("INSERT INTO supplier(name,tax_id,category,phone) VALUES(?,?,?,?)", (name, tid, cat, phone))
-    sup[name] = c.lastrowid
+# ---- 付小農貨款(2026-10-08):訂單成立時記的應付帳款,示範付掉 6 月底以前的 ----
+for f_date, f_note in [("2026-07-10", "示範:5~6 月貨款")]:   # 7 月以後的貨款還沒付,頁面上看得到欠款
+    owed = c.execute("""SELECT COALESCE(SUM(credit-debit),0) FROM ledger_entry
+                        WHERE account_code=? AND entry_date<=?""", (ledger.AP_ACCOUNT[0], f_date)).fetchone()[0]
+    f_amt = round(owed)
+    if f_amt <= 0:
+        continue
+    c.execute("INSERT INTO farmer_payment(pay_date,amount,payment_account,note) VALUES(?,?,?,?)",
+              (f_date, f_amt, "郵局", f_note))
+    add_voucher(f_date, ledger.compose_farmer_payment_entries(f_amt, "郵局"), "farmer_payment",
+                c.lastrowid, f"付小農貨款:{f_note}")
 
-# 日期, 供應商, 類別, 產品線, 未稅額, 稅額, 可扣抵, 憑證, 發票號碼, 固定資產, 備註
-purchases = [
-    ("2026-05-10", "中寮果農合作社", "原料", "龍眼乾", 60000,    0, 0, "農民收據",   None,        0, "鮮果收購 · 2026 產季"),
-    ("2026-05-15", "永信包裝材料行", "包材", "龍眼乾",  8000,  400, 1, "三聯式發票", "AB12345678", 0, "夾鏈袋 + 禮盒盒一批"),
-    ("2026-04-20", "永信包裝材料行", "設備", "蜂蜜",   20000, 1000, 1, "三聯式發票", "AB12345679", 1, "搖蜜機(固定資產,待建卡)"),
-]
-buy_id = {}
-for d, sname, cat, pgname, amt, tax, ded, doc, inv, fa, note in purchases:
-    c.execute("""INSERT INTO purchase(purchase_date,supplier_id,category,product_group_id,
-                 amount,tax_amount,tax_deductible,doc_type,invoice_no,is_fixed_asset,payment_account,note)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-              (d, sup[sname], cat, pg.get(pgname), amt, tax, ded, doc, inv, fa, "現金", note))
-    pur_id = c.lastrowid
-    buy_id[note] = pur_id
-    legs = ledger.compose_purchase_entries(cat, amt, tax, "現金", is_fixed_asset=bool(fa))
-    add_voucher(d, legs, "purchase", pur_id, f"進貨:{cat}")
-
-# ---- 固定資產卡(2:柴焙灶〔有政府補助〕/ 搖蜜機〔由進貨帶入〕)----
-# 名稱, 類別, 產品線, 取得日, 成本, 補助, 殘值 None=自動, 年數, 來源進貨 note
+# ---- 固定資產卡(2:柴焙灶〔有政府補助〕/ 搖蜜機)----
+# 名稱, 類別, 產品線, 取得日, 成本, 補助, 殘值 None=自動, 年數
 assets = [
-    ("智慧柴焙灶(含溫控)", "機器設備", "龍眼乾", "2025-08-01", 200000, 80000, None, 5, None),
-    ("搖蜜機",             "機器設備", "蜂蜜",   "2026-04-20",  20000,     0, None, 5, "搖蜜機(固定資產,待建卡)"),
+    ("智慧柴焙灶(含溫控)", "機器設備", "龍眼乾", "2025-08-01", 200000, 80000, None, 5),
+    ("搖蜜機",             "機器設備", "蜂蜜",   "2026-04-20",  20000,     0, None, 5),
 ]
-for name, cat, pgname, adate, cost, grant, sv, life, src_note in assets:
+for name, cat, pgname, adate, cost, grant, sv, life in assets:
     salvage = sv if sv is not None else round(max(0, cost - grant) / (life + 1))
     c.execute("""INSERT INTO fixed_asset(name,category,product_group_id,acquire_date,cost,
-                 grant_amount,salvage,life_years,method,source_purchase_id,payment_account,note)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 grant_amount,salvage,life_years,method,payment_account,note)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
               (name, cat, pg.get(pgname), adate, cost, grant, salvage, life, "平均法",
-               buy_id.get(src_note), "現金", None))
+               "現金", None))
     asset_id = c.lastrowid
     legs = ledger.compose_asset_acquire_entries(cat, cost, grant, "現金")
     add_voucher(adate, legs, "asset_acquire", asset_id, f"設備取得:{name}")
     # 折舊分錄留給 /assets 頁第一次打開時自動補上(sync_depreciation_vouchers),
     # 這裡不預先寫,才是走跟真實使用一樣的路徑
 
-# ---- 庫存異動:每產季分裝一批(A 批),再依訂單出庫 ----------
-import math
-sku_by_id = {v["id"]: k for k, v in prod.items()}
-sold_by_season = {}
-for pid, season, qty in c.execute("""
-        SELECT ol.product_id, o.season, ol.qty
-        FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id""").fetchall():
-    sold_by_season[(pid, season)] = sold_by_season.get((pid, season), 0) + (qty or 0)
-for (pid, season), q_sold in sold_by_season.items():
-    a_batch = c.execute("SELECT batch_id, mfg_date FROM batch WHERE batch_code=?",
-                        (f"{season}-A",)).fetchone()
-    if not a_batch:
-        continue
-    sk = sku_by_id.get(pid, "")
-    is_nonbatch = sk.startswith(("HNY", "GY-FRESH"))
-    # 每項都備 20% 餘量(不做超賣);GY-DRY-300 / GY-GIFT 的 low_stock 門檻較高,
-    # 餘量會落在門檻下 → 觸發「庫存偏低」警示,但不會是負的。
-    factor = 1.2
-    c.execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,note)
-                 VALUES(?,?,?,?,?,?)""",
-              (a_batch[1], pid, (None if is_nonbatch else a_batch[0]), math.ceil(q_sold * factor),
-               ("分裝入庫" if not is_nonbatch else "期初庫存"),
-               f"示範:{season} 產季{'分裝' if not is_nonbatch else '進貨入庫'}"))
-for oid, kind, odate in c.execute(
-        'SELECT order_id, order_kind, order_date FROM "order"').fetchall():
-    mtype = "銷售出庫" if kind == "銷售" else "贈送出庫"
-    for pid, bid, qty in c.execute(
-            "SELECT product_id, batch_id, qty FROM order_line WHERE order_id=?", (oid,)).fetchall():
-        c.execute("""INSERT INTO stock_move(move_date,product_id,batch_id,qty,move_type,ref_order_id)
-                     VALUES(?,?,?,?,?,?)""", (odate, pid, bid, -abs(qty or 0), mtype, oid))
-
 # ---- 9 宮格 B 類示範(各給 1 筆,讓同事一打開就看得到長相)--------
-prod_id = prod["GY-DRY-300"]["id"]
-c.execute("""INSERT INTO stock_move(move_date,product_id,qty,move_type,note)
-             VALUES(?,?,?,'生產入庫',?)""", ("2026-09-05", prod_id, 30, "示範:9 月第一批龍眼乾入庫"))
-move_id = c.lastrowid
-legs = ledger.compose_production_in_entries("龍眼乾", 30 * prod["GY-DRY-300"]["unit_cost"])
-add_voucher("2026-09-05", legs, "production_in", move_id, "生產入庫示範")
-
 c.execute("""INSERT INTO other_income(income_date,category,amount,tax_amount,payment_account,note)
              VALUES(?,?,?,?,?,?)""", ("2026-08-31", "利息收入", 85, 0, "郵局", "示範:8 月存款利息"))
 inc_id = c.lastrowid

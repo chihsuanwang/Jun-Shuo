@@ -156,7 +156,7 @@
 <div class="card">
   <h3 class="serif">各{{ '年度' if view == 'calendar' else '產季' }}合計(含淡月固定成本)</h3>
   <table>
-    <thead><tr><th>{{ '年度' if view == 'calendar' else '產季' }}</th><th>期間</th><th>營收(實收)</th><th>退貨/折讓</th><th>毛利</th><th>運費</th><th>營運費用</th><th>稅前利潤</th></tr></thead>
+    <thead><tr><th>{{ '年度' if view == 'calendar' else '產季' }}</th><th>期間</th><th>營收(實收)</th><th>退款</th><th>毛利</th><th>運費</th><th>營運費用</th><th>稅前利潤</th></tr></thead>
     <tbody>{% for s in seasons_fin %}
       <tr>
         <td>{{ s.year if view == 'calendar' else s.season }}</td>
@@ -187,7 +187,7 @@
 <b>營收只算已收款的訂單</b>(標記已收款時填的實收金額),還沒收到錢的訂單先不算,但照樣可以出貨。
 銷貨成本 / 毛利 / 運費由系統依實際訂單算出;
 <b>營運費用需由郡碩農創逐月填入</b>(「維護營運費用」,淡月也要填)。
-<b>銷貨退回 / 折讓</b>認列在「發生的月份」,好貨退回進庫時成本也回沖 —— 所以沒銷售的月份可能出現負的「銷貨成本」(等於退回沖銷)。目前為示範假資料。</p>
+營收不含銷項稅額。<b>退款</b>(只退錢不退貨)認列在「發生的月份」,從營收扣掉;<b>退回小農</b>(小農還我們成本)也在發生月份從銷貨成本扣掉 —— 所以沒銷售的月份可能出現負的「銷貨成本」。目前為示範假資料。</p>
 
 <script>
 (function () {
@@ -312,7 +312,7 @@
 
     var h = '<table><tbody>' +
       row('營收(實收)', fmt(S.revenue), '', true) +
-      (S.returns ? row('− 銷貨退回與折讓', '− ' + fmt(S.returns)) : '') +
+      (S.returns ? row('− 退款', '− ' + fmt(S.returns)) : '') +
       row('− 銷貨成本', '− ' + fmt(S.cogs)) +
       row('= 毛利(毛利率 ' + (margin * 100).toFixed(0) + '%)', fmt(S.gross_profit), '', true) +
       row('− 運費', '− ' + fmt(S.ship_cost)) +

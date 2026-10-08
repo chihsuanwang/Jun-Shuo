@@ -11,7 +11,7 @@
 {% if request.query_params.get('err') == 'dup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這個名字已經有別的帳戶在用了 —— 是同一家銀行的話,改用下面「併入」,不要改名。</div>{% endif %}
 {% if request.query_params.get('err') == '1' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">併入失敗,請重新選一次。</div>{% endif %}
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">
-  訂單/進貨/營運費用等畫面的「付款帳戶」欄位打過的銀行名稱,第一次用到就會自動出現在這裡、
+  訂單/營運費用/付小農貨款等畫面的「付款帳戶」欄位打過的銀行名稱,第一次用到就會自動出現在這裡、
   自動配一個固定代碼(現金不用列,留白就是現金)——**不用另外「新增」**。代碼配好就不會
   再變,這裡可以改名字(連已經記過的舊傳票一起改,不會拆成兩行),或者發現同一家銀行
   被打成兩個不同名字時「併入」成一個。

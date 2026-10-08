@@ -1,6 +1,13 @@
 """家易照舊填熟悉的業務表單,這裡依對照表把送出的內容組成一組複式分錄,自動記進
 app/schema.sql 的 ledger_entry(總帳)。
 
+**2026-10-08 改成貿易公司模式(同仁試用回饋)**:郡碩沒有存貨,訂單成立當下才向小農
+進貨、轉手賣給客人。訂單成立分錄 = 借應收帳款 / 貸銷貨收入 + 銷項稅額(家易手動填,
+售價含稅),同時借銷貨成本 / 貸應付帳款(欠小農,小農只有一個不分人)。付小農貨款另外
+記(`compose_farmer_payment_entries`)。進貨、庫存、生產入庫、銷貨退回/折讓整批拿掉;
+退貨退款 = 直接刪訂單;只退款不退貨 = 其他損失;退貨不退款 = 貨退給小農、小農退成本
+(沖應付帳款 / 銷貨成本)。下面幾段是改版前的沿革,提到進貨/存貨/生產入庫的部分已不適用。
+
 - 進貨 / 營運費用(方案 B 試點):存檔前在確認畫面給他看、可微調
   (app/templates/ledger_confirm.html)。排除設備採購,那走固定資產,這批不記分錄。
 - 訂單 / 銷售(回合二):不經過確認畫面,存檔時背景自動記——訂單是最高頻操作,
@@ -52,17 +59,6 @@ from db import q, q1, execute
 CASH_ACCOUNT = ("1102", "現金")   # 正式表這個代碼叫「零用金」,沿用「現金」這個家易更好懂的講法
 TAX_INPUT_ACCOUNT = ("1423", "進項稅額")   # 原本誤用 1150(正式表沒有這個碼);1423 才是進項稅額
 
-# 進貨類別 -> 借方科目(存貨 / 採購成本類)。is_fixed_asset=1 的不查這張表——
-# 設備採購不產生分錄,交給固定資產那條路。正式表沒有「包材」「委外加工」專門科目:
-# 包材先併記原料;委外加工完成前算「在製品」(1314)成本。
-PURCHASE_ACCOUNTS = {
-    "原料":    ("1315", "原料"),
-    "包材":    ("1315", "原料"),
-    "委外加工": ("1314", "在製品"),
-    "服務":    ("6188", "其他費用"),
-    "其他":    ("6188", "其他費用"),
-}
-
 # 營運費用類別(對應 queries.OPEX_CATS)-> 借方費用科目。直接人工/人事共用「薪資支出」
 # (6110),用子科目分開,比照正式表 6188 那組子科目的做法。「研發」類別 2026-09-21 已確認:
 # 申報表那筆 78 萬研發費其實是烘焙機器的零件/組裝費用,該走固定資產(逐年提折舊),不該算
@@ -72,8 +68,8 @@ PURCHASE_ACCOUNTS = {
 # 「田間管理」2026-10-01 已經**拿掉**,不是改掛別的科目:郡碩的商業實質是公司跟小農
 # (中寮果農合作社)採購農產品/加工品,小農自己生產、自己承擔田間管理成本;公司只負責
 # 檢驗/包裝/行銷/銷售,不會有一筆「公司自己做田間管理」的費用。這筆成本已經包含在付給
-# 小農的採購價裡——走 PURCHASE_ACCOUNTS["原料"](1315 原料),doc_type 選「農民收據」
-# 即可,不需要另一個營運費用科目(seed.py 的「中寮果農合作社」進貨單就是示範)。
+# 小農的採購價裡——2026-10-08 起是訂單成立時自動記的「銷貨成本 / 應付帳款」,
+# 不需要另一個營運費用科目。
 EXPENSE_ACCOUNTS = {
     "直接人工":   ("6110-01", "薪資支出-直接人工"),
     "人事":       ("6110-02", "薪資支出-人事"),
@@ -116,6 +112,14 @@ AR_ACCOUNT = ("1172", "應收帳款")
 # 銷貨成本(COGS 借方)——不依產品線拆,同事「會計科目表」正式版裡只有一條
 COGS_EXPENSE_ACCOUNT = ("5111", "銷貨成本")
 
+# 應付帳款(2026-10-08 貿易公司模式):訂單成立時向小農進貨的成本記在這裡(貸方),
+# 付小農貨款時沖掉(借方)。小農只有一個,不分人。
+AP_ACCOUNT = ("2171", "應付帳款")
+
+# 只退款不退貨(2026-10-08):不管退多少一律算其他支出。同事會計科目表沒有「其他支出」,
+# 先用最接近的 6499 其他損失;之後拿到完整科目表再改這裡就好。
+REFUND_LOSS_ACCOUNT = ("6499", "其他損失")
+
 # 產品線 -> 銷貨收入科目(貸方)。沒歸屬產品線的商品用 REVENUE_DEFAULT。
 REVENUE_ACCOUNTS = {
     "龍眼鮮果": ("4111-01", "銷貨收入-龍眼鮮果"),
@@ -124,19 +128,6 @@ REVENUE_ACCOUNTS = {
     "蜂蜜":     ("4111-04", "銷貨收入-蜂蜜"),
 }
 REVENUE_DEFAULT = ("4110", "銷貨收入")
-
-# 銷貨退回 / 折讓(借方,沖減營收)——兩個代碼正式科目表都有
-RETURN_ACCOUNTS = {"退貨": ("4170", "銷貨退回"), "折讓": ("4190", "銷貨折讓")}
-
-# 產品線 -> 存貨科目(COGS 貸方,對應同事「F存貨管理」那張的科目系列)
-COGS_INVENTORY_ACCOUNTS = {
-    "龍眼鮮果": ("1315-01", "原料-龍眼鮮果"),
-    "龍眼乾":   ("1311-01", "製成品-龍眼乾"),
-    "龍眼肉":   ("1311-02", "製成品-龍眼肉"),
-    "蜂蜜":     ("1301-01", "商品-蜂蜜"),
-}
-COGS_INVENTORY_DEFAULT = ("1300", "存貨")
-
 
 def _cash_account(payment_account):
     """現金或某家銀行的科目代碼。銀行帳戶 2026-09-23 起各自有固定子代碼(比照同事正式表
@@ -156,23 +147,6 @@ def _cash_account(payment_account):
     return (code, f"銀行存款-{name}")
 
 
-def compose_purchase_entries(category, amount, tax_amount=0, payment_account=None, is_fixed_asset=False):
-    """回傳一組分錄草稿(list of dict: account_code/account_name/debit/credit)。
-    設備採購(is_fixed_asset)不在這批範圍,回傳空 list。"""
-    if is_fixed_asset:
-        return []
-    amount = amount or 0
-    tax_amount = tax_amount or 0
-    code, name = PURCHASE_ACCOUNTS.get(category, PURCHASE_ACCOUNTS["其他"])
-    cash_code, cash_name = _cash_account(payment_account)
-    legs = [dict(account_code=code, account_name=name, debit=amount, credit=0)]
-    if tax_amount:
-        legs.append(dict(account_code=TAX_INPUT_ACCOUNT[0], account_name=TAX_INPUT_ACCOUNT[1],
-                          debit=tax_amount, credit=0))
-    legs.append(dict(account_code=cash_code, account_name=cash_name, debit=0, credit=amount + tax_amount))
-    return legs
-
-
 def compose_expense_entries(category, amount, tax_amount=0, payment_account=None):
     amount = amount or 0
     tax_amount = tax_amount or 0
@@ -186,47 +160,52 @@ def compose_expense_entries(category, amount, tax_amount=0, payment_account=None
     return legs
 
 
-def compose_order_sale_entries(lines, order_kind, shipping_cost=0, ship_payer="店家吸收"):
+def compose_order_sale_entries(lines, order_kind, shipping_cost=0, ship_payer="店家吸收", sales_tax=0):
     """訂單成立分錄:不管收沒收到錢都記。lines 是每個訂單明細的
-    (product_group_name 或 None, revenue, cogs) 三元組列表。
+    (product_group_name 或 None, revenue, cogs) 三元組列表,revenue 是含稅金額。
     order_kind 不是「銷售」(贈送/樣品/內部領用等)回傳空 list,不記這筆。
-    shipping_cost(2026-10-02 新增):訂單的「運費(花多少錢)」欄位——家易出貨當下
-    現場付現(拿去超商或叫物流來收),真的有花錢就跟著這張傳票一起記借:運費
-    / 貸:現金,不然這筆真實的現金支出完全不會進總帳(本來只進 queries.py 的
-    管理報表,正式帳本看不到)。只處理「銷售」訂單;贈送/樣品等非銷售訂單即使
-    有填運費,目前還是不記(那批訂單整張傳票都不記,維持原本的簡化規則)。
-    ship_payer(2026-10-03 新增)=「客戶付」時,客人真正付的錢裡含運費,應收帳款
-    (`order_total`,main.py 那邊已經把運費算進去)要跟著多收這筆,運費科目則借貸
-    各記一次互相沖平——家易還是要真的付錢給物流商(借運費/貸現金不變),但客人
-    多付的這筆用貸記同一個運費科目沖銷,淨額歸零,對公司損益沒有影響,正確反映
-    「這筆錢只是經手、不是公司賺的或花的」。"""
+
+    2026-10-08 貿易公司模式(見檔頭):
+    - 售價含稅,sales_tax 是家易在訂單上手動填的銷項稅額(系統不算)。應收帳款記含稅
+      全額;貸方拆成銷項稅額 + 銷貨收入,銷貨收入依各產品線含稅金額佔比扣掉稅額,
+      尾差併進金額最大的那條線,確保借貸平衡。
+    - 成本不再沖存貨,改成借銷貨成本 / 貸應付帳款(欠小農)。
+    shipping_cost(2026-10-02):運費 > 0 時跟著記借:運費 / 貸:現金。
+    ship_payer='客戶付'(2026-10-03):應收帳款多收這筆運費,運費科目借貸互相沖平。"""
     if order_kind != "銷售":
         return []
-    rev_by_line, cogs_by_line = {}, {}
+    rev_by_line = {}
     total_rev, total_cogs = 0.0, 0.0
     for pg_name, revenue, cogs in lines:
         revenue, cogs = revenue or 0, cogs or 0
         rev_by_line[pg_name] = rev_by_line.get(pg_name, 0) + revenue
-        cogs_by_line[pg_name] = cogs_by_line.get(pg_name, 0) + cogs
         total_rev += revenue
         total_cogs += cogs
     shipping_cost = shipping_cost or 0
+    sales_tax = sales_tax or 0
     if total_rev == 0 and total_cogs == 0 and shipping_cost <= 0:
         return []
     legs = [dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=total_rev, credit=0)]
+    if sales_tax:
+        legs.append(dict(account_code=SALES_TAX_OUTPUT_ACCOUNT[0], account_name=SALES_TAX_OUTPUT_ACCOUNT[1],
+                          debit=0, credit=sales_tax))
+    net_by_line = {}
     for pg_name, amt in rev_by_line.items():
-        if amt == 0:
-            continue
+        if amt:
+            net_by_line[pg_name] = round(amt - (sales_tax * amt / total_rev if total_rev else 0), 2)
+    if net_by_line:
+        diff = round(total_rev - sales_tax - sum(net_by_line.values()), 2)
+        if diff:
+            biggest = max(net_by_line, key=lambda k: abs(rev_by_line[k]))
+            net_by_line[biggest] = round(net_by_line[biggest] + diff, 2)
+    for pg_name, amt in net_by_line.items():
         code, name = REVENUE_ACCOUNTS.get(pg_name, REVENUE_DEFAULT)
         legs.append(dict(account_code=code, account_name=name, debit=0, credit=amt))
     if total_cogs:
         legs.append(dict(account_code=COGS_EXPENSE_ACCOUNT[0], account_name=COGS_EXPENSE_ACCOUNT[1],
                           debit=total_cogs, credit=0))
-        for pg_name, amt in cogs_by_line.items():
-            if amt == 0:
-                continue
-            code, name = COGS_INVENTORY_ACCOUNTS.get(pg_name, COGS_INVENTORY_DEFAULT)
-            legs.append(dict(account_code=code, account_name=name, debit=0, credit=amt))
+        legs.append(dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1],
+                          debit=0, credit=total_cogs))
     if shipping_cost > 0:
         ship_code, ship_name = EXPENSE_ACCOUNTS["運費"]
         if ship_payer == "客戶付":
@@ -249,11 +228,19 @@ def compose_order_payment_entries(paid_amount, payment_account=None):
     ]
 
 
-# ---------- 9 宮格 B 類(生產入庫 / 其他收益 / 資本異動 / 帳務調整)------
+def compose_farmer_payment_entries(amount, payment_account=None):
+    """付小農貨款(2026-10-08):借應付帳款 / 貸現金或銀行。"""
+    amount = amount or 0
+    if amount <= 0:
+        return []
+    cash_code, cash_name = _cash_account(payment_account)
+    return [
+        dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1], debit=amount, credit=0),
+        dict(account_code=cash_code, account_name=cash_name, debit=0, credit=amount),
+    ]
 
-# 生產入庫的貸方——同事表裡叫「淨FV利益」。2026-09-23 同事更新檔給了專門科目,不用再掛在
-# 「其他利益(6498)」下面代打。
-PRODUCTION_GAIN_ACCOUNT = ("7250", "生物資產淨FV利益")
+
+# ---------- 9 宮格 B 類(其他收益 / 資本異動 / 帳務調整)------
 
 # 其他收益的銷項稅額(貸方)——跟進貨/費用的進項稅額(借方)相對
 SALES_TAX_OUTPUT_ACCOUNT = ("2214", "銷項稅額")
@@ -286,19 +273,6 @@ FIXED_ASSET_DEFAULT = ("1616", "機器設備")
 # 比照正式表自己的 1405生產性生物資產/1406累計折舊-生產性生物資產那組命名模式類推)
 DEPRECIATION_EXPENSE_ACCOUNT = ("6124", "折舊")
 ACCUM_DEP_ACCOUNT = ("1616-99", "累計折舊")
-
-
-def compose_production_in_entries(pg_name, amount):
-    """生產入庫:借存貨(依產品線)/貸其他利益。amount<=0 回傳空 list。"""
-    amount = amount or 0
-    if amount <= 0:
-        return []
-    code, name = COGS_INVENTORY_ACCOUNTS.get(pg_name, COGS_INVENTORY_DEFAULT)
-    return [
-        dict(account_code=code, account_name=name, debit=amount, credit=0),
-        dict(account_code=PRODUCTION_GAIN_ACCOUNT[0], account_name=PRODUCTION_GAIN_ACCOUNT[1],
-             debit=0, credit=amount),
-    ]
 
 
 def compose_other_income_entries(category, amount, tax_amount=0, payment_account=None):
@@ -380,27 +354,32 @@ def compose_depreciation_entries(monthly_amount):
     ]
 
 
-def compose_sales_return_entries(kind, amount, already_paid, payment_account=None,
-                                  cogs_amount=0, pg_name=None):
-    """銷貨退回/折讓:借銷貨退回或折讓/貸現金(已收款,真的退錢)或應收帳款(還沒收款,
-    折抵欠款)。好貨退回可再賣(restock)時,再鏡射訂單成立那組分錄,借存貨/貸銷貨成本
-    把成本沖回。"""
+RETURN_KINDS = ("退款", "退回小農")
+
+
+def compose_sales_return_entries(kind, amount, already_paid, payment_account=None):
+    """訂單的退款 / 退貨(2026-10-08 貿易公司模式,取代原本的銷貨退回/折讓):
+    - 「退款」= 只退款不退貨,不管退多少一律算其他支出:借其他損失 / 貸現金或銀行
+      (已收款,真的退錢)或應收帳款(還沒收款,少收這筆)。
+    - 「退回小農」= 退貨但不退款給客人,貨退給小農、小農把採購成本還給郡碩:
+      借應付帳款 / 貸銷貨成本。
+    退貨又退款不走這裡,直接刪訂單(總帳一起刪)。"""
     amount = amount or 0
     if amount <= 0:
         return []
-    code, name = RETURN_ACCOUNTS.get(kind, RETURN_ACCOUNTS["退貨"])
-    legs = [dict(account_code=code, account_name=name, debit=amount, credit=0)]
+    if kind == "退回小農":
+        return [
+            dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1], debit=amount, credit=0),
+            dict(account_code=COGS_EXPENSE_ACCOUNT[0], account_name=COGS_EXPENSE_ACCOUNT[1],
+                 debit=0, credit=amount),
+        ]
+    legs = [dict(account_code=REFUND_LOSS_ACCOUNT[0], account_name=REFUND_LOSS_ACCOUNT[1],
+                 debit=amount, credit=0)]
     if already_paid:
         cash_code, cash_name = _cash_account(payment_account)
         legs.append(dict(account_code=cash_code, account_name=cash_name, debit=0, credit=amount))
     else:
         legs.append(dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=0, credit=amount))
-    cogs_amount = cogs_amount or 0
-    if cogs_amount > 0:
-        inv_code, inv_name = COGS_INVENTORY_ACCOUNTS.get(pg_name, COGS_INVENTORY_DEFAULT)
-        legs.append(dict(account_code=inv_code, account_name=inv_name, debit=cogs_amount, credit=0))
-        legs.append(dict(account_code=COGS_EXPENSE_ACCOUNT[0], account_name=COGS_EXPENSE_ACCOUNT[1],
-                          debit=0, credit=cogs_amount))
     return legs
 
 
@@ -441,13 +420,11 @@ def compose_year_closing_entries(year):
 def _all_accounts():
     """攤平現有所有科目常數,去重、依代碼排序,給「帳務調整」畫面的科目下拉用。"""
     pairs = [CASH_ACCOUNT, TAX_INPUT_ACCOUNT, AR_ACCOUNT, COGS_EXPENSE_ACCOUNT,
-             REVENUE_DEFAULT, COGS_INVENTORY_DEFAULT, PRODUCTION_GAIN_ACCOUNT,
+             REVENUE_DEFAULT, AP_ACCOUNT, REFUND_LOSS_ACCOUNT,
              SALES_TAX_OUTPUT_ACCOUNT, EQUITY_STOCK_ACCOUNT, EQUITY_RESERVE_ACCOUNT,
              EQUITY_RETAINED_ACCOUNT, FIXED_ASSET_DEFAULT, DEPRECIATION_EXPENSE_ACCOUNT,
              ACCUM_DEP_ACCOUNT]
-    for d in (PURCHASE_ACCOUNTS, EXPENSE_ACCOUNTS, REVENUE_ACCOUNTS,
-              COGS_INVENTORY_ACCOUNTS, OTHER_INCOME_ACCOUNTS, FIXED_ASSET_ACCOUNTS,
-              RETURN_ACCOUNTS):
+    for d in (EXPENSE_ACCOUNTS, REVENUE_ACCOUNTS, OTHER_INCOME_ACCOUNTS, FIXED_ASSET_ACCOUNTS):
         pairs.extend(d.values())
     seen, out = set(), []
     for code, name in pairs:

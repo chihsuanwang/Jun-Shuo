@@ -5,6 +5,7 @@
 <hr class="rule">
 {% if request.query_params.get('ok') %}<div class="ok">訂單已建立。</div>{% endif %}
 {% if request.query_params.get('err') == 'required' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請選擇客戶與銷售管道。</div>{% endif %}
+{% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
 
 <form method="post" action="/orders">
@@ -34,14 +35,13 @@
 <div class="card" style="margin-bottom:16px">
   <h3 class="serif">訂單明細</h3>
   <table>
-    <thead><tr><th>品項</th><th>現貨</th><th>數量</th><th>單價</th><th>小計</th><th></th></tr></thead>
+    <thead><tr><th>品項</th><th>數量</th><th>單價</th><th>小計</th><th></th></tr></thead>
     <tbody id="lines">
     {% for i in range(3) %}
       <tr class="line">
         <td><select name="product_id"><option value="">—</option>
           {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
         </select></td>
-        <td class="stockhint muted">—</td>
         <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
         <td class="linesub r">0</td>
@@ -49,7 +49,7 @@
       </tr>
     {% endfor %}
     </tbody>
-    <tfoot><tr><td colspan="4" class="r"><b>應收合計</b></td><td class="r"><b id="ordertotal">0</b></td><td></td></tr></tfoot>
+    <tfoot><tr><td colspan="3" class="r"><b>應收合計(含稅)</b></td><td class="r"><b id="ordertotal">0</b></td><td></td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
 </div>
@@ -84,6 +84,8 @@
         </label>
       </div>
       <div><label id="taxDocLabel">發票號碼(選填)</label><input name="tax_doc_no" id="taxDocNo"></div>
+      <div><label>銷項稅額<span class="muted">(售價裡含的稅)</span></label><input name="sales_tax" type="number" step="1" min="0" value="0">
+        <div class="muted" style="font-size:11px;margin-top:3px">售價都是含稅價,這張訂單的稅額請自己填</div></div>
     </div>
   </div>
 </div>
@@ -102,7 +104,6 @@
       if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
     });
     var subCell = clone.querySelector('.linesub'); if (subCell) subCell.textContent = '0';
-    var hintCell = clone.querySelector('.stockhint'); if (hintCell) { hintCell.textContent = '—'; hintCell.style.color = ''; }
     body.appendChild(clone);
   });
   body.addEventListener('click', function (e) {
@@ -114,7 +115,6 @@
       lastRow.querySelectorAll('select,input').forEach(function (el) {
         if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
       });
-      var hintCell = lastRow.querySelector('.stockhint'); if (hintCell) { hintCell.textContent = '—'; hintCell.style.color = ''; }
     }
     recalc();
   });
@@ -147,24 +147,15 @@
   if (shipPayerSel) shipPayerSel.addEventListener('change', recalc);
   if (shipCostInput) shipCostInput.addEventListener('input', recalc);
 
-  // --- 依客戶分級自動帶標準價 + 現貨提示 ---
+  // --- 依客戶分級自動帶標準價 ---
   var PRICES = {{ prices_json | safe }};
   var CUSTSEG = {{ cust_seg_json | safe }};
-  var STOCK = {{ stock_json | safe }};
   var custId = document.getElementById('custId');
 
   function seg() { return CUSTSEG[custId.value] || '零售'; }
   function fillRow(row, force) {
     var pid = row.querySelector('select[name="product_id"]').value;
     var priceInput = row.querySelector('input[name="unit_price"]');
-    var hint = row.querySelector('.stockhint');
-    if (hint) {
-      if (pid && STOCK[pid] != null) {
-        var s = Math.round(STOCK[pid]);
-        hint.textContent = s;
-        hint.style.color = s <= 0 ? 'var(--seal)' : '';
-      } else { hint.textContent = '—'; hint.style.color = ''; }
-    }
     if (!pid) return;
     var std = PRICES[pid] && PRICES[pid][seg()];
     if (std == null) return;

@@ -1,19 +1,21 @@
 {% extends "base.html" %}
-{% block title %}退貨 / 折讓 · 桂圓帳房{% endblock %}
+{% block title %}退款 / 退回小農 · 桂圓帳房{% endblock %}
 {% block body %}
 <div class="head">
-  <div><div class="sup">桂圓帳房 / 每天做的</div><h1 class="serif">退貨 / 折讓</h1></div>
+  <div><div class="sup">桂圓帳房 / 出貨 / 退貨</div><h1 class="serif">退款 / 退回小農</h1></div>
 </div>
 <hr class="rule">
-<p class="muted" style="font-size:13px;margin:-4px 0 16px">
-  從訂單明細頁登記(訂單 → 點單號 → 最下方「退貨 / 折讓」)。金額在<b>發生日期</b>的月份 / 產季沖減營收。
+<p class="muted" style="font-size:13px;margin:-4px 0 16px;line-height:1.7">
+  從訂單明細頁登記(訂單 → 點單號 → 最下方「退款 / 退回小農」)。<br>
+  <b>退貨又退款</b>:直接刪掉那張訂單就好,總帳會一起刪,不會出現在這裡。<br>
+  <b>退款</b>(只退錢、貨不用退回):不管退多少都算其他支出。
+  <b>退回小農</b>(客人退貨但不退錢):貨退給小農,小農把成本還給我們。
 </p>
 
 <div class="card" style="overflow-x:auto">
   <table>
     <thead><tr>
-      <th>發生日</th><th>單號</th><th>客戶</th><th>類型</th><th>退回品項</th><th>進庫</th>
-      <th>沖減金額</th><th>原因</th>
+      <th>發生日</th><th>單號</th><th>客戶</th><th>類型</th><th>金額</th><th>原因</th>
     </tr></thead>
     <tbody>{% for r in rows %}
     <tr>
@@ -21,14 +23,14 @@
       <td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td>
       <td style="text-align:left">{{ r.cust or '—' }}</td>
       <td>{{ r.kind }}</td>
-      <td style="text-align:left">{% if r.pname %}{{ r.pname }} ×{{ r.qty|round(0)|int }}{% if r.batch_code %} <span class="muted">{{ r.batch_code }}批</span>{% endif %}{% else %}—{% endif %}</td>
-      <td>{{ '是' if r.restock else '否' }}</td>
-      <td class="neg">−{{ r.amount|money }}</td>
+      <td class="{{ 'neg' if r.kind == '退款' }}">{{ '−' if r.kind == '退款' else '+' }}{{ r.amount|money }}</td>
       <td class="muted" style="text-align:left">{{ r.reason or '' }}</td>
     </tr>
-    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">還沒有退貨 / 折讓紀錄。</td></tr>{% endfor %}</tbody>
-    {% if rows %}<tfoot><tr class="sum"><td colspan="6" style="text-align:right">合計沖減</td>
-      <td class="neg">−{{ total|money }}</td><td></td></tr></tfoot>{% endif %}
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">還沒有退款 / 退回小農的紀錄。</td></tr>{% endfor %}</tbody>
+    {% if rows %}<tfoot>
+      <tr class="sum"><td colspan="4" style="text-align:right">退給客人合計</td><td class="neg">−{{ refund_total|money }}</td><td></td></tr>
+      <tr class="sum"><td colspan="4" style="text-align:right">小農退回成本合計</td><td>+{{ farmer_total|money }}</td><td></td></tr>
+    </tfoot>{% endif %}
   </table>
 </div>
 {% endblock %}

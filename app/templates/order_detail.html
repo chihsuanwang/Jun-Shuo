@@ -24,7 +24,7 @@
           onsubmit="return confirm('確定要複製這張訂單嗎?會建立一張新的訂單(品項、客戶、管道相同,收款/出貨狀態重新開始)。')">
       <button type="submit" class="ghost">複製訂單</button></form>
     <form method="post" action="/orders/{{ o.order_id }}/delete" style="display:inline"
-          onsubmit="return confirm('確定要刪除這張訂單嗎?刪除後無法復原,連同品項、退貨紀錄、庫存異動一起刪掉。')">
+          onsubmit="return confirm('確定要刪除這張訂單嗎?刪除後無法復原,連同品項、退款紀錄、總帳傳票一起刪掉。')">
       <button type="submit" class="ghost" style="color:var(--seal);border-color:var(--seal)">刪除訂單</button></form>
   </div>
 </div>
@@ -33,10 +33,11 @@
 {% if request.query_params.get('done') == 'paid' %}<div class="ok">已標記收款。</div>{% endif %}
 {% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請輸入實收金額(要大於 0)。</div>{% endif %}
 {% if request.query_params.get('done') == 'shipped' %}<div class="ok">已標記為「已出貨」,出貨日填今天。</div>{% endif %}
-{% if request.query_params.get('rok') %}<div class="ok">退貨 / 折讓已登記。</div>{% endif %}
-{% if request.query_params.get('rerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">沖減金額要大於 0。</div>{% endif %}
+{% if request.query_params.get('rok') %}<div class="ok">已登記,總帳也已經記好。</div>{% endif %}
+{% if request.query_params.get('rerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">金額要大於 0。</div>{% endif %}
 {% if request.query_params.get('payerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">收款狀態選了「已收款 / 部分收款」,但沒填實收金額——請在下面「收款」卡填金額,或改用上面「標記已收款」按鈕。</div>{% endif %}
 {% if request.query_params.get('shiperr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">出貨狀態選了「已出貨」,但出貨方式 / 出貨日沒填——請在下面「出貨」卡補上,或改用上面「標記已出貨」按鈕。</div>{% endif %}
+{% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
 
 <form method="post" action="/orders/{{ o.order_id }}" id="orderForm">
@@ -57,14 +58,13 @@
 <div class="card" style="margin-bottom:16px">
   <h3 class="serif">品項</h3>
   <table>
-    <thead><tr><th>品項</th><th>現貨</th><th>數量</th><th>單價</th><th>小計</th><th>贈品</th><th></th></tr></thead>
+    <thead><tr><th>品項</th><th>數量</th><th>單價</th><th>小計</th><th>贈品</th><th></th></tr></thead>
     <tbody id="lines">
     {% for l in lines %}
       <tr class="line">
         <td><select name="product_id">
           {% for p in products %}<option value="{{ p.product_id }}" {{ 'selected' if p.product_id==l.product_id }}>{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
         </select></td>
-        <td class="stockhint muted">—</td>
         <td><input name="qty" type="number" step="1" min="0" value="{{ l.qty|round(0)|int }}"></td>
         <td><input name="unit_price" type="number" step="1" min="0" value="{{ l.unit_price|round(0) }}"></td>
         <td class="linesub r">{{ (l.qty * l.unit_price)|round(0)|int }}</td>
@@ -75,7 +75,6 @@
     {% if not lines %}
       <tr class="line">
         <td><select name="product_id">{% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}</select></td>
-        <td class="stockhint muted">—</td>
         <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
         <td class="linesub r">0</td>
@@ -84,7 +83,7 @@
       </tr>
     {% endif %}
     </tbody>
-    <tfoot><tr><td colspan="4" class="r"><b>應收合計(不含贈品)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="2"></td></tr></tfoot>
+    <tfoot><tr><td colspan="3" class="r"><b>應收合計(含稅,不含贈品)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="2"></td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
   <p class="muted" style="font-size:11px;margin-top:6px">改完按上方「儲存」,應收合計會重算。</p>
@@ -102,6 +101,7 @@
         {% for p in pay_status %}<option {{ 'selected' if o.payment_status==p }}>{{ p }}</option>{% endfor %}</select></div>
       <div><label>收款日</label><input type="date" name="paid_date" id="paidDateField" value="{{ o.paid_date or '' }}"></div>
       <div><label>實收金額</label><input name="paid_amount" type="number" id="paidAmountField" value="{{ o.paid_amount or '' }}"></div>
+      <div><label>銷項稅額<span class="muted">(售價裡含的稅)</span></label><input name="sales_tax" type="number" step="1" min="0" value="{{ (o.sales_tax or 0)|round(0)|int }}"></div>
       <div style="display:flex;align-items:flex-end;padding-bottom:9px">
         <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
           <input type="checkbox" name="invoiced" id="invoicedBox" value="1" style="width:auto" {{ 'checked' if o.invoiced }}> 已開發票
@@ -133,53 +133,40 @@
 
 <div class="card" style="margin:18px 0 16px">
   <div style="display:flex;justify-content:space-between;align-items:baseline">
-    <h3 class="serif">退貨 / 折讓</h3>
-    <a href="/returns" style="font-size:12px">全部退貨紀錄 →</a>
+    <h3 class="serif">退款 / 退回小農</h3>
+    <a href="/returns" style="font-size:12px">全部紀錄 →</a>
   </div>
   {% if returns %}
   <table style="margin-bottom:14px">
-    <thead><tr><th>發生日</th><th>類型</th><th>退回品項</th><th>進庫</th><th>沖減金額</th><th>原因</th><th></th></tr></thead>
+    <thead><tr><th>發生日</th><th>類型</th><th>金額</th><th>原因</th><th></th></tr></thead>
     <tbody>{% for r in returns %}
     <tr>
       <td>{{ r.return_date }}</td>
       <td>{{ r.kind }}</td>
-      <td>{% if r.pname %}{{ r.pname }} ×{{ r.qty|round(0)|int }}{% if r.batch_code %} <span class="muted">{{ r.batch_code }}批</span>{% endif %}{% else %}—{% endif %}</td>
-      <td>{{ '是' if r.restock else '否' }}</td>
-      <td class="neg">−{{ r.amount|money }}</td>
+      <td class="{{ 'neg' if r.kind == '退款' }}">{{ '−' if r.kind == '退款' else '+' }}{{ r.amount|money }}</td>
       <td class="muted" style="text-align:left">{{ r.reason or '' }}</td>
       <td><form method="post" action="/returns/{{ r.return_id }}/delete" style="display:inline"
-            onsubmit="return confirm('刪除這筆退貨 / 折讓?（進庫的貨也會一起退掉）')">
+            onsubmit="return confirm('刪除這筆{{ r.kind }}紀錄?總帳的傳票也會一起刪掉。')">
           <input type="hidden" name="next" value="/orders/{{ o.order_id }}">
           <button class="ghost" style="padding:4px 10px">刪</button></form></td>
     </tr>
     {% endfor %}</tbody>
   </table>
   {% endif %}
-  <form method="post" action="/orders/{{ o.order_id }}/return_all"
-        onsubmit="return confirm('整筆退單:這張訂單的所有品項都會退貨入庫、金額全額沖銷,確定嗎?')">
-    <button type="submit" class="ghost">整筆退單(全退)</button>
-    <span class="muted" style="font-size:12px;margin-left:8px">貨全部退回庫存、金額全額沖銷 —— 適合客人整張訂單退貨的情況</span>
+  <form method="post" action="/orders/{{ o.order_id }}/return">
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(155px,1fr))">
+      <div><label>發生日期</label><input type="date" name="return_date" value="{{ today }}"></div>
+      <div><label>類型</label><select name="kind">{% for k in return_kinds %}<option>{{ k }}</option>{% endfor %}</select></div>
+      <div><label>金額</label><input name="amount" type="number" step="1" min="0" required></div>
+      <div style="grid-column:1/-1"><label>原因</label><input name="reason" placeholder="客訴 / 破損 / 品質問題 …"></div>
+    </div>
+    <button type="submit" style="margin-top:10px">登記</button>
   </form>
-  <details style="margin-top:14px">
-    <summary class="muted" style="font-size:12px;cursor:pointer">只退部分品項 / 折讓(進階)</summary>
-    <form method="post" action="/orders/{{ o.order_id }}/return" style="margin-top:10px">
-      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(155px,1fr))">
-        <div><label>發生日期</label><input type="date" name="return_date" value="{{ today }}"></div>
-        <div><label>類型</label><select name="kind">{% for k in return_kinds %}<option>{{ k }}</option>{% endfor %}</select></div>
-        <div><label>沖減金額</label><input name="amount" type="number" step="1" min="0" required></div>
-        <div><label>退回品項<span class="muted">（有退實體貨才選）</span></label><select name="product_id"><option value="">—</option>
-          {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}</option>{% endfor %}</select></div>
-        <div><label>數量</label><input name="qty" type="number" step="0.01" min="0"></div>
-        <div><label>貨可再賣</label><select name="restock">
-          <option value="">否(折讓 / 報廢)</option><option value="1">是,加回庫存</option></select></div>
-        <div style="grid-column:1/-1"><label>原因</label><input name="reason" placeholder="客訴 / 破損 / 客戶退貨 …"></div>
-      </div>
-      <button type="submit" style="margin-top:10px">登記退貨 / 折讓</button>
-    </form>
-  </details>
-  <p class="muted" style="font-size:11px;margin-top:8px">
-    在「發生日期」的月份 / 產季沖減營收(不是原訂單月份)。「是,加回庫存」= 好貨退回可再賣 →
-    自動產生「退貨入庫」、成本也回沖;否 = 折讓或報廢,只沖營收。
+  <p class="muted" style="font-size:12px;margin-top:10px;line-height:1.7">
+    <b>退貨又退款</b>:不用在這裡登記,直接按最上面的「刪除訂單」,總帳會一起刪掉。<br>
+    <b>退款</b>(只退錢、貨不用退回):金額填退給客人多少,不管多少都算「其他支出」。<br>
+    <b>退回小農</b>(客人退貨但不退錢):貨退給小農,金額填小農退還給我們的成本。
+    這張訂單的成本合計是 {{ order_cost|money }} 元,全部退回就填這個數字。
   </p>
 </div>
 
@@ -193,7 +180,6 @@
       if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
     });
     var subCell = clone.querySelector('.linesub'); if (subCell) subCell.textContent = '0';
-    var hintCell = clone.querySelector('.stockhint'); if (hintCell) { hintCell.textContent = '—'; hintCell.style.color = ''; }
     body.appendChild(clone);
   });
   body.addEventListener('click', function (e) {
@@ -201,23 +187,6 @@
     var rows = body.querySelectorAll('tr.line');
     if (rows.length > 1) e.target.closest('tr').remove();
     recalc();
-  });
-
-  // --- 現貨提示 ---
-  var STOCK = {{ stock_json | safe }};
-  function fillStock(row) {
-    var pid = row.querySelector('select[name="product_id"]').value;
-    var hint = row.querySelector('.stockhint');
-    if (!hint) return;
-    if (pid && STOCK[pid] != null) {
-      var s = Math.round(STOCK[pid]);
-      hint.textContent = s;
-      hint.style.color = s <= 0 ? 'var(--seal)' : '';
-    } else { hint.textContent = '—'; hint.style.color = ''; }
-  }
-  body.querySelectorAll('tr.line').forEach(fillStock);
-  body.addEventListener('change', function (e) {
-    if (e.target.name === 'product_id') fillStock(e.target.closest('tr'));
   });
 
   // --- 小計與應收合計(不含贈品) ---
