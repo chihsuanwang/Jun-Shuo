@@ -2080,6 +2080,69 @@ def cash_page(request: Request):
         request=request, active="cash", accounts=accounts, sel=sel, rows=rows, bal=bal))
 
 
+# ---------- 科目明細(2026-10-16,照 1015 版各明細工作表的「產出報表樣式」)---------
+#   選一個科目,列出它的每一筆交易 + 累計餘額。銀行帳戶、應收帳款、進銷項稅額、採購成本、
+#   業外收益…都可以從這頁看(對應 Excel 的 C / E / G、P / VA / UB 那幾張表)。
+@app.get("/account-ledger", response_class=HTMLResponse)
+def account_ledger_page(request: Request):
+    code = request.query_params.get("code") or "1102"
+    lo = request.query_params.get("from") or ""
+    hi = request.query_params.get("to") or ""
+    acct = q1("SELECT code, name, grp FROM account WHERE code=?", (code,)) or \
+        dict(code=code, name=q1("SELECT account_name n FROM ledger_entry WHERE account_code=? LIMIT 1",
+                                (code,)).get("n") or code, grp="")
+    d = Q.account_ledger(code, lo or None, hi or None)
+    inv = _ledger_invoice_map()
+    for r in d["rows"]:
+        r["invoice_no"] = inv.get((r["source_type"], r["source_id"]), "")
+        r["src_label"] = LEDGER_SOURCES.get(r["source_type"], r["source_type"])
+    used = {r["account_code"] for r in q("SELECT DISTINCT account_code FROM ledger_entry")}
+    groups = [dict(key=k, label=lbl, accts=[a for a in chart.accounts([k], active_only=False)
+                                              if a["code"] not in chart.COMPUTED_CODES])
+              for k, lbl in chart.GROUPS]
+    return tpl.TemplateResponse("account_ledger.html", dict(
+        request=request, active="acctledger", acct=acct, d=d, lo=lo, hi=hi,
+        groups=[g for g in groups if g["accts"]], used=used))
+
+
+# ---------- 應收帳款(2026-10-16,照 1015 版「E 應收帳款」工作表)-----------------
+#   尚未收回 / 已收回兩區。勾選未收的帳款 → 跳出視窗選收款帳戶(C)→ 變成已收款,
+#   系統自動記「借 現金或銀行 / 貸 應收帳款」(收款一次收齊,金額 = 應收合計)。
+def _receivables():
+    base = """SELECT o.order_id, o.order_no, o.order_date, o.order_total, o.paid_date, o.paid_amount,
+                     o.payment_account, o.note, cu.cust_no, cu.display_name cust
+              FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
+              WHERE o.order_kind='銷售' AND o.order_total>0 AND o.payment_status=?
+              ORDER BY o.order_date {}, o.order_id {}"""
+    return q(base.format("", ""), ("待收款",)), q(base.format("DESC", "DESC"), ("已收款",))
+
+@app.get("/receivables", response_class=HTMLResponse)
+def receivables_page(request: Request):
+    unpaid, paid = _receivables()
+    return tpl.TemplateResponse("receivables.html", dict(
+        request=request, active="receivables", unpaid=unpaid, paid=paid,
+        unpaid_total=sum(r["order_total"] or 0 for r in unpaid),
+        cash_accounts=chart.accounts(["C"]), today=dt.date.today().isoformat()))
+
+@app.post("/receivables/collect")
+async def receivables_collect(request: Request):
+    f = await request.form()
+    pdate = (f.get("paid_date") or "").strip() or dt.date.today().isoformat()
+    acct = (f.get("payment_account") or "").strip() or "現金"
+    n = 0
+    for v in dict.fromkeys(f.getlist("order_id")):
+        if not str(v).isdigit():
+            continue
+        oid = int(v)
+        if not q1("""SELECT 1 FROM "order" WHERE order_id=? AND payment_status='待收款'""", (oid,)):
+            continue
+        execute("""UPDATE "order" SET payment_status='已收款', paid_date=?, paid_amount=order_total,
+                   payment_account=? WHERE order_id=?""", (pdate, acct, oid))
+        _post_order_ledger(oid)
+        n += 1
+    return RedirectResponse(f"/receivables?collected={n}", status_code=303)
+
+
 # ---------- 定價試算(管理估算,不進帳本) --------------------
 PRICING_KEYS = {k for k, *_ in Q.PRICING_FIELDS}
 

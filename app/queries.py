@@ -1191,7 +1191,48 @@ def income_statement(year):
     net_income = -sum(r["balance"] for r in rows)
     closed = bool(q("""SELECT 1 FROM ledger_entry WHERE source_type='year_closing'
                         AND source_id=? LIMIT 1""", (year,)))
-    return dict(year=year, window=f"{lo} ~ {hi_full}", rows=rows, net_income=net_income, closed=closed)
+    # 2026-10-16:照同事 1015 版「財務報表」工作表分段小計
+    # 4000 營業收入 / 5000 營業成本 / 5950 營業毛利 / 6000 營業費用 / 7100 業外收入 / 7500 業外支出
+    def _sec(code, name, pick):
+        rs = [r for r in rows if pick(r["account_code"])]
+        return dict(code=code, name=name, rows=rs, total=sum(r["disp"] for r in rs))
+    def _num(c):
+        c = c.split("-")[0]
+        return int(c) if c.isdigit() else 0
+    rev = _sec("4000", "營業收入", lambda c: c.startswith("4"))
+    cost = _sec("5000", "營業成本", lambda c: c.startswith("5"))
+    opex = _sec("6000", "營業費用", lambda c: c.startswith("6"))
+    oin = _sec("7100", "業外收入", lambda c: c.startswith("7") and _num(c) < 7500)
+    oout = _sec("7500", "業外支出", lambda c: c.startswith("7") and _num(c) >= 7500)
+    gross = rev["total"] - cost["total"]
+    sections = [rev, cost, dict(code="5950", name="營業毛利", rows=[], total=gross, computed=True),
+                opex, oin, oout]
+    return dict(year=year, window=f"{lo} ~ {hi_full}", rows=rows, net_income=net_income, closed=closed,
+                sections=sections, gross_profit=gross)
+
+
+def account_ledger(code, lo=None, hi=None):
+    """科目明細(2026-10-16,照 1015 版各明細工作表的「產出報表樣式」):某個科目的每一筆分錄,
+    依日期排,算累計餘額。累計餘額跟正式報表同一套正負號規則(正常增加的方向是正數)。
+    識別碼(發票號碼)跟總帳頁一樣依來源抓。lo/hi 是 YYYY-MM-DD,沒給就全部。"""
+    where, args = ["account_code=?"], [code]
+    if lo:
+        where.append("entry_date>=?"); args.append(lo)
+    if hi:
+        where.append("entry_date<=?"); args.append(hi)
+    opening = 0.0
+    if lo:
+        r0 = q1("SELECT COALESCE(SUM(debit-credit),0) v FROM ledger_entry WHERE account_code=? AND entry_date<?",
+                (code, lo))
+        opening = _display_balance(code, r0["v"] or 0)
+    rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
+                 ORDER BY entry_date, voucher_no, entry_id""", args)
+    bal = opening
+    for r in rows:
+        r["amount"] = _display_balance(code, (r["debit"] or 0) - (r["credit"] or 0))
+        bal += r["amount"]
+        r["balance"] = bal
+    return dict(rows=rows, opening=opening, closing=bal)
 
 
 def _unclosed_pnl(as_of):

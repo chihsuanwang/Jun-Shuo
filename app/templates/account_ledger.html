@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}科目明細 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup">桂圓帳房 / 看數字</div>
+  <h1 class="serif">科目明細</h1>
+</div></div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 14px;line-height:1.7">
+  選一個科目,看它的每一筆交易跟累計餘額。例如銀行帳戶的存入領出、應收帳款、進項 / 銷項稅額、各產品線的採購成本、業外收益。
+  累計餘額的正負號跟正式報表一樣:這個科目「正常增加的方向」是正數。
+</p>
+<form method="get" action="/account-ledger" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:16px">
+  <div><label>科目</label><select name="code" onchange="this.form.submit()" style="min-width:260px">
+    {% for g in groups %}<optgroup label="{{ g.key }} {{ g.label }}">
+      {% for a in g.accts %}<option value="{{ a.code }}" {{ 'selected' if a.code == acct.code }}>{{ a.code }} {{ a.name }}{{ '' if a.code in used else '(沒有交易)' }}</option>{% endfor %}
+    </optgroup>{% endfor %}
+  </select></div>
+  <div><label>從</label><input type="date" name="from" value="{{ lo }}" style="width:auto"></div>
+  <div><label>到</label><input type="date" name="to" value="{{ hi }}" style="width:auto"></div>
+  <button type="submit" class="ghost">查詢</button>
+</form>
+
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:16px">
+  <div class="card kpi"><div class="lab">科目代碼</div><div class="val">{{ acct.code }}</div></div>
+  <div class="card kpi"><div class="lab">科目名稱</div><div class="val" style="font-size:20px">{{ acct.name }}</div></div>
+  <div class="card kpi" style="border-top-color:var(--leaf)"><div class="lab">{{ '期末餘額' if lo or hi else '目前餘額' }}</div>
+    <div class="val {{ 'neg' if d.closing < 0 }}">{{ d.closing|money }}</div>
+    {% if lo %}<div class="sub">期初 {{ d.opening|money }}</div>{% endif %}</div>
+</div>
+
+<div class="card" style="overflow-x:auto">
+  <table class="gl">
+    <thead><tr><th>傳票號碼</th><th>交易日期</th><th>來源</th><th>識別碼</th><th data-num>借方</th><th data-num>貸方</th><th data-num>交易金額</th><th data-num>本次餘額</th><th>備註</th></tr></thead>
+    <tbody>
+    {% if lo %}<tr class="muted"><td colspan="7">期初餘額</td><td class="r">{{ d.opening|money }}</td><td></td></tr>{% endif %}
+    {% for r in d.rows %}
+      <tr>
+        <td>{{ r.voucher_no }}</td><td>{{ r.entry_date }}</td><td class="muted">{{ r.src_label }}</td><td>{{ r.invoice_no }}</td>
+        <td class="r">{{ r.debit|money if r.debit else '' }}</td><td class="r">{{ r.credit|money if r.credit else '' }}</td>
+        <td class="r {{ 'neg' if r.amount < 0 }}">{% if r.amount < 0 %}({{ (-r.amount)|money }}){% else %}{{ r.amount|money }}{% endif %}</td>
+        <td class="r">{{ r.balance|money }}</td>
+        <td class="muted">{{ r.note or '' }}</td>
+      </tr>
+    {% else %}<tr><td colspan="9" class="muted" style="text-align:left">這個科目在這段期間沒有交易。</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

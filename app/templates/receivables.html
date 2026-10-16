@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}應收帳款 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup">桂圓帳房 / 每天做的</div>
+  <h1 class="serif">應收帳款</h1>
+</div></div>
+<hr class="rule">
+{% if request.query_params.get('collected') %}<div class="ok">已收款 {{ request.query_params.get('collected') }} 筆,總帳也已經記好。</div>{% endif %}
+<p class="muted" style="font-size:13px;margin:-4px 0 14px;line-height:1.7">
+  客人還沒付錢的訂單都在「尚未收回」。收到錢時,勾選那幾筆、按「收款」,選收到哪個帳戶,
+  就會變成已收款(一次收齊,金額 = 應收合計),系統同時記「借 現金或銀行 / 貸 應收帳款」。
+</p>
+
+<form method="post" action="/receivables/collect" id="collectForm">
+<div class="card" style="overflow-x:auto;margin-bottom:16px">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+    <h3 class="serif">尚未收回的帳款</h3>
+    <span class="muted" style="font-size:13px">共 {{ unpaid|length }} 筆 · {{ unpaid_total|money }} 元</span>
+  </div>
+  <table class="gl">
+    <thead><tr><th style="width:34px"><input type="checkbox" id="chkAll" style="width:auto"></th><th>交易紀錄號碼</th><th>交易日期</th><th>客戶編號</th><th>客戶名稱</th><th data-num>交易金額</th><th>備註</th><th>支付標記</th></tr></thead>
+    <tbody>{% for r in unpaid %}
+      <tr>
+        <td><input type="checkbox" class="rchk" name="order_id" value="{{ r.order_id }}" data-amt="{{ r.order_total }}" style="width:auto"></td>
+        <td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td><td>{{ r.order_date }}</td>
+        <td>{{ r.cust_no or '' }}</td><td>{{ r.cust or '' }}</td><td class="r">{{ r.order_total|money }}</td>
+        <td class="muted">{{ r.note or '' }}</td><td class="neg">N</td>
+      </tr>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">沒有尚未收回的帳款。</td></tr>{% endfor %}</tbody>
+  </table>
+  {% if unpaid %}<button type="button" id="openCollect" style="margin-top:12px">收款(勾選的帳款)</button>
+  <span id="selSum" class="muted" style="font-size:12px;margin-left:8px"></span>{% endif %}
+</div>
+
+<div id="collectBox" hidden style="position:fixed;inset:0;background:rgba(40,30,20,.35);z-index:50;display:flex;align-items:center;justify-content:center">
+  <div class="card" style="width:min(420px,92vw)">
+    <h3 class="serif">收款</h3>
+    <p id="collectInfo" style="font-size:13px"></p>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div><label>收到哪個帳戶</label><select name="payment_account">
+        {% for a in cash_accounts %}<option value="{{ a.name }}">{{ a.name }}</option>{% endfor %}</select></div>
+      <div><label>收款日</label><input type="date" name="paid_date" value="{{ today }}"></div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px">
+      <button type="submit">確定收款</button>
+      <button type="button" class="ghost" id="closeCollect">取消</button>
+    </div>
+  </div>
+</div>
+</form>
+
+<div class="card" style="overflow-x:auto">
+  <h3 class="serif">已收回的帳款</h3>
+  <table class="gl">
+    <thead><tr><th>交易紀錄號碼</th><th>交易日期</th><th>客戶編號</th><th>客戶名稱</th><th data-num>交易金額</th><th>收款日</th><th>收款帳戶</th><th>備註</th><th>支付標記</th></tr></thead>
+    <tbody>{% for r in paid %}
+      <tr>
+        <td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td><td>{{ r.order_date }}</td>
+        <td>{{ r.cust_no or '' }}</td><td>{{ r.cust or '' }}</td><td class="r">{{ (r.paid_amount or r.order_total)|money }}</td>
+        <td>{{ r.paid_date or '' }}</td><td class="muted">{{ r.payment_account or '現金' }}</td>
+        <td class="muted">{{ r.note or '' }}</td><td class="pos">Y</td>
+      </tr>
+    {% else %}<tr><td colspan="9" class="muted" style="text-align:left">還沒有已收回的帳款。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+<script>
+(function () {
+  var box = document.getElementById('collectBox'), open = document.getElementById('openCollect');
+  if (!open) return;
+  box.style.display = 'none';
+  function picked() { return [].slice.call(document.querySelectorAll('.rchk:checked')); }
+  function sum() {
+    var p = picked(), s = p.reduce(function (a, c) { return a + (+c.dataset.amt); }, 0);
+    document.getElementById('selSum').textContent = p.length ? '已勾選 ' + p.length + ' 筆,共 ' + Math.round(s).toLocaleString() + ' 元' : '';
+    return [p.length, s];
+  }
+  document.querySelectorAll('.rchk').forEach(function (c) { c.addEventListener('change', sum); });
+  document.getElementById('chkAll').addEventListener('change', function (e) {
+    document.querySelectorAll('.rchk').forEach(function (c) { c.checked = e.target.checked; }); sum();
+  });
+  open.addEventListener('click', function () {
+    var r = sum();
+    if (!r[0]) { alert('請先勾選要收款的帳款。'); return; }
+    document.getElementById('collectInfo').textContent = '這 ' + r[0] + ' 筆帳款一次收齊,共 ' + Math.round(r[1]).toLocaleString() + ' 元。';
+    box.hidden = false; box.style.display = 'flex';
+  });
+  document.getElementById('closeCollect').addEventListener('click', function () { box.hidden = true; box.style.display = 'none'; });
+})();
+</script>
+{% endblock %}

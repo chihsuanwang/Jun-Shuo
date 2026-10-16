@@ -124,17 +124,30 @@
 {% if tab == 'is' %}
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">
   {{ is_.window }}(進行中的年份只算到今天)。已經結轉過的年度,這裡看到的還是原始收入/
-  費用明細——結轉傳票本身不算進來,不然會整批顯示 0。
+  費用明細——結轉傳票本身不算進來,不然會整批顯示 0。<br>
+  分段照同事的財務報表:營業收入 − 營業成本 = 營業毛利;營業毛利 − 營業費用 + 業外收入 − 業外支出 = 本期損益。
 </p>
 <div class="card stmt-card" style="margin-bottom:16px">
   <table class="stmt">
     <colgroup><col class="c-code"><col class="c-name"><col class="c-amt"></colgroup>
     <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>金額</th></tr></thead>
-    <tbody>{% for r in is_.rows %}
-      <tr><td>{{ r.account_code }}</td><td>{{ r.account_name }}</td>
+    <tbody>
+    {% if not is_.rows %}<tr><td colspan="3" class="muted" style="text-align:left">這一年還沒有資料。</td></tr>{% endif %}
+    {% for s in is_.sections %}
+      {% if s.computed %}
+      <tr class="sum" style="background:var(--paper-2)"><td><b>{{ s.code }}</b></td><td><b>{{ s.name }}</b></td>
+        <td class="r"><b class="{{ 'neg' if s.total < 0 }}">{{ s.total|money }}</b></td></tr>
+      {% else %}
+      <tr><td><b>{{ s.code }}</b></td><td><b>{{ s.name }}</b></td><td></td></tr>
+      {% for r in s.rows %}
+      <tr><td style="padding-left:22px">{{ r.account_code }}</td><td>{{ r.account_name }}</td>
           <td class="r {{ 'neg' if r.disp < 0 }}">{{ r.disp|money }}</td></tr>
-    {% else %}<tr><td colspan="3" class="muted" style="text-align:left">這一年還沒有資料。</td></tr>{% endfor %}</tbody>
-    <tfoot><tr><td colspan="2"><b>本期損益</b></td>
+      {% endfor %}
+      <tr class="sum"><td></td><td>{{ s.name }}合計</td><td class="r"><b>{{ s.total|money }}</b></td></tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+    <tfoot><tr><td><b>3353</b></td><td style="text-align:left"><b>本期損益</b></td>
       <td class="r"><b class="{{ 'neg' if is_.net_income < 0 else 'pos' }}">{{ is_.net_income|money }}</b></td></tr></tfoot>
   </table>
 </div>
