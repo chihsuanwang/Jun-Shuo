@@ -154,6 +154,8 @@ def migrate_db():
                 execute("UPDATE customer SET cust_no=? WHERE customer_id=?",
                         (f"C{dt.date.today().year}{i:03d}", r["customer_id"]))
             print("[migrate] customer.cust_no 已補上")
+        if "cost_payment_account" not in ocols:
+            execute('ALTER TABLE "order" ADD COLUMN cost_payment_account TEXT')
         if "sales_tax" not in ocols:
             execute('ALTER TABLE "order" ADD COLUMN sales_tax REAL NOT NULL DEFAULT 0')
             print("[migrate] order.sales_tax 已補上")
@@ -1002,7 +1004,7 @@ def order_new(request: Request):
     for r in q("SELECT product_id,customer_segment,unit_price FROM price_list WHERE channel_id IS NULL"):
         prices.setdefault(r["product_id"], {})[r["customer_segment"]] = r["unit_price"]
     cust_seg = {c["customer_id"]: SEG_MAP.get(c["segment"], "零售") for c in customers}
-    return tpl.TemplateResponse("orders_new.html", dict(
+    return tpl.TemplateResponse("orders_new.html", dict(cash_accounts=chart.accounts(["C"]), 
         request=request, active="order", customers=customers,
         channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id"),
         products=q("SELECT product_id,sku,name,uom FROM product WHERE status='在售' ORDER BY sku"),
@@ -1074,11 +1076,11 @@ async def order_create(request: Request):
     if sales_tax < 0 or (sales_tax and sales_tax >= total):
         return RedirectResponse("/orders/new?err=tax", status_code=303)
     oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
-                     discount_total,order_total,sales_tax,payment_method,payment_status,
+                     discount_total,order_total,sales_tax,cost_payment_account,payment_method,payment_status,
                      shipping_fee_charged,ship_method,ship_status,invoiced,tax_doc_no)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
                   (next_order_no(order_date), order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
-                   discount_total, total, sales_tax,
+                   discount_total, total, sales_tax, one("cost_payment_account") or "現金",
                    one("payment_method") or None, one("payment_status", "待收款"),
                    shipping_fee, one("ship_method") or None,
                    invoiced, one("tax_doc_no") or None))
@@ -1107,7 +1109,7 @@ def _post_order_ledger(oid):
     sale_lines = [(l["pg_name"], 0 if l["is_gift"] else (l["line_subtotal"] or 0), l["line_cost"] or 0)
                   for l in lines]
     sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_fee_charged"],
-                                                  o["sales_tax"])
+                                                  o["sales_tax"], o["cost_payment_account"])
     ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, note=f"訂單 {o['order_no']}")
 
     pay_legs = ledger.compose_order_payment_entries(o["paid_amount"], o["payment_account"])
@@ -1294,8 +1296,7 @@ async def order_return_create(request: Request, oid: int):
     reason = (f.get("reason") or "").strip() or None
     acct = (f.get("payment_account") or "").strip() or None
     cost = ((f.get("cost_account") or "").strip() or None) if kind == "退回小農" else None
-    if kind == "退回小農":
-        acct = None   # 退回小農沖應付帳款,不經過帳戶
+
     rid = execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,payment_account,cost_account,reason)
                      VALUES(?,?,?,?,?,?,?,?)""", (oid, date, Q.season_of(date), kind, amount, acct, cost, reason))
     _post_return_ledger(rid, oid, date, kind, amount, acct, cost)
@@ -1377,6 +1378,7 @@ async def order_update(request: Request, oid: int):
                 paid_date=(g("paid_date") if paid else None), paid_amount=(total if paid else None),
                 payment_account=(g("payment_account") if paid else None),
                 order_total=total, sales_tax=sales_tax,
+                cost_payment_account=(g("cost_payment_account") or "現金"),
                 ship_method=g("ship_method"), carrier=g("carrier"), tracking_no=g("tracking_no"),
                 shipped_date=g("shipped_date"), delivered_date=g("delivered_date"),
                 ship_status=g("ship_status") or "待出貨",
@@ -1411,8 +1413,8 @@ def order_copy(oid: int):
                  l["list_price"], 0 if l["is_gift"] else l["qty"] * l["unit_price"], l["is_gift"],
                  l["line_cost"] or 0))
     ship = o["shipping_fee_charged"] or 0
-    execute('UPDATE "order" SET order_total=?, sales_tax=?, shipping_fee_charged=? WHERE order_id=?',
-            (subtotal + ship, o["sales_tax"] or 0, ship, noid))
+    execute('UPDATE "order" SET order_total=?, sales_tax=?, shipping_fee_charged=?, cost_payment_account=? WHERE order_id=?',
+            (subtotal + ship, o["sales_tax"] or 0, ship, o["cost_payment_account"], noid))
     _post_order_ledger(noid)
     return RedirectResponse(f"/orders/{noid}?ok=1", status_code=303)
 
@@ -1668,8 +1670,7 @@ async def finance_expense_confirm(request: Request):
 # ---------- 9 宮格 B 類:首頁入口 ----------------------------
 # 順序照同事 1015 版帳務設定表的交易類型(0921 修改意見第 5 條)
 ENTRY_CARDS = [
-    dict(title="銷售商品", href="/orders/new", desc="開一張訂單,存檔就自動記應收帳款、銷貨收入、銷項稅額,跟欠小農的成本。"),
-    dict(title="進口商品", href="/goods-purchases", desc="付錢給小農時記一筆,沖掉開訂單時記的欠款。"),
+    dict(title="銷售商品", href="/orders/new", desc="開一張訂單,存檔就自動記應收帳款、銷貨收入、銷項稅額,跟付給小農的成本。"),
     dict(title="營運支出", href="/finance/expenses/new", desc="房租、郵電、運費、薪資…營運相關的花費。"),
     dict(title="其他收益", href="/other-income/new", desc="利息收入、政府補助等非銷售的進帳。"),
     dict(title="其他支出", href="/finance/expenses/new?grp=VE", desc="利息費用、所得稅這類不屬於營運的支出。"),
@@ -1847,7 +1848,7 @@ async def adjustment_save(request: Request):
 
 
 # ---------- 總帳(進貨/營運費用/訂單/9宮格B類 自動過帳)-------
-LEDGER_SOURCES = {"order_sale": "訂單成立", "order_payment": "訂單收款", "goods_purchase": "進口商品(付小農)",
+LEDGER_SOURCES = {"order_sale": "訂單成立(含付小農)", "order_payment": "訂單收款",
                   "op_expense": "營運支出 / 其他支出", "other_income": "其他收益", "equity": "資本異動",
                   "manual_adjustment": "帳務調整", "asset_acquire": "設備取得", "asset_depreciation": "折舊",
                   "sales_return": "退款 / 退回小農", "year_closing": "年度結轉"}
@@ -1916,7 +1917,7 @@ def _voucher_edit_url(source_type, source_id):
         "op_expense": f"/finance/expenses/{source_id}/edit",
         "order_sale": f"/orders/{source_id}",
         "order_payment": f"/orders/{source_id}",
-        "goods_purchase": "/goods-purchases",
+        "goods_purchase": None,
         "other_income": f"/other-income/{source_id}/edit",
         "equity": f"/equity/{source_id}/edit",
         "manual_adjustment": f"/adjustments/{source_id}/edit",
@@ -2251,51 +2252,11 @@ async def targets_save(request: Request):
     return RedirectResponse("/targets", status_code=303)
 
 
-# ---------- 進口商品(2026-10-16)= 付錢給小農 ------------------------------
-#   同事「會計場景對應分錄表_1015」場景 2「進口商品:實際付款」:借 2171 應付帳款 / 貸 現金或銀行。
-#   開訂單時已經記了「借 採購成本 / 貸 應付帳款」(成本由家易每個品項自己填),這裡把欠款沖掉。
-#   小農只有一個,不分人;目前欠多少 = 總帳 2171 的餘額。
-@app.get("/goods-purchases", response_class=HTMLResponse)
-def goods_purchases_page(request: Request):
-    owed = q1("SELECT COALESCE(SUM(credit - debit),0) v FROM ledger_entry WHERE account_code=?",
-              (ledger.AP_ACCOUNT[0],))["v"]
-    rows = q("SELECT * FROM goods_purchase ORDER BY purchase_date DESC, purchase_id DESC")
-    return tpl.TemplateResponse("goods_purchases.html", dict(
-        request=request, active="goods", rows=rows, owed=owed, total=sum(r["amount"] or 0 for r in rows),
-        cash_accounts=chart.accounts(["C"]), today=dt.date.today().isoformat()))
-
-@app.post("/goods-purchases")
-async def goods_purchase_create(request: Request):
-    f = await request.form()
-    g = lambda k: (f.get(k) or "").strip() or None
-    date = g("purchase_date") or dt.date.today().isoformat()
-    doc = g("doc_type") or "收據"
-    inv = g("invoice_no")
-    try:
-        amount = int(float(f.get("amount") or 0))
-    except ValueError:
-        amount = 0
-    if amount <= 0:
-        return RedirectResponse("/goods-purchases?err=1", status_code=303)
-    if doc == "發票" and not inv:
-        return RedirectResponse("/goods-purchases?err=invoice", status_code=303)
-    acct = g("payment_account") or "現金"
-    new_id = execute("""INSERT INTO goods_purchase(purchase_date,doc_type,invoice_no,amount,payment_account,note)
-                        VALUES(?,?,?,?,?,?)""",
-                     (date, doc, inv if doc == "發票" else None, amount, acct, g("note")))
-    legs = ledger.compose_goods_purchase_entries(amount, acct)
-    ledger.save_voucher("goods_purchase", new_id, date, legs,
-                        note="進口商品(付小農)" + (f":{g('note')}" if g("note") else ""))
-    return RedirectResponse("/goods-purchases?ok=1", status_code=303)
-
+# ---------- 進口商品:2026-10-16 改成在訂單成立時一起付給小農,/goods-purchases 頁面拿掉 ----
 def _goods_purchase_delete(pid):
+    """舊資料用:進口商品表留著(dormant),總帳勾選刪除時還認得。"""
     execute("DELETE FROM goods_purchase WHERE purchase_id=?", (pid,))
     ledger.delete_voucher_for("goods_purchase", pid)
-
-@app.post("/goods-purchases/{pid}/delete")
-def goods_purchase_delete(pid: int):
-    _goods_purchase_delete(pid)
-    return RedirectResponse("/goods-purchases", status_code=303)
 
 
 # 傳票勾選刪除:連來源紀錄一起刪(重用各來源自己的刪除邏輯,不繞過既有規則)

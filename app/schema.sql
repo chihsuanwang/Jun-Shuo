@@ -143,6 +143,7 @@ CREATE TABLE "order" (
   platform_fee    REAL    NOT NULL DEFAULT 0,     -- 通路抽成金額
   order_total     REAL    NOT NULL DEFAULT 0,     -- 應收 = 小計 - 折讓 + 向客收運費
   sales_tax       REAL    NOT NULL DEFAULT 0,     -- 銷項稅額(2026-10-08:售價含稅,家易手動填,系統不算)
+  cost_payment_account TEXT,                      -- 成本付給小農的帳戶(2026-10-16:接單當天就付,C 組名稱)
   payment_method  TEXT    CHECK (payment_method IN ('現金','銀行匯款','貨到付款','行動支付','信用卡','平台代收','未收款')),
   payment_account TEXT,                 -- 郵局 / 合庫 …
   payment_status  TEXT    NOT NULL DEFAULT '待收款'
@@ -296,7 +297,9 @@ CREATE INDEX ix_sret_order ON sales_return(order_id);
 CREATE INDEX ix_sret_date  ON sales_return(return_date);
 CREATE INDEX ix_sret_season ON sales_return(season);
 
--- 18b. 進口商品(2026-10-16)----------------------------------------------
+-- 18b. 進口商品(2026-10-16;同一天稍晚改成 dormant)--------------------------
+--     使用者決定「接單當天就付錢給小農」(Toyota 無存貨的概念),付款直接在訂單成立的傳票裡一起記,
+--     這張表跟 /goods-purchases 頁面都不用了,表留著不刪。
 --     同事「會計場景對應分錄表_1015」場景 2「進口商品:實際付款」= 付錢給小農:
 --     借 2171 應付帳款 / 貸 現金或銀行。成本在開訂單時記(借 採購成本 / 貸 應付帳款)。
 CREATE TABLE goods_purchase (

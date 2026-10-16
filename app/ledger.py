@@ -118,8 +118,9 @@ AR_ACCOUNT = ("1172", "應收帳款")
 # 銷貨成本(COGS 借方)——不依產品線拆,同事「會計科目表」正式版裡只有一條
 COGS_EXPENSE_ACCOUNT = ("5111", "銷貨成本")
 
-# 應付帳款(欠小農):開訂單時記成本「借 採購成本 / 貸 應付帳款」,「進口商品」付錢給小農時
-# 「借 應付帳款 / 貸 現金」沖掉。小農只有一個,不分人。(同事會計場景對應分錄表_1015 場景 1、2)
+# 應付帳款(欠小農):開訂單時記成本「借 採購成本 / 貸 應付帳款」,同一張傳票馬上
+# 「借 應付帳款 / 貸 現金」付掉(接單當天就付小農)。小農只有一個,不分人。
+# (同事會計場景對應分錄表_1015 場景 1、2)
 AP_ACCOUNT = ("2171", "應付帳款")
 
 # 產品線 -> 採購成本科目(VA 組,開單時的成本借方)
@@ -172,10 +173,13 @@ def compose_expense_entries(account, amount, tax_amount=0, payment_account=None)
     return legs
 
 
-def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0):
+def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, cost_payment_account=None):
     """訂單成立分錄(同事「會計場景對應分錄表_1015」場景 1「成功賣出貨物時,但還未收款」):
     借 1172 應收帳款(含稅、含跟客人收的運費)/ 貸 2214 銷項稅額 + 貸 4111-xx 銷貨收入(依產品線);
-    借 5111-xx 採購成本(依產品線)/ 貸 2171 應付帳款(欠小農)。
+    借 5111-xx 採購成本(依產品線)/ 貸 2171 應付帳款(欠小農);
+    接著馬上「進口商品:實際付款」借 2171 應付帳款 / 貸 現金或銀行(cost_payment_account)。
+    2026-10-16 使用者決定「接單當天就付錢給小農」(無存貨、接單才買),所以場景 1、2 在同一張傳票
+    一起記,應付帳款一進一出永遠是 0,不需要另外的付款頁。
     - lines = [(產品線名稱或 None, 含稅小計, 成本), …]。成本是家易在每個品項自己填的金額
       (2026-10-16:系統不算,商品目錄也不再有單位成本)。
     - 跟客人收的運費依各線含稅金額佔比分進收入,家易填的銷項稅額也依同樣佔比扣掉,
@@ -219,6 +223,9 @@ def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0):
                 code, name = COST_ACCOUNTS.get(pg, COST_DEFAULT)
                 legs.append(dict(account_code=code, account_name=name, debit=c, credit=0))
         legs.append(dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1], debit=0, credit=total_cost))
+        cash_code, cash_name = _cash_account(cost_payment_account)
+        legs.append(dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1], debit=total_cost, credit=0))
+        legs.append(dict(account_code=cash_code, account_name=cash_name, debit=0, credit=total_cost))
     return legs
 
 
@@ -372,8 +379,8 @@ def compose_sales_return_entries(kind, amount, already_paid, payment_account=Non
     """訂單的退款 / 退貨(2026-10-16 起照 1015 版的成本做法):
     - 「退款」= 只退款不退貨,不管退多少一律算其他支出(暫記 6188-99,待同仁確認):
       借 其他支出 / 貸 現金或銀行(已收款,真的退錢)或應收帳款(還沒收款,少收這筆)。
-    - 「退回小農」= 退貨但不退款,貨退給小農、小農把成本還回來(沖掉欠小農的錢):
-      借 2171 應付帳款 / 貸 採購成本(cost_account,VA 組)。
+    - 「退回小農」= 退貨但不退款,貨退給小農、小農把錢退回帳戶(2026-10-16 起接單當天就付小農,
+      所以退回來的是現金):借 現金或銀行 / 貸 採購成本(cost_account,VA 組)。
     退貨又退款不走這裡,直接刪訂單(總帳一起刪)。"""
     amount = amount or 0
     if amount <= 0:
@@ -382,7 +389,7 @@ def compose_sales_return_entries(kind, amount, already_paid, payment_account=Non
     if kind == "退回小農":
         cost_account = cost_account or COST_DEFAULT[0]
         return [
-            dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1], debit=amount, credit=0),
+            dict(account_code=cash_code, account_name=cash_name, debit=amount, credit=0),
             dict(account_code=cost_account, account_name=chart.name_of(cost_account), debit=0, credit=amount),
         ]
     legs = [dict(account_code=REFUND_LOSS_ACCOUNT[0], account_name=REFUND_LOSS_ACCOUNT[1],

@@ -181,12 +181,12 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
     ono = f"S{d.strftime('%Y%m%d')}{sum(1 for x in _onos if x.startswith('S' + d.strftime('%Y%m%d'))) + 1:03d}"
     _onos.append(ono)
     c.execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
-                 source_ref,discount_total,order_total,sales_tax,
+                 source_ref,discount_total,order_total,sales_tax,cost_payment_account,
                  payment_method,payment_account,payment_status,paid_date,paid_amount,
                  invoiced,tax_doc_no,ship_method,carrier,shipping_fee_charged,ship_status)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (ono, d.isoformat(), season, cid, ch[chan], kind,
-               None, 0, total, sales_tax,
+               None, 0, total, sales_tax, "合庫",
                pm, "合庫" if pm == "銀行匯款" else None, pay_status,
                d.isoformat() if pay_status == "已收款" else None, paid_amount,
                invoiced, tax_doc_no, ship_method, carrier, ship_fee, ship_status))
@@ -205,7 +205,7 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
     # 記帳:訂單成立分錄 + 收款分錄(邏輯跟 main.py 的 _post_order_ledger 一致)
     sale_lines = [(prod[sku]["pg_name"], 0 if gift else round(qty * price_of(sku, seg)),
                    qty * prod[sku]["unit_cost"]) for sku, qty, gift in lines]
-    sale_legs = ledger.compose_order_sale_entries(sale_lines, kind, ship_fee, sales_tax)
+    sale_legs = ledger.compose_order_sale_entries(sale_lines, kind, ship_fee, sales_tax, "合庫")   # 接單當天付小農
     add_voucher(d.isoformat(), sale_legs, "order_sale", oid, f"訂單 {ono}")
     pay_legs = ledger.compose_order_payment_entries(paid_amount, "合庫" if pm == "銀行匯款" else None)
     add_voucher(d.isoformat(), pay_legs, "order_payment", oid, f"訂單 {ono} 收款")
@@ -294,18 +294,6 @@ add_voucher("2025-07-01", ledger.compose_expense_entries("612901", 120000, 0, "�
 cert_id = opx("2026-06", "驗證費", 15000, "龍眼乾")     # 年度產銷履歷驗證費
 add_voucher("2026-06-01", ledger.compose_expense_entries("6188-02", 15000, 0, "現金"),
             "op_expense", cert_id, "營運費用:其他費用-檢驗費")
-
-# ---- 進口商品 = 付錢給小農(2026-10-16):開訂單時記的應付帳款,示範付掉 6 月底以前的 ----
-for g_date, g_doc, g_inv, g_note in [("2026-07-10", "發票", "YW46458", "示範:5~6 月貨款")]:   # 7 月以後還沒付,頁面上看得到欠款
-    owed = c.execute("""SELECT COALESCE(SUM(credit-debit),0) FROM ledger_entry
-                        WHERE account_code=? AND entry_date<=?""", (ledger.AP_ACCOUNT[0], g_date)).fetchone()[0]
-    g_amt = round(owed)
-    if g_amt <= 0:
-        continue
-    c.execute("""INSERT INTO goods_purchase(purchase_date,doc_type,invoice_no,amount,payment_account,note)
-                 VALUES(?,?,?,?,?,?)""", (g_date, g_doc, g_inv, g_amt, "合庫", g_note))
-    add_voucher(g_date, ledger.compose_goods_purchase_entries(g_amt, "合庫"), "goods_purchase",
-                c.lastrowid, f"進口商品(付小農):{g_note}")
 
 # ---- 固定資產卡(2:柴焙灶 / 搖蜜機)----
 # 2026-10-16:使用年限用「月」(最少 120)、沒有政府補助、殘值 0、可以記進項稅額
