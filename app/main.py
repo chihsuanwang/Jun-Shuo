@@ -120,6 +120,11 @@ def migrate_db():
             print("[migrate] product.unit_cost 已補上(用舊批次成本帶初值)")
         execute("CREATE TABLE IF NOT EXISTS pricing_param (key TEXT PRIMARY KEY, value REAL NOT NULL)")
         lcols = [r["name"] for r in q("PRAGMA table_info(order_line)")]
+        if "line_cost" not in lcols:
+            execute("ALTER TABLE order_line ADD COLUMN line_cost REAL NOT NULL DEFAULT 0")
+            execute("""UPDATE order_line SET line_cost = qty * COALESCE(unit_cost,
+                       (SELECT unit_cost FROM product p WHERE p.product_id=order_line.product_id), 0)""")
+            print("[migrate] order_line.line_cost 已補上(用舊的單位成本 × 數量)")
         if "unit_cost" not in lcols:
             execute("ALTER TABLE order_line ADD COLUMN unit_cost REAL")
             # 舊訂單先用商品目錄現在的成本補上,之後就固定不變
@@ -678,7 +683,6 @@ async def product_save(request: Request):
                 storage_condition=g("storage_condition"), ingredients=g("ingredients"),
                 origin=g("origin"), barcode=g("barcode"),
                 gift_only=1 if f.get("gift_only") else 0,
-                unit_cost=(float(f.get("unit_cost")) if (f.get("unit_cost") or "").strip() else 0),
                 status=(f.get("status") or "在售").strip(), note=g("note"))
     pid = f.get("product_id")
     if pid:
@@ -1032,7 +1036,8 @@ async def order_create(request: Request):
 
     prods = f.getlist("product_id"); qtys = f.getlist("qty")
     ups   = f.getlist("unit_price")
-    lines = []
+    costs = f.getlist("line_cost")   # 每列成本,家易自己填(2026-10-16)
+    lines, line_costs = [], []
     for i, p in enumerate(prods):
         if not p:
             continue
@@ -1051,6 +1056,7 @@ async def order_create(request: Request):
         if up is None:                       # 沒填單價 -> 帶標準價
             up = lp if (lp is not None and order_kind == "銷售") else 0
         lines.append((pid, qv, up, None, lp))
+        line_costs.append(_num(costs[i]) if i < len(costs) else 0)
 
     discount_total = flt("discount_total")
     subtotal = sum(qv * up for _, qv, up, _, _ in lines)
@@ -1076,17 +1082,19 @@ async def order_create(request: Request):
                    one("payment_method") or None, one("payment_status", "待收款"),
                    shipping_fee, one("ship_method") or None,
                    invoiced, one("tax_doc_no") or None))
-    for p, qv, up, b, lp in lines:
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,unit_cost)
-                   VALUES(?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up, _product_cost(p)))
+    for (p, qv, up, b, lp), lc in zip(lines, line_costs):
+        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,line_cost)
+                   VALUES(?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up, lc))
     _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
 
 
-def _product_cost(pid):
-    """商品目錄目前的單位成本——開單當下抄一份存進訂單明細(order_line.unit_cost),
-    之後商品目錄改成本不會回頭影響舊訂單。"""
-    return q1("SELECT unit_cost FROM product WHERE product_id=?", (pid,)).get("unit_cost") or 0
+def _num(v):
+    """表單數字欄:空白 / 打錯 → 0,負數也當 0。"""
+    try:
+        return max(0.0, float(v or 0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _post_order_ledger(oid):
@@ -1096,7 +1104,8 @@ def _post_order_ledger(oid):
     o, lines = Q.order_get(oid)
     if not o:
         return
-    sale_lines = [(l["pg_name"], l["line_subtotal"] or 0) for l in lines if not l["is_gift"]]
+    sale_lines = [(l["pg_name"], 0 if l["is_gift"] else (l["line_subtotal"] or 0), l["line_cost"] or 0)
+                  for l in lines]
     sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_fee_charged"],
                                                   o["sales_tax"])
     ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, note=f"訂單 {o['order_no']}")
@@ -1215,8 +1224,8 @@ async def order_import_confirm(request: Request):
                       (next_order_no(row["order_date"]), row["order_date"], Q.season_of(row["order_date"]), cid, channel_id,
                        subtotal, row.get("payment_method"), row["source_ref"], row.get("note") or None))
         for pid, qty, up in built_lines:
-            execute("""INSERT INTO order_line(order_id,product_id,qty,unit_price,line_subtotal,unit_cost)
-                       VALUES(?,?,?,?,?,?)""", (oid, pid, qty, up, qty * up, _product_cost(pid)))
+            execute("""INSERT INTO order_line(order_id,product_id,qty,unit_price,line_subtotal,line_cost)
+                       VALUES(?,?,?,?,?,0)""", (oid, pid, qty, up, qty * up))
         _post_order_ledger(oid)
         imported += 1
 
@@ -1244,7 +1253,7 @@ def order_detail(request: Request, oid: int):
         cash_accounts=chart.accounts(["C"]),
         va_accounts=chart.accounts(["VA"]),
         returns=Q.returns_list(oid), return_kinds=ledger.RETURN_KINDS,
-        order_cost=sum((l["qty"] or 0) * (l["unit_cost"] or 0) for l in lines if not l["is_gift"]),
+        order_cost=sum(l["line_cost"] or 0 for l in lines),
         today=dt.date.today().isoformat()))
 
 
@@ -1284,7 +1293,9 @@ async def order_return_create(request: Request, oid: int):
         return RedirectResponse(f"/orders/{oid}?rerr=1", status_code=303)
     reason = (f.get("reason") or "").strip() or None
     acct = (f.get("payment_account") or "").strip() or None
-    cost = (f.get("cost_account") or "").strip() or None if kind == "退回小農" else None
+    cost = ((f.get("cost_account") or "").strip() or None) if kind == "退回小農" else None
+    if kind == "退回小農":
+        acct = None   # 退回小農沖應付帳款,不經過帳戶
     rid = execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,payment_account,cost_account,reason)
                      VALUES(?,?,?,?,?,?,?,?)""", (oid, date, Q.season_of(date), kind, amount, acct, cost, reason))
     _post_return_ledger(rid, oid, date, kind, amount, acct, cost)
@@ -1319,7 +1330,8 @@ async def order_update(request: Request, oid: int):
     # --- 重建訂單明細 ---
     prods, qtys = f.getlist("product_id"), f.getlist("qty")
     ups, gl = f.getlist("unit_price"), f.getlist("is_gift")
-    new_lines = []
+    costs = f.getlist("line_cost")
+    new_lines, new_costs = [], []
     for i, p in enumerate(prods):
         if not p:
             continue
@@ -1336,14 +1348,11 @@ async def order_update(request: Request, oid: int):
         pid = int(p)
         is_gift = 1 if (i < len(gl) and gl[i] == "是") else 0
         new_lines.append((pid, qv, up if not is_gift else 0, None, is_gift))
-    # 明細整批重建,但成本沿用開單當下存的那個(同一個商品);新加進來的商品才用目前的成本
-    old_cost = {r["product_id"]: r["unit_cost"] for r in
-                q("SELECT product_id, unit_cost FROM order_line WHERE order_id=? AND unit_cost IS NOT NULL", (oid,))}
+        new_costs.append(_num(costs[i]) if i < len(costs) else 0)
     execute("DELETE FROM order_line WHERE order_id=?", (oid,))
-    for p, qv, up, b, gf in new_lines:
-        cost = old_cost[p] if p in old_cost else _product_cost(p)
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,unit_cost)
-                   VALUES(?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, qv * up, gf, cost))
+    for (p, qv, up, b, gf), lc in zip(new_lines, new_costs):
+        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,line_cost)
+                   VALUES(?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, qv * up, gf, lc))
 
     subtotal = sum(qv * up for _, qv, up, _, gf in new_lines if not gf)
     disc = o["discount_total"] or 0  # 折扣欄位已不開放編輯,沿用原值(通常是 0)
@@ -1396,11 +1405,11 @@ def order_copy(oid: int):
     subtotal = 0
     for l in lines:
         subtotal += 0 if l["is_gift"] else (l["qty"] * l["unit_price"])
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,is_gift,unit_cost)
+        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,is_gift,line_cost)
                    VALUES(?,?,?,?,?,?,?,?,?)""",
                 (noid, l["product_id"], l["batch_id"], l["qty"], l["unit_price"],
                  l["list_price"], 0 if l["is_gift"] else l["qty"] * l["unit_price"], l["is_gift"],
-                 _product_cost(l["product_id"])))
+                 l["line_cost"] or 0))
     ship = o["shipping_fee_charged"] or 0
     execute('UPDATE "order" SET order_total=?, sales_tax=?, shipping_fee_charged=? WHERE order_id=?',
             (subtotal + ship, o["sales_tax"] or 0, ship, noid))
@@ -1491,9 +1500,8 @@ async def issue_update(request: Request, iid: int):
                        (next_order_no(), dt.date.today().isoformat(), o["season"], o["customer_id"],
                         o["channel_id"], f"由 {o['order_no']} 的{si['issue_type']}理賠重寄"))
         for l in lines:
-            execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,unit_cost)
-                       VALUES(?,?,?,?,0,0,1,?)""", (noid, l["product_id"], l["batch_id"], l["qty"],
-                                                   _product_cost(l["product_id"])))
+            execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,line_cost)
+                       VALUES(?,?,?,?,0,0,1,0)""", (noid, l["product_id"], l["batch_id"], l["qty"]))
         execute("UPDATE shipment_issue SET linked_reship_order_id=? WHERE issue_id=?", (noid, iid))
         return RedirectResponse("/issues", status_code=303)
 
@@ -1660,11 +1668,11 @@ async def finance_expense_confirm(request: Request):
 # ---------- 9 宮格 B 類:首頁入口 ----------------------------
 ENTRY_CARDS = [
     dict(title="銷售 / 出貨", href="/orders/new", desc="開一張訂單,存檔就自動記應收帳款/銷貨收入。"),
-    dict(title="進口商品", href="/goods-purchases", desc="跟小農買貨時記一筆,成本依產品線記進採購成本。"),
+    dict(title="進口商品", href="/goods-purchases", desc="付錢給小農時記一筆,沖掉開訂單時記的欠款。"),
     dict(title="營運支出", href="/finance/expenses/new", desc="逐月費用登記,存檔前會給你看一次分錄。"),
     dict(title="設備相關", href="/assets/new", desc="機器/器具採購,建固定資產卡,系統會自動記分錄、每月提折舊。"),
     dict(title="其他收益", href="/other-income/new", desc="利息收入、政府補助等非銷售的進帳。"),
-    dict(title="其他費用", href="/finance/expenses/new?grp=VE", desc="利息費用、所得稅這類不屬於營運的費用。"),
+    dict(title="其他支出", href="/finance/expenses/new?grp=VE", desc="利息費用、所得稅這類不屬於營運的支出。"),
     dict(title="資本異動", href="/equity/new", desc="現金增資、盈餘轉列公積。"),
     dict(title="帳務調整", href="/adjustments/new", desc="上面都套不上時,手動指定一組借/貸科目記一筆。"),
 ]
@@ -2158,42 +2166,41 @@ async def targets_save(request: Request):
     return RedirectResponse("/targets", status_code=303)
 
 
-# ---------- 進口商品(2026-10-16,取代付小農貨款)-------------------------
-#   1015 版帳務設定表:向小農買貨的當下記「借 採購成本(VA)/ 貸 現金或銀行」。欄位照
-#   「VA 採購成本明細」:成本種類、交易日期、憑證類型(發票 / 收據,發票要填號碼)、金額(整數)、備註。
+# ---------- 進口商品(2026-10-16)= 付錢給小農 ------------------------------
+#   同事「會計場景對應分錄表_1015」場景 2「進口商品:實際付款」:借 2171 應付帳款 / 貸 現金或銀行。
+#   開訂單時已經記了「借 採購成本 / 貸 應付帳款」(成本由家易每個品項自己填),這裡把欠款沖掉。
+#   小農只有一個,不分人;目前欠多少 = 總帳 2171 的餘額。
 @app.get("/goods-purchases", response_class=HTMLResponse)
 def goods_purchases_page(request: Request):
-    rows = q("""SELECT g.*, a.name cost_name FROM goods_purchase g
-                LEFT JOIN account a ON a.code=g.cost_account
-                ORDER BY g.purchase_date DESC, g.purchase_id DESC""")
+    owed = q1("SELECT COALESCE(SUM(credit - debit),0) v FROM ledger_entry WHERE account_code=?",
+              (ledger.AP_ACCOUNT[0],))["v"]
+    rows = q("SELECT * FROM goods_purchase ORDER BY purchase_date DESC, purchase_id DESC")
     return tpl.TemplateResponse("goods_purchases.html", dict(
-        request=request, active="goods", rows=rows, total=sum(r["amount"] or 0 for r in rows),
-        va_accounts=chart.accounts(["VA"]), cash_accounts=chart.accounts(["C"]),
-        today=dt.date.today().isoformat()))
+        request=request, active="goods", rows=rows, owed=owed, total=sum(r["amount"] or 0 for r in rows),
+        cash_accounts=chart.accounts(["C"]), today=dt.date.today().isoformat()))
 
 @app.post("/goods-purchases")
 async def goods_purchase_create(request: Request):
     f = await request.form()
     g = lambda k: (f.get(k) or "").strip() or None
     date = g("purchase_date") or dt.date.today().isoformat()
-    cost = g("cost_account")
     doc = g("doc_type") or "收據"
     inv = g("invoice_no")
     try:
         amount = int(float(f.get("amount") or 0))
     except ValueError:
         amount = 0
-    if amount <= 0 or not cost or not q1("SELECT 1 FROM account WHERE code=? AND grp='VA'", (cost,)):
+    if amount <= 0:
         return RedirectResponse("/goods-purchases?err=1", status_code=303)
     if doc == "發票" and not inv:
         return RedirectResponse("/goods-purchases?err=invoice", status_code=303)
     acct = g("payment_account") or "現金"
-    new_id = execute("""INSERT INTO goods_purchase(purchase_date,cost_account,doc_type,invoice_no,amount,
-                        payment_account,note) VALUES(?,?,?,?,?,?,?)""",
-                     (date, cost, doc, inv if doc == "發票" else None, amount, acct, g("note")))
-    legs = ledger.compose_goods_purchase_entries(cost, amount, acct)
+    new_id = execute("""INSERT INTO goods_purchase(purchase_date,doc_type,invoice_no,amount,payment_account,note)
+                        VALUES(?,?,?,?,?,?)""",
+                     (date, doc, inv if doc == "發票" else None, amount, acct, g("note")))
+    legs = ledger.compose_goods_purchase_entries(amount, acct)
     ledger.save_voucher("goods_purchase", new_id, date, legs,
-                        note="進口商品" + (f":{g('note')}" if g("note") else ""))
+                        note="進口商品(付小農)" + (f":{g('note')}" if g("note") else ""))
     return RedirectResponse("/goods-purchases?ok=1", status_code=303)
 
 def _goods_purchase_delete(pid):

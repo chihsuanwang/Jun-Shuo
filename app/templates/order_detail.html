@@ -58,7 +58,7 @@
 <div class="card" style="margin-bottom:16px">
   <h3 class="serif">品項</h3>
   <table>
-    <thead><tr><th>品項</th><th>數量</th><th>單價</th><th>小計</th><th>贈品</th><th></th></tr></thead>
+    <thead><tr><th>品項</th><th>數量</th><th>單價</th><th>小計</th><th>成本<span class="muted">(這列總額)</span></th><th>贈品</th><th></th></tr></thead>
     <tbody id="lines">
     {% for l in lines %}
       <tr class="line">
@@ -68,6 +68,7 @@
         <td><input name="qty" type="number" step="1" min="0" value="{{ l.qty|round(0)|int }}"></td>
         <td><input name="unit_price" type="number" step="1" min="0" value="{{ l.unit_price|round(0) }}"></td>
         <td class="linesub r">{{ (l.qty * l.unit_price)|round(0)|int }}</td>
+        <td><input name="line_cost" type="number" step="1" min="0" value="{{ (l.line_cost or 0)|round(0)|int }}" style="width:110px"></td>
         <td><select name="is_gift"><option>否</option><option {{ 'selected' if l.is_gift }}>是</option></select></td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
       </tr>
@@ -78,12 +79,13 @@
         <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
         <td class="linesub r">0</td>
+        <td><input name="line_cost" type="number" step="1" min="0" placeholder="這列成本" style="width:110px"></td>
         <td><select name="is_gift"><option>否</option><option>是</option></select></td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
       </tr>
     {% endif %}
     </tbody>
-    <tfoot><tr><td colspan="3" class="r"><b>應收合計(含稅,不含贈品)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="2"></td></tr></tfoot>
+    <tfoot><tr><td colspan="3" class="r"><b>應收合計(含稅,不含贈品)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="3" class="muted" style="font-size:11px">成本:跟小農買這些貨的錢,自己填</td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
   <p class="muted" style="font-size:11px;margin-top:6px">改完按上方「儲存」,應收合計會重算。</p>
@@ -158,7 +160,7 @@
       <div><label>發生日期</label><input type="date" name="return_date" value="{{ today }}"></div>
       <div><label>類型</label><select name="kind" id="retKind">{% for k in return_kinds %}<option>{{ k }}</option>{% endfor %}</select></div>
       <div><label>金額</label><input name="amount" type="number" step="1" min="0" required></div>
-      <div><label id="retAcctLabel">錢從哪個帳戶退</label><select name="payment_account">
+      <div id="retAcctField"><label>錢從哪個帳戶退</label><select name="payment_account">
         {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if (o.payment_account or '現金') == a.name }}>{{ a.name }}</option>{% endfor %}</select></div>
       <div id="retCostField" hidden><label>沖哪一項採購成本</label><select name="cost_account">
         {% for a in va_accounts %}<option value="{{ a.code }}">{{ a.name }}</option>{% endfor %}</select></div>
@@ -169,16 +171,16 @@
   <p class="muted" style="font-size:12px;margin-top:10px;line-height:1.7">
     <b>退貨又退款</b>:不用在這裡登記,直接按最上面的「刪除訂單」,總帳會一起刪掉。<br>
     <b>退款</b>(只退錢、貨不用退回):金額填退給客人多少,不管多少都算「其他支出」。<br>
-    <b>退回小農</b>(客人退貨但不退錢):貨退給小農,金額填小農退回多少錢、退回哪個帳戶,
-    會從選的那項採購成本扣掉。這張訂單的成本合計約 {{ order_cost|money }} 元,可以參考。
+    <b>退回小農</b>(客人退貨但不退錢):貨退給小農,小農把成本還給我們,金額填退回多少;
+    會從欠小農的錢跟選的那項採購成本扣掉。這張訂單填的成本合計是 {{ order_cost|money }} 元,全部退回就填這個數字。
   </p>
 </div>
 
 <script>
 (function () {
   var k = document.getElementById('retKind'), cf = document.getElementById('retCostField'),
-      al = document.getElementById('retAcctLabel');
-  function t() { var f = k.value === '退回小農'; cf.hidden = !f; al.textContent = f ? '退回哪個帳戶' : '錢從哪個帳戶退'; }
+      af = document.getElementById('retAcctField');
+  function t() { var f = k.value === '退回小農'; cf.hidden = !f; af.hidden = f; }
   if (k) { k.addEventListener('change', t); t(); }
 })();
 (function () {

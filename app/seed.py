@@ -96,7 +96,7 @@ for _i, p in enumerate(products, start=1):
                  product_group_id,unit_cost)
                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (code, p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10],
-               ingredients, "南投中寮", status, pg[p[13]], p[14]))
+               ingredients, "南投中寮", status, pg[p[13]], 0))
     pid = c.lastrowid
     prod[sku] = dict(id=pid, retail=p[11], wholesale=p[12], unit_cost=p[14], uom=p[7], pg_name=p[13])
     for seg, price in (("零售", p[11]), ("批發", p[12]), ("團購", round(p[11] * 0.95)),
@@ -196,14 +196,15 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
         tier = 0 if (gift or kind != "銷售") else price_of(sku, seg)
         sub = 0 if gift else round(qty * tier)
         bid = None if sku.startswith(("HNY", "GY-FRESH")) else bat[bcode]
+        # 成本:家易每個品項自己填(2026-10-16);示範資料用 qty × 一個大概的單位成本假裝他填好了
         c.execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,
-                     line_discount,line_subtotal,is_gift,unit_cost) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                     line_discount,line_subtotal,is_gift,line_cost) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                   (oid, prod[sku]["id"], bid, qty, tier, tier, 0, sub, 1 if gift else 0,
-                   prod[sku]["unit_cost"]))
+                   qty * prod[sku]["unit_cost"]))
 
     # 記帳:訂單成立分錄 + 收款分錄(邏輯跟 main.py 的 _post_order_ledger 一致)
-    sale_lines = [(prod[sku]["pg_name"], 0 if gift else round(qty * price_of(sku, seg)))
-                  for sku, qty, gift in lines if not gift]
+    sale_lines = [(prod[sku]["pg_name"], 0 if gift else round(qty * price_of(sku, seg)),
+                   qty * prod[sku]["unit_cost"]) for sku, qty, gift in lines]
     sale_legs = ledger.compose_order_sale_entries(sale_lines, kind, ship_fee, sales_tax)
     add_voucher(d.isoformat(), sale_legs, "order_sale", oid, f"訂單 {ono}")
     pay_legs = ledger.compose_order_payment_entries(paid_amount, "合庫" if pm == "銀行匯款" else None)
@@ -294,18 +295,17 @@ cert_id = opx("2026-06", "驗證費", 15000, "龍眼乾")     # 年度產銷履�
 add_voucher("2026-06-01", ledger.compose_expense_entries("6188-02", 15000, 0, "現金"),
             "op_expense", cert_id, "營運費用:其他費用-檢驗費")
 
-# ---- 進口商品(2026-10-16,取代付小農貨款):跟小農買貨時記採購成本 / 付現 ----
-#      示範:每條有賣的產品線,依訂單用到的成本約略買一批。
-for g_date, g_code, g_amt, g_doc, g_inv, g_note in [
-        ("2025-11-01", "5111-02", 3000, "收據", None, "示範:2025 產季龍眼乾第一批"),
-        ("2026-05-01", "5111-02", 6000, "發票", "YW46458", "示範:2026 產季龍眼乾"),
-        ("2026-05-10", "5111-01", 600, "收據", None, "示範:龍眼鮮果"),
-        ("2026-06-01", "5111-03", 3000, "收據", None, "示範:龍眼肉"),
-        ("2026-06-05", "5111-05", 500, "收據", None, "示範:龍眼蜂蜜")]:
-    c.execute("""INSERT INTO goods_purchase(purchase_date,cost_account,doc_type,invoice_no,amount,payment_account,note)
-                 VALUES(?,?,?,?,?,?,?)""", (g_date, g_code, g_doc, g_inv, g_amt, "合庫", g_note))
-    add_voucher(g_date, ledger.compose_goods_purchase_entries(g_code, g_amt, "合庫"), "goods_purchase",
-                c.lastrowid, f"進口商品:{g_note}")
+# ---- 進口商品 = 付錢給小農(2026-10-16):開訂單時記的應付帳款,示範付掉 6 月底以前的 ----
+for g_date, g_doc, g_inv, g_note in [("2026-07-10", "發票", "YW46458", "示範:5~6 月貨款")]:   # 7 月以後還沒付,頁面上看得到欠款
+    owed = c.execute("""SELECT COALESCE(SUM(credit-debit),0) FROM ledger_entry
+                        WHERE account_code=? AND entry_date<=?""", (ledger.AP_ACCOUNT[0], g_date)).fetchone()[0]
+    g_amt = round(owed)
+    if g_amt <= 0:
+        continue
+    c.execute("""INSERT INTO goods_purchase(purchase_date,doc_type,invoice_no,amount,payment_account,note)
+                 VALUES(?,?,?,?,?,?)""", (g_date, g_doc, g_inv, g_amt, "合庫", g_note))
+    add_voucher(g_date, ledger.compose_goods_purchase_entries(g_amt, "合庫"), "goods_purchase",
+                c.lastrowid, f"進口商品(付小農):{g_note}")
 
 # ---- 固定資產卡(2:柴焙灶 / 搖蜜機)----
 # 2026-10-16:使用年限用「月」(最少 120)、沒有政府補助、殘值 0、可以記進項稅額

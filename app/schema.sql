@@ -183,7 +183,9 @@ CREATE TABLE order_line (
   list_price      REAL,                           -- 當下標準價(帶入自 price_list)
   line_discount   REAL    NOT NULL DEFAULT 0,
   line_subtotal   REAL    NOT NULL DEFAULT 0,     -- qty*unit_price - line_discount
-  unit_cost       REAL,                           -- 開單當下的商品單位成本(2026-10-08):之後商品目錄改成本,
+  line_cost       REAL NOT NULL DEFAULT 0,        -- 這一列的成本(2026-10-16:家易每張訂單自己填,系統不算;
+                                                  -- 記「借 採購成本(依產品線)/ 貸 應付帳款」,也是毛利的成本)
+  unit_cost       REAL,                           -- 舊欄位:開單當下的商品單位成本(2026-10-08),2026-10-16 起不用;
                                                   -- 舊訂單照當初的成本算,欠小農的金額不會跟著變;NULL 才退回用商品目錄的
   is_gift         INTEGER NOT NULL DEFAULT 0 CHECK (is_gift IN (0,1)),
   expiry_stated   TEXT                            -- 歷史「保存期限」原值,保留欄
@@ -277,7 +279,7 @@ CREATE TABLE pricing_param (
 -- 18. 訂單退款 / 退貨(2026-10-08 貿易公司模式,取代原本的銷貨退回 / 折讓) ----
 --     退貨又退款 → 直接刪訂單,不記在這裡。
 --     kind='退款':只退款不退貨,一律算其他支出(6499 其他損失)。
---     kind='退回小農':退貨但不退款,貨退給小農、小農退錢(借 現金或銀行 / 貸 採購成本)。
+--     kind='退回小農':退貨但不退款,貨退給小農、小農退成本(借 應付帳款 / 貸 採購成本)。
 CREATE TABLE sales_return (
   return_id    INTEGER PRIMARY KEY,
   order_id     INTEGER NOT NULL REFERENCES "order"(order_id) ON DELETE CASCADE,
@@ -285,7 +287,7 @@ CREATE TABLE sales_return (
   season       INTEGER NOT NULL,                 -- 由 return_date 推
   kind         TEXT NOT NULL DEFAULT '退款' CHECK (kind IN ('退款','退回小農')),
   amount       REAL NOT NULL DEFAULT 0,          -- 退款:退給客人的錢;退回小農:小農退回的錢(正數)
-  payment_account TEXT,                          -- 2026-10-16:錢從哪個帳戶退出 / 退回哪個帳戶(C 組)
+  payment_account TEXT,                          -- 2026-10-16:退款時錢從哪個帳戶退出(C 組)
   cost_account TEXT,                             -- 2026-10-16:退回小農時沖哪個採購成本(VA 組)
   reason       TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
@@ -294,13 +296,13 @@ CREATE INDEX ix_sret_order ON sales_return(order_id);
 CREATE INDEX ix_sret_date  ON sales_return(return_date);
 CREATE INDEX ix_sret_season ON sales_return(season);
 
--- 18b. 進口商品(2026-10-16,取代付小農貨款)------------------------------
---     1015 版帳務設定表「進口商品」+「VA 採購成本明細」:向小農買貨的當下記成本,
---     借 VA 採購成本(依產品線)/ 貸 現金或銀行,不記進項稅額。
+-- 18b. 進口商品(2026-10-16)----------------------------------------------
+--     同事「會計場景對應分錄表_1015」場景 2「進口商品:實際付款」= 付錢給小農:
+--     借 2171 應付帳款 / 貸 現金或銀行。成本在開訂單時記(借 採購成本 / 貸 應付帳款)。
 CREATE TABLE goods_purchase (
   purchase_id     INTEGER PRIMARY KEY,
   purchase_date   TEXT NOT NULL,
-  cost_account    TEXT NOT NULL,      -- 成本種類 = VA 組科目代碼,例 5111-02
+  cost_account    TEXT,               -- 舊欄位(不用):2026-10-16 起進口商品 = 付錢給小農,不分產品線
   doc_type        TEXT NOT NULL DEFAULT '收據' CHECK (doc_type IN ('發票','收據')),
   invoice_no      TEXT,               -- 憑證類型是發票才要填
   amount          REAL NOT NULL DEFAULT 0,   -- 整數
