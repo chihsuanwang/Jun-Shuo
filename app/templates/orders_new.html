@@ -61,10 +61,8 @@
       <div><label>出貨方式</label><select name="ship_method">
         <option value="">—</option>{% for s in ['自行配送','客戶自取','宅配','超商店到店','超商賣貨便','冷藏宅配'] %}<option>{{ s }}</option>{% endfor %}
       </select></div>
-      <div><label>運費(花多少錢)</label><input name="shipping_cost_actual" type="number" value="0"></div>
-      <div><label>運費由誰負擔</label><select name="ship_payer">
-        {% for s in ship_payers %}<option>{{ s }}</option>{% endfor %}
-      </select></div>
+      <div><label>運費(跟客人收)</label><input name="shipping_fee_charged" type="number" step="1" min="0" value="0">
+        <div class="muted" style="font-size:11px;margin-top:3px">算進應收合計;付給物流的運費請從營運支出記</div></div>
     </div>
   </div>
   <div class="card">
@@ -76,7 +74,7 @@
       <div><label>收款狀態</label><select name="payment_status">
         {% for p in ['待收款','免收款'] %}<option>{{ p }}</option>{% endfor %}
       </select>
-        <div class="muted" style="font-size:11px;margin-top:3px">實收金額之後在訂單頁「標記已收款」時再填</div>
+        <div class="muted" style="font-size:11px;margin-top:3px">收到錢之後在訂單頁按「標記已收款」</div>
       </div>
       <div style="display:flex;align-items:flex-end;padding-bottom:9px">
         <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
@@ -123,8 +121,7 @@
   // 運費由誰負擔選「客戶付」時,客人要付的錢含運費,這裡的即時預覽要跟存檔後的
   // order_total 算法一致(見 main.py order_create/order_update),不然畫面上看到的
   // 應收合計會跟存檔後不一樣,造成誤會。
-  var shipPayerSel = document.querySelector('select[name="ship_payer"]');
-  var shipCostInput = document.querySelector('input[name="shipping_cost_actual"]');
+  var shipCostInput = document.querySelector('input[name="shipping_fee_charged"]');
   function recalc() {
     var sum = 0;
     body.querySelectorAll('tr.line').forEach(function (row) {
@@ -135,16 +132,13 @@
       if (cell) cell.textContent = sub.toLocaleString();
       sum += sub;
     });
-    if (shipPayerSel && shipPayerSel.value === '客戶付' && shipCostInput) {
-      sum += parseFloat(shipCostInput.value) || 0;
-    }
+    if (shipCostInput) sum += parseFloat(shipCostInput.value) || 0;
     var t = document.getElementById('ordertotal');
     if (t) t.textContent = sum.toLocaleString();
   }
   body.addEventListener('input', function (e) {
     if (e.target.name === 'qty' || e.target.name === 'unit_price') recalc();
   });
-  if (shipPayerSel) shipPayerSel.addEventListener('change', recalc);
   if (shipCostInput) shipCostInput.addEventListener('input', recalc);
 
   // --- 依客戶分級自動帶標準價 ---

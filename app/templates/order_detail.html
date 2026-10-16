@@ -8,10 +8,10 @@
     <button type="submit" form="orderForm">儲存</button>
     <a href="/orders">回列表</a>
     {% if o.payment_status == '已收款' %}
-    <span class="muted" style="font-size:13px">已收款 · 實收 {{ o.paid_amount|money }}{% if o.paid_date %}（{{ o.paid_date }}）{% endif %}</span>
+    <span class="muted" style="font-size:13px">已收款 · {{ o.paid_amount|money }} · {{ o.payment_account or '現金' }}{% if o.paid_date %}（{{ o.paid_date }}）{% endif %}</span>
     {% else %}
     <form method="post" action="/orders/{{ o.order_id }}/paid" id="markPaidForm" style="display:inline">
-      <input type="hidden" name="paid_amount" id="markPaidAmount">
+      <input type="hidden" name="payment_account" id="markPaidAcct">
       <input type="hidden" name="paid_date" id="markPaidDate">
       <button type="submit">標記已收款</button>
     </form>
@@ -35,7 +35,7 @@
 {% if request.query_params.get('done') == 'shipped' %}<div class="ok">已標記為「已出貨」,出貨日填今天。</div>{% endif %}
 {% if request.query_params.get('rok') %}<div class="ok">已登記,總帳也已經記好。</div>{% endif %}
 {% if request.query_params.get('rerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">金額要大於 0。</div>{% endif %}
-{% if request.query_params.get('payerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">收款狀態選了「已收款 / 部分收款」,但沒填實收金額——請在下面「收款」卡填金額,或改用上面「標記已收款」按鈕。</div>{% endif %}
+{% if request.query_params.get('payerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">收款狀態選了「已收款」,但沒填收款日——請在下面「收款」卡補上,或改用上面「標記已收款」按鈕。</div>{% endif %}
 {% if request.query_params.get('shiperr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">出貨狀態選了「已出貨」,但出貨方式 / 出貨日沒填——請在下面「出貨」卡補上,或改用上面「標記已出貨」按鈕。</div>{% endif %}
 {% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
@@ -100,7 +100,9 @@
       <div><label>收款狀態</label><select name="payment_status">
         {% for p in pay_status %}<option {{ 'selected' if o.payment_status==p }}>{{ p }}</option>{% endfor %}</select></div>
       <div><label>收款日</label><input type="date" name="paid_date" id="paidDateField" value="{{ o.paid_date or '' }}"></div>
-      <div><label>實收金額</label><input name="paid_amount" type="number" id="paidAmountField" value="{{ o.paid_amount or '' }}"></div>
+      <div><label>收款帳戶</label><select name="payment_account" id="paidAcctField">
+        {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if (o.payment_account or '現金') == a.name }}>{{ a.name }}</option>{% endfor %}
+      </select><div class="muted" style="font-size:11px;margin-top:3px">收款一次收齊,金額 = 應收合計</div></div>
       <div><label>銷項稅額<span class="muted">(售價裡含的稅)</span></label><input name="sales_tax" type="number" step="1" min="0" value="{{ (o.sales_tax or 0)|round(0)|int }}"></div>
       <div style="display:flex;align-items:flex-end;padding-bottom:9px">
         <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
@@ -117,10 +119,8 @@
         {% for s in ship_methods %}<option {{ 'selected' if o.ship_method==s }}>{{ s }}</option>{% endfor %}</select></div>
       <div><label>物流商</label><input name="carrier" value="{{ o.carrier or '' }}"></div>
       <div><label>物流單號</label><input name="tracking_no" value="{{ o.tracking_no or '' }}"></div>
-      <div><label>運費(花多少錢)</label><input name="shipping_cost_actual" type="number" value="{{ o.shipping_cost_actual or 0 }}"></div>
-      <div><label>運費由誰負擔</label><select name="ship_payer">
-        {% for s in ship_payers %}<option {{ 'selected' if o.ship_payer==s }}>{{ s }}</option>{% endfor %}
-      </select></div>
+      <div><label>運費(跟客人收)</label><input name="shipping_fee_charged" type="number" step="1" min="0" value="{{ (o.shipping_fee_charged or 0)|round(0)|int }}">
+        <div class="muted" style="font-size:11px;margin-top:3px">算進應收合計;付給物流的運費請從營運支出記</div></div>
       <div><label>出貨日</label><input type="date" name="shipped_date" id="shippedDateField" value="{{ o.shipped_date or '' }}"></div>
       <div><label>到貨日</label><input type="date" name="delivered_date" value="{{ o.delivered_date or '' }}"></div>
       <div><label>出貨狀態</label><select name="ship_status">
@@ -156,8 +156,12 @@
   <form method="post" action="/orders/{{ o.order_id }}/return">
     <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(155px,1fr))">
       <div><label>發生日期</label><input type="date" name="return_date" value="{{ today }}"></div>
-      <div><label>類型</label><select name="kind">{% for k in return_kinds %}<option>{{ k }}</option>{% endfor %}</select></div>
+      <div><label>類型</label><select name="kind" id="retKind">{% for k in return_kinds %}<option>{{ k }}</option>{% endfor %}</select></div>
       <div><label>金額</label><input name="amount" type="number" step="1" min="0" required></div>
+      <div><label id="retAcctLabel">錢從哪個帳戶退</label><select name="payment_account">
+        {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if (o.payment_account or '現金') == a.name }}>{{ a.name }}</option>{% endfor %}</select></div>
+      <div id="retCostField" hidden><label>沖哪一項採購成本</label><select name="cost_account">
+        {% for a in va_accounts %}<option value="{{ a.code }}">{{ a.name }}</option>{% endfor %}</select></div>
       <div style="grid-column:1/-1"><label>原因</label><input name="reason" placeholder="客訴 / 破損 / 品質問題 …"></div>
     </div>
     <button type="submit" style="margin-top:10px">登記</button>
@@ -165,12 +169,18 @@
   <p class="muted" style="font-size:12px;margin-top:10px;line-height:1.7">
     <b>退貨又退款</b>:不用在這裡登記,直接按最上面的「刪除訂單」,總帳會一起刪掉。<br>
     <b>退款</b>(只退錢、貨不用退回):金額填退給客人多少,不管多少都算「其他支出」。<br>
-    <b>退回小農</b>(客人退貨但不退錢):貨退給小農,金額填小農退還給我們的成本。
-    這張訂單的成本合計是 {{ order_cost|money }} 元,全部退回就填這個數字。
+    <b>退回小農</b>(客人退貨但不退錢):貨退給小農,金額填小農退回多少錢、退回哪個帳戶,
+    會從選的那項採購成本扣掉。這張訂單的成本合計約 {{ order_cost|money }} 元,可以參考。
   </p>
 </div>
 
 <script>
+(function () {
+  var k = document.getElementById('retKind'), cf = document.getElementById('retCostField'),
+      al = document.getElementById('retAcctLabel');
+  function t() { var f = k.value === '退回小農'; cf.hidden = !f; al.textContent = f ? '退回哪個帳戶' : '錢從哪個帳戶退'; }
+  if (k) { k.addEventListener('change', t); t(); }
+})();
 (function () {
   var body = document.getElementById('lines');
   document.getElementById('addline').addEventListener('click', function () {
@@ -193,8 +203,7 @@
   // 運費由誰負擔選「客戶付」時,客人要付的錢含運費,這裡的即時預覽要跟存檔後的
   // order_total 算法一致(見 main.py order_update),不然畫面上看到的應收合計會跟
   // 存檔後不一樣,造成誤會。
-  var shipPayerSel = document.querySelector('select[name="ship_payer"]');
-  var shipCostInput = document.querySelector('input[name="shipping_cost_actual"]');
+  var shipCostInput = document.querySelector('input[name="shipping_fee_charged"]');
   function recalc() {
     var sum = 0;
     body.querySelectorAll('tr.line').forEach(function (row) {
@@ -207,9 +216,7 @@
       if (cell) cell.textContent = Math.round(sub).toLocaleString();
       sum += sub;
     });
-    if (shipPayerSel && shipPayerSel.value === '客戶付' && shipCostInput) {
-      sum += parseFloat(shipCostInput.value) || 0;
-    }
+    if (shipCostInput) sum += parseFloat(shipCostInput.value) || 0;
     var t = document.getElementById('ordertotal');
     if (t) t.textContent = Math.round(sum).toLocaleString();
   }
@@ -219,7 +226,6 @@
   body.addEventListener('change', function (e) {
     if (e.target.name === 'is_gift') recalc();
   });
-  if (shipPayerSel) shipPayerSel.addEventListener('change', recalc);
   if (shipCostInput) shipCostInput.addEventListener('input', recalc);
 
   // 改客戶
@@ -251,19 +257,14 @@
     if (!results.contains(e.target) && e.target !== search) results.hidden = true;
   });
 
-  // --- 標記已收款:直接沿用「收款」卡裡的實收金額/收款日,沒填就提醒 ---
+  // --- 標記已收款:一次收齊,沿用「收款」卡裡的收款帳戶 / 收款日(沒填日期 = 今天) ---
   var markPaidForm = document.getElementById('markPaidForm');
   if (markPaidForm) {
     markPaidForm.addEventListener('submit', function (e) {
-      var amtField = document.getElementById('paidAmountField');
-      var amt = amtField ? parseFloat(amtField.value) : 0;
-      if (!amt || amt <= 0) {
-        e.preventDefault();
-        alert('請先在下面「收款」卡填實收金額,再標記已收款。');
-        if (amtField) amtField.focus();
-        return;
-      }
-      document.getElementById('markPaidAmount').value = amt;
+      var acct = document.getElementById('paidAcctField');
+      if (!confirm('這張訂單 ' + (document.getElementById('ordertotal') || {}).textContent +
+                   ' 元一次收齊,收到「' + (acct ? acct.value : '現金') + '」,確定嗎?')) { e.preventDefault(); return; }
+      document.getElementById('markPaidAcct').value = acct ? acct.value : '現金';
       var dateField = document.getElementById('paidDateField');
       document.getElementById('markPaidDate').value = (dateField && dateField.value) || '';
     });

@@ -14,7 +14,8 @@
 <div class="card" style="max-width:820px;margin-bottom:16px">
   <h3 class="serif">基本</h3>
   <div class="grid" style="grid-template-columns:1fr 1fr">
-    <div><label>商品編號</label><input name="sku" value="{{ p.sku if p else '' }}" required placeholder="例:GY-DRY-300"></div>
+    <div><label>品項代碼</label><input value="{{ p.sku if p else '存檔後自動編號(F001…)' }}" disabled>
+      {% if p %}<input type="hidden" name="sku" value="{{ p.sku }}">{% endif %}</div>
     <div><label>品名</label><input name="name" value="{{ p.name if p else '' }}" required></div>
     <div><label>型態</label><select name="product_type"><option value="">—</option>
       {% for t in types %}<option {{ 'selected' if p and p.product_type==t }}>{{ t }}</option>{% endfor %}</select></div>
@@ -49,13 +50,11 @@
 </div>
 
 <div class="card" style="max-width:820px;margin-bottom:16px">
-  <h3 class="serif">定價(各客戶分級,可留空)</h3>
-  <div class="grid" style="grid-template-columns:repeat(5,1fr)">
-    {% for s in segs %}
-    <div><label>{{ s }}</label><input name="price_{{ s }}" type="number" value="{{ prices.get(s, '') }}"></div>
-    {% endfor %}
+  <h3 class="serif">售價(含稅)</h3>
+  <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+    <div><label>售價</label><input name="price_零售" type="number" value="{{ prices.get('零售', '') }}"></div>
   </div>
-  <p class="muted" style="font-size:11px;margin-top:8px">新增訂單時會依客戶分級自動帶入這裡的價;實際賣得比這裡低,系統會把差額算成折扣。</p>
+  <p class="muted" style="font-size:11px;margin-top:8px">新增訂單時會自動帶入這個價;實際賣得比這裡低,系統會把差額算成折扣。</p>
 </div>
 
 <button type="submit">儲存</button>

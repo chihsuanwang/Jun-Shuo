@@ -3,7 +3,7 @@
 {% block body %}
 <div class="head"><div>
   <div class="sup"><a href="/finance">財務健康</a> / <a href="/finance/expenses">營運費用</a> / {{ '編輯' if e else '新增' }}</div>
-  <h1 class="serif">{{ '編輯費用' if e else '新增一筆費用' }}</h1>
+  <h1 class="serif">{{ '編輯費用' if e else ('新增一筆其他費用' if grp == 'VE' else '新增一筆營運費用') }}</h1>
 </div></div>
 <hr class="rule">
 {% if request.query_params.get('ierr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">憑證類型選了發票,發票號碼是必填的,請補上再存檔。</div>{% endif %}
@@ -14,9 +14,9 @@
   <div class="grid" style="grid-template-columns:1fr 1fr">
     <div><label>月份(攤提時 = 起始月)</label>
       <input name="ym" value="{{ e.ym if e else ym_default }}" placeholder="2026-09" required></div>
-    <div><label>項目</label>
-      <select name="category" id="cat" required>
-        {% for c in cats %}<option {{ 'selected' if e and e.category == c }}>{{ c }}</option>{% endfor %}
+    <div><label>{{ '其他費用科目' if grp == 'VE' else '營運費用科目' }}</label>
+      <select name="account_code" id="cat" required>
+        {% for a in accts %}<option value="{{ a.code }}" {{ 'selected' if e and (e.account_code == a.code or e.category == a.name) }}>{{ a.code }} {{ a.name }}</option>{% endfor %}
       </select>
       <div class="muted" id="rndHint" hidden style="font-size:11px;margin-top:3px;color:var(--seal)">
         如果是設備/機器的零件、組裝費用(例:烘焙機的元件),建議改到
@@ -47,7 +47,7 @@
 <script>
 (function () {
   var cat = document.getElementById('cat'), hint = document.getElementById('rndHint');
-  function toggle() { hint.hidden = cat.value !== '研發'; }
+  function toggle() { hint.hidden = cat.value !== '612901'; }
   cat.addEventListener('change', toggle);
   toggle();
 })();

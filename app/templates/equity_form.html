@@ -18,8 +18,9 @@
     </select></div>
     <div><label>金額</label><input name="amount" type="number" step="1" value="{{ r.amount|round(0) if r else '' }}" required></div>
     <div><label>付款帳戶(現金增資才有意義)</label>
-      <input name="payment_account" value="{{ (r.payment_account or '') if r else '' }}" placeholder="現金" list="bankNames">
-      <datalist id="bankNames">{% for b in bank_names %}<option value="{{ b }}">{% endfor %}</datalist>
+      <select name="payment_account">
+        {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if ((r.payment_account if r else None) or '現金') == a.name }}>{{ a.name }}</option>{% endfor %}
+      </select>
     </div>
   </div>
   <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (r.note or '') if r else '' }}"></div>

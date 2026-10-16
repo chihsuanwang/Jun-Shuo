@@ -8,8 +8,7 @@
 </div></div>
 <hr class="rule">
 
-{% if request.query_params.get('err') == 'life' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">耐用年數最少要 {{ min_life }} 年。</div>{% endif %}
-{% if request.query_params.get('err') == 'acct' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">選了「其他帳戶」,請輸入帳戶名稱。</div>{% endif %}
+{% if request.query_params.get('err') == 'life' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">使用年限最少要 {{ min_months }} 個月(10 年)。</div>{% endif %}
 <form method="post" action="/assets">
 {% if a %}<input type="hidden" name="asset_id" value="{{ a.asset_id }}">{% endif %}
 <div class="card" style="max-width:680px">
@@ -18,23 +17,18 @@
     <div><label>類別(選了會帶預設年數)</label>
       <select name="category" id="cat">
         <option value="">—</option>
-        {% for c, yrs in cats.items() %}<option value="{{ c }}" data-life="{{ yrs }}" {{ 'selected' if d.category == c }}>{{ c }}({{ yrs }} 年)</option>{% endfor %}
+        {% for c, m in cats.items() %}<option value="{{ c }}" data-life="{{ m }}" {{ 'selected' if d.category == c }}>{{ c }}({{ m }} 個月)</option>{% endfor %}
       </select></div>
     <div><label>取得日</label><input name="acquire_date" type="date" value="{{ d.acquire_date or today }}" required></div>
     <div><label>取得成本</label><input name="cost" id="cost" type="number" step="1" value="{{ d.cost|round(0) if d.cost else '' }}" required></div>
-    <div><label>政府補助款(沒有填 0)</label><input name="grant_amount" id="grant" type="number" step="1" value="{{ d.grant_amount|round(0) if d.grant_amount else 0 }}"></div>
-    <div><label>耐用年數<span class="muted">(最少 {{ min_life }} 年)</span></label><input name="life_years" id="life" type="number" min="{{ min_life }}" step="1" value="{{ a.life_years if a else (d.life_years or min_life) }}" required></div>
+    <div><label>進項稅額(沒有填 0)</label><input name="tax_amount" type="number" step="1" min="0" value="{{ (d.tax_amount or 0)|round(0)|int }}"></div>
+    <div><label>使用年限(月)<span class="muted">(最少 {{ min_months }} 個月 = 10 年)</span></label><input name="life_months" id="life" type="number" min="{{ min_months }}" step="1" value="{{ (a.life_months or a.life_years * 12) if a else min_months }}" required></div>
     <div><label>殘值</label><input value="0" disabled>
       <div class="muted" style="font-size:11px;margin-top:3px">殘值一律算 0,不用填</div></div>
     <div><label>付款帳戶</label>
-      {% set cur = d.payment_account or '現金' %}
-      <select name="payment_account" id="payAcct">
-        <option value="現金" {{ 'selected' if cur == '現金' }}>現金</option>
-        {% for b in bank_names %}<option value="{{ b }}" {{ 'selected' if cur == b }}>{{ b }}</option>{% endfor %}
-        {% if cur != '現金' and cur not in bank_names %}<option value="{{ cur }}" selected>{{ cur }}</option>{% endif %}
-        <option value="__new__">其他帳戶(手動輸入)…</option>
+      <select name="payment_account">
+        {% for x in cash_accounts %}<option value="{{ x.name }}" {{ 'selected' if (d.payment_account or '現金') == x.name }}>{{ x.name }}</option>{% endfor %}
       </select>
-      <input name="payment_account_new" id="payAcctNew" placeholder="輸入銀行帳戶名稱,例:合庫" hidden style="margin-top:6px">
     </div>
   </div>
   <div class="muted" style="font-size:12px;margin-top:10px" id="hint"></div>
@@ -56,7 +50,7 @@
 <script>
 (function () {
   var cat = document.getElementById('cat'), life = document.getElementById('life');
-  var cost = document.getElementById('cost'), grant = document.getElementById('grant');
+  var cost = document.getElementById('cost');
   var hint = document.getElementById('hint');
   cat.addEventListener('change', function () {
     var o = cat.selectedOptions[0];
@@ -64,22 +58,13 @@
     calc();
   });
   function calc() {
-    var c = +cost.value || 0, gr = +grant.value || 0, ly = +life.value || 0;
-    var base = Math.max(0, c - gr);
-    var yr = ly ? base / ly : 0;
-    hint.textContent = ly && c
-      ? '可提折舊基礎 ' + Math.round(base).toLocaleString() + ' · 每年折舊約 ' + Math.round(yr).toLocaleString()
-        + ' · 每月約 ' + Math.round(yr / 12).toLocaleString()
+    var c = +cost.value || 0, m = +life.value || 0;
+    var per = m ? Math.ceil(c / m) : 0;   // 每月折舊 = 無條件進位(成本 ÷ 月數),殘值 0
+    hint.textContent = m && c
+      ? '每月折舊 ' + per.toLocaleString() + '(成本 ÷ ' + m + ' 個月,無條件進位)· 每年約 ' + (per * 12).toLocaleString()
       : '';
   }
-  var pay = document.getElementById('payAcct'), payNew = document.getElementById('payAcctNew');
-  function togglePay() {
-    payNew.hidden = pay.value !== '__new__';
-    payNew.required = !payNew.hidden;   // 藏起來時拿掉 required,不然表單送不出去
-  }
-  pay.addEventListener('change', togglePay);
-  togglePay();
-  [cost, grant, life].forEach(function (el) { el.addEventListener('input', calc); });
+  [cost, life].forEach(function (el) { el.addEventListener('input', calc); });
   calc();
 })();
 </script>

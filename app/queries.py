@@ -103,8 +103,8 @@ def _S(season, alias="o", mode="season", date_col="order_date", year=None):
 #   運費支出(ship_cost)也只算 ship_payer='店家吸收' 的訂單,因為客戶付的運費對公司是淨零。
 #   2026-10-08 起售價含稅,家易在訂單上填的銷項稅額(sales_tax)是代收的稅,也要扣掉。
 PAID_O = "o.payment_status IN ('已收款','部分收款')"
-REV_PAID = ("(o.paid_amount - CASE WHEN o.ship_payer='客戶付' THEN o.shipping_cost_actual ELSE 0 END"
-            " - COALESCE(o.sales_tax,0))")
+# 2026-10-16 起跟客人收的運費算收入,所以實收只扣掉銷項稅額(舊資料的「客戶付」運費也一樣當收入看)
+REV_PAID = "(o.paid_amount - COALESCE(o.sales_tax,0))"
 # 明細層級的未稅營收:每列含稅小計依該單各列佔比分掉銷項稅額(要有 alias ol + o)
 LINE_NET = ("(ol.line_subtotal * (1 - COALESCE(o.sales_tax,0) / COALESCE(NULLIF("
             "(SELECT SUM(x.line_subtotal) FROM order_line x WHERE x.order_id=o.order_id),0),1)))")
@@ -259,7 +259,7 @@ def ar_recently_paid(season=None, limit=15, mode="season", year=None):
 
 
 CASH_SRC_LABEL = {'op_expense': '營運費用', 'order_sale': '訂單成立',
-                   'order_payment': '訂單收款', 'farmer_payment': '付小農貨款', 'other_income': '其他收益',
+                   'order_payment': '訂單收款', 'goods_purchase': '進口商品', 'other_income': '其他收益',
                    'equity': '資本異動', 'manual_adjustment': '帳務調整',
                    'asset_acquire': '設備取得', 'sales_return': '退款/退回小農'}
 
@@ -346,7 +346,7 @@ def orders_list(flt="all", kw=""):
     fc, fp = orders_filter(flt, kw)
     sql = f"""SELECT o.order_id, o.order_no, o.order_date, o.order_kind, o.order_total,
                      o.payment_status, o.ship_status, o.invoiced, o.paid_amount,
-                     o.shipping_cost_actual, o.ship_payer, cu.display_name cust,
+                     o.shipping_fee_charged, cu.display_name cust,
                      (SELECT c.name FROM channel c WHERE c.channel_id=o.channel_id) chan,
                      CAST(julianday(?)-julianday(o.order_date) AS INT) age
               FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
@@ -416,6 +416,17 @@ def season_compare():
 
 # ---------- 財務健康:月損益 ----------------------------------
 #   前 4 類多半可歸到某條產品線;後面幾類通常是共同費用。
+def opex_cats():
+    """財務健康頁的費用項目清單:會計科目表 VD + VE 的名稱(2026-10-16 起項目就是科目),
+    再補上舊資料裡出現過、但已經不在科目表的名稱。"""
+    import chart
+    names = [r["name"] for r in chart.accounts(["VD", "VE"], active_only=False)]
+    for r in q("SELECT DISTINCT category FROM op_expense"):
+        if r["category"] and r["category"] not in names:
+            names.append(r["category"])
+    return names
+
+
 OPEX_CATS = ["直接人工", "驗證費", "研發",
              "人事", "場地・倉儲", "行銷", "金流手續費", "設備維護", "培訓", "其他",
              # 9 宮格「其他費用」併進來的子科目(2026-09)
@@ -444,26 +455,41 @@ def _add_months(ym, k):
     return f"{y}-{m:02d}"
 
 def asset_dep_base(a):
-    """可提折舊基礎 = 成本 − 補助 − 殘值(不小於 0)。"""
+    """可提折舊基礎 = 成本 − 補助 − 殘值(不小於 0)。2026-10-16 起補助、殘值都是 0。"""
     return max(0.0, (a["cost"] or 0) - (a["grant_amount"] or 0) - (a["salvage"] or 0))
+
+
+def asset_life_months(a):
+    """使用年限(月):2026-10-16 起存 life_months;舊資料只有 life_years 就 ×12。"""
+    return int(a.get("life_months") or 0) or int(a.get("life_years") or 0) * 12
+
+
+def asset_monthly_dep(a, i):
+    """第 i 個月(從 0 算)的折舊:每月 = 無條件進位(基礎 ÷ 月數),最後幾個月不超過剩下的金額
+    (1015 版 K 機器設備清冊:每月成本 = ROUNDUP(購買成本 / 使用年限(月)))。"""
+    import math
+    base, n = asset_dep_base(a), asset_life_months(a)
+    if base <= 0 or n <= 0 or i >= n:
+        return 0
+    per = math.ceil(base / n)
+    return max(0, min(per, base - per * i))
 
 def _asset_dep_rows(lo=None, hi=None):
     """每個固定資產的逐月折舊(平均法),攤在耐用年數內;處分後停止。"""
     out = []
     for a in q("SELECT * FROM fixed_asset"):
-        base = asset_dep_base(a)
-        life = a["life_years"] or 0
-        if base <= 0 or life <= 0 or not a["acquire_date"]:
+        months = asset_life_months(a)
+        if asset_dep_base(a) <= 0 or months <= 0 or not a["acquire_date"]:
             continue
-        monthly = base / life / 12
         start = a["acquire_date"][:7]
-        for i in range(life * 12):
+        for i in range(months):
             ym = _add_months(start, i)
             if a["disposed_date"] and ym > a["disposed_date"][:7]:
                 break
-            if (lo is None or ym >= lo) and (hi is None or ym <= hi):
+            amt = asset_monthly_dep(a, i)
+            if amt and (lo is None or ym >= lo) and (hi is None or ym <= hi):
                 out.append(dict(ym=ym, category="折舊",
-                                product_group_id=a["product_group_id"], amt=monthly))
+                                product_group_id=a["product_group_id"], amt=amt))
     return out
 
 def opex_rows(lo=None, hi=None):
@@ -557,16 +583,17 @@ def asset_list(as_of_ym=None):
                 ORDER BY a.acquire_date DESC, a.asset_id DESC""")
     for a in rows:
         base = asset_dep_base(a)
-        life = a["life_years"] or 0
+        months = asset_life_months(a)
         a["dep_base"] = base
-        a["monthly"] = (base / life / 12) if (base > 0 and life) else 0
+        a["life_months_eff"] = months
+        a["monthly"] = asset_monthly_dep(a, 0)
         n = 0
         if a["acquire_date"] and a["monthly"]:
             end = as_of_ym
             if a["disposed_date"] and a["disposed_date"][:7] < end:
                 end = a["disposed_date"][:7]
-            n = min(life * 12, max(0, _months_between(a["acquire_date"][:7], end) + 1))
-        a["accum_dep"] = min(base, a["monthly"] * n)
+            n = min(months, max(0, _months_between(a["acquire_date"][:7], end) + 1))
+        a["accum_dep"] = min(base, sum(asset_monthly_dep(a, i) for i in range(n)))
         a["book_value"] = (a["cost"] or 0) - a["accum_dep"]
         a["in_use"] = not a["disposed_date"]
     return rows
@@ -577,19 +604,17 @@ def sync_depreciation_vouchers():
     月份補上分錄。已經記過的月份不動——用 ledger.save_voucher_if_new,不是整張重開。"""
     this_ym = dt.date.today().strftime("%Y-%m")
     for a in q("SELECT * FROM fixed_asset"):
-        base = asset_dep_base(a)
-        life = a["life_years"] or 0
-        if base <= 0 or life <= 0 or not a["acquire_date"]:
+        months = asset_life_months(a)
+        if asset_dep_base(a) <= 0 or months <= 0 or not a["acquire_date"]:
             continue
-        monthly = base / life / 12
         start = a["acquire_date"][:7]
         end = this_ym
         if a["disposed_date"] and a["disposed_date"][:7] < end:
             end = a["disposed_date"][:7]
-        n = min(life * 12, max(0, _months_between(start, end) + 1))
-        legs = ledger.compose_depreciation_entries(monthly)
+        n = min(months, max(0, _months_between(start, end) + 1))
         for i in range(n):
             ym = _add_months(start, i)
+            legs = ledger.compose_depreciation_entries(asset_monthly_dep(a, i))
             ledger.save_voucher_if_new("asset_depreciation", a["asset_id"], f"{ym}-01", legs,
                                         note=f"折舊:{a['name']}")
 
@@ -760,8 +785,8 @@ def product_line_pnl(season=None, basis="rev", mode="season", year=None):
 
     # 歸線 / 共同的營運費用 + 折舊(opex_rows 已含攤提 + 折舊)
     shared = 0.0
-    cat_key = {"直接人工": "direct_labor", "田間管理": "field", "驗證費": "cert",
-               "研發": "rnd", "折舊": "dep"}
+    cat_key = {"直接人工": "direct_labor", "薪資費用-薪資": "direct_labor", "田間管理": "field",
+               "驗證費": "cert", "其他費用-檢驗費": "cert", "研發": "rnd", "研究發展費": "rnd", "折舊": "dep"}
     for r in opex_rows(lo, hi):
         if r["product_group_id"] is None:
             shared += r["amt"]

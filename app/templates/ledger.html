@@ -21,7 +21,7 @@
       <option value="op_expense" {{ 'selected' if src == 'op_expense' }}>營運費用</option>
       <option value="order_sale" {{ 'selected' if src == 'order_sale' }}>訂單成立</option>
       <option value="order_payment" {{ 'selected' if src == 'order_payment' }}>訂單收款</option>
-      <option value="farmer_payment" {{ 'selected' if src == 'farmer_payment' }}>付小農貨款</option>
+      <option value="goods_purchase" {{ 'selected' if src == 'goods_purchase' }}>進口商品</option>
       <option value="other_income" {{ 'selected' if src == 'other_income' }}>其他收益</option>
       <option value="equity" {{ 'selected' if src == 'equity' }}>資本異動</option>
       <option value="manual_adjustment" {{ 'selected' if src == 'manual_adjustment' }}>帳務調整</option>
@@ -80,7 +80,7 @@
       <b>{{ v.voucher_no }}</b>
       <span class="muted" style="font-size:12px;margin-left:8px">
         {{ {'op_expense':'營運費用','order_sale':'訂單成立','order_payment':'訂單收款',
-            'farmer_payment':'付小農貨款','other_income':'其他收益','equity':'資本異動',
+            'goods_purchase':'進口商品','other_income':'其他收益','equity':'資本異動',
             'manual_adjustment':'帳務調整','asset_acquire':'設備取得','asset_depreciation':'折舊',
             'sales_return':'退款/退回小農','year_closing':'年度結轉'}.get(v.source_type, v.source_type) }}
         · {{ v.entry_date }}

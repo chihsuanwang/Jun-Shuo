@@ -64,9 +64,10 @@ CREATE INDEX ix_price_lookup ON price_list(product_id, customer_segment, effecti
 -- 3. 客戶主檔 ------------------------------------------------------------
 CREATE TABLE customer (
   customer_id     INTEGER PRIMARY KEY,
+  cust_no         TEXT    UNIQUE,               -- 客戶編號 C + 年 + 3 碼(例 C2026001,2026-10-16 依 Excel)
   display_name    TEXT    NOT NULL,
-  customer_type   TEXT    CHECK (customer_type IN ('個人','公司','機構團體','通路商','內部')),
-  segment         TEXT    CHECK (segment IN ('零售','批發','團購主','機構','公關對象')),
+  customer_type   TEXT,                         -- 客戶分類:企業戶 / 個人戶(2026-10-16 起;舊資料可能是其他字)
+  segment         TEXT,                         -- 舊的客戶分級,2026-10-16 起不分級,欄位保留不用
   primary_channel_id INTEGER REFERENCES channel(channel_id),
   phone           TEXT,
   email           TEXT,
@@ -230,12 +231,13 @@ CREATE TABLE op_expense (
   expense_id  INTEGER PRIMARY KEY,
   ym          TEXT NOT NULL,          -- YYYY-MM(攤提時 = 起始月)
   category    TEXT NOT NULL,          -- 直接人工 / 田間管理 / 驗證費 / 研發 / 人事 / 場地・倉儲 / 行銷 / 金流手續費 / 設備維護 / 培訓 / 其他
+  account_code  TEXT,                 -- 2026-10-16:費用科目(VD 營運費用 / VE 其他費用),category 存科目名稱
   amount      REAL NOT NULL DEFAULT 0,       -- 帳載值(實際花的錢;B 層報稅看這個)
   product_group_id INTEGER REFERENCES product_group(pg_id),  -- 歸哪條產品線;NULL = 共同
   amortize_months  INTEGER,           -- 攤提月數;NULL / 1 = 當月全額;N = 從 ym 起每月 amount/N(管理視角)
   tax_amount       REAL NOT NULL DEFAULT 0,  -- 進項稅額
   tax_deductible   INTEGER NOT NULL DEFAULT 0 CHECK (tax_deductible IN (0,1)),
-  doc_type         TEXT CHECK (doc_type IN ('三聯式發票','二聯式發票','收據','農民收據','無憑證')),
+  doc_type        TEXT,                 -- 憑證類型:發票 / 收據(2026-10-16 依 Excel)
   invoice_no       TEXT,                -- 發票號碼(憑證類型選發票才需要填)
   payment_account  TEXT,               -- 用哪個帳戶付款(自由文字,例:現金 / 合庫);方案B分錄用
   note        TEXT,
@@ -255,7 +257,9 @@ CREATE TABLE fixed_asset (
   cost         REAL NOT NULL DEFAULT 0,          -- 取得成本
   grant_amount REAL NOT NULL DEFAULT 0,          -- 政府補助款(補助部分不提折舊)
   salvage      REAL NOT NULL DEFAULT 0,          -- 殘值(平均法稅法建議 = 成本 ÷ (年數+1))
-  life_years   INTEGER NOT NULL DEFAULT 5,       -- 耐用年數
+  life_years   INTEGER NOT NULL DEFAULT 10,      -- 舊欄位(年);2026-10-16 起看 life_months
+  life_months  INTEGER,                          -- 使用年限(月),最少 120;每月折舊 = 無條件進位(成本 ÷ 月數)
+  tax_amount   REAL NOT NULL DEFAULT 0,          -- 買設備的進項稅額
   method       TEXT NOT NULL DEFAULT '平均法',
   disposed_date TEXT,                            -- 處分日;NULL = 在用
   payment_account TEXT,               -- 用哪個帳戶付款(自由文字,例:現金 / 合庫);總帳分錄用
@@ -273,14 +277,16 @@ CREATE TABLE pricing_param (
 -- 18. 訂單退款 / 退貨(2026-10-08 貿易公司模式,取代原本的銷貨退回 / 折讓) ----
 --     退貨又退款 → 直接刪訂單,不記在這裡。
 --     kind='退款':只退款不退貨,一律算其他支出(6499 其他損失)。
---     kind='退回小農':退貨但不退款,貨退給小農、小農退採購成本(沖應付帳款 / 銷貨成本)。
+--     kind='退回小農':退貨但不退款,貨退給小農、小農退錢(借 現金或銀行 / 貸 採購成本)。
 CREATE TABLE sales_return (
   return_id    INTEGER PRIMARY KEY,
   order_id     INTEGER NOT NULL REFERENCES "order"(order_id) ON DELETE CASCADE,
   return_date  TEXT NOT NULL,                    -- 發生日(認列期間看這個)
   season       INTEGER NOT NULL,                 -- 由 return_date 推
   kind         TEXT NOT NULL DEFAULT '退款' CHECK (kind IN ('退款','退回小農')),
-  amount       REAL NOT NULL DEFAULT 0,          -- 退款:退給客人的錢;退回小農:小農退回的成本(正數)
+  amount       REAL NOT NULL DEFAULT 0,          -- 退款:退給客人的錢;退回小農:小農退回的錢(正數)
+  payment_account TEXT,                          -- 2026-10-16:錢從哪個帳戶退出 / 退回哪個帳戶(C 組)
+  cost_account TEXT,                             -- 2026-10-16:退回小農時沖哪個採購成本(VA 組)
   reason       TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -288,13 +294,17 @@ CREATE INDEX ix_sret_order ON sales_return(order_id);
 CREATE INDEX ix_sret_date  ON sales_return(return_date);
 CREATE INDEX ix_sret_season ON sales_return(season);
 
--- 18b. 付小農貨款(2026-10-08) --------------------------------------
---     訂單成立時欠小農的錢記在應付帳款,真的付錢時在這裡登記一筆沖掉。小農只有一個,不分人。
-CREATE TABLE farmer_payment (
-  payment_id      INTEGER PRIMARY KEY,
-  pay_date        TEXT NOT NULL,
-  amount          REAL NOT NULL DEFAULT 0,
-  payment_account TEXT,               -- 從哪個帳戶付(自由文字,例:現金 / 合庫)
+-- 18b. 進口商品(2026-10-16,取代付小農貨款)------------------------------
+--     1015 版帳務設定表「進口商品」+「VA 採購成本明細」:向小農買貨的當下記成本,
+--     借 VA 採購成本(依產品線)/ 貸 現金或銀行,不記進項稅額。
+CREATE TABLE goods_purchase (
+  purchase_id     INTEGER PRIMARY KEY,
+  purchase_date   TEXT NOT NULL,
+  cost_account    TEXT NOT NULL,      -- 成本種類 = VA 組科目代碼,例 5111-02
+  doc_type        TEXT NOT NULL DEFAULT '收據' CHECK (doc_type IN ('發票','收據')),
+  invoice_no      TEXT,               -- 憑證類型是發票才要填
+  amount          REAL NOT NULL DEFAULT 0,   -- 整數
+  payment_account TEXT,               -- C 組帳戶名稱(現金 / 合庫 …)
   note            TEXT,
   created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -313,7 +323,7 @@ CREATE TABLE ledger_entry (
   debit        REAL NOT NULL DEFAULT 0,
   credit       REAL NOT NULL DEFAULT 0,
   source_type  TEXT NOT NULL CHECK (source_type IN ('op_expense','order_sale','order_payment',
-                 'farmer_payment','other_income','equity','manual_adjustment',
+                 'goods_purchase','other_income','equity','manual_adjustment',
                  'asset_acquire','asset_depreciation','sales_return','year_closing')),
   source_id    INTEGER NOT NULL,       -- 對應來源資料表的主鍵(例:op_expense.expense_id)
   note         TEXT,
@@ -327,7 +337,10 @@ CREATE INDEX ix_ledger_source  ON ledger_entry(source_type, source_id);
 CREATE TABLE other_income (
   income_id       INTEGER PRIMARY KEY,
   income_date     TEXT NOT NULL,
-  category        TEXT NOT NULL,          -- 利息收入 / 政府補助收入 / 其他
+  category        TEXT NOT NULL,          -- 收入科目名稱(2026-10-16 起 = UB 組科目)
+  account_code    TEXT,                   -- UB 組科目代碼,例 7101
+  doc_type        TEXT,                   -- 發票 / 收據
+  invoice_no      TEXT,                   -- 憑證類型是發票才要填
   amount          REAL NOT NULL DEFAULT 0,
   tax_amount      REAL NOT NULL DEFAULT 0,   -- 銷項稅額(通常沒有,留 0)
   payment_account TEXT,                    -- 用哪個帳戶收款(自由文字,例:現金 / 合庫)

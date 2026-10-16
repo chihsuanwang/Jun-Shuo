@@ -18,11 +18,11 @@
 
 <div class="card">
   <table>
-    <thead><tr><th>名稱</th><th>分級</th><th>類型</th><th>主要管道</th><th>電話</th><th>訂單數</th><th>累計金額</th><th>最近購買</th></tr></thead>
+    <thead><tr><th>客戶編號</th><th>名稱</th><th>客戶分類</th><th>主要管道</th><th>電話</th><th>訂單數</th><th>累計金額</th><th>最近購買</th></tr></thead>
     <tbody>{% for r in rows %}
       <tr>
+        <td class="muted">{{ r.cust_no or '' }}</td>
         <td><a href="/customers/{{ r.customer_id }}">{{ r.display_name }}</a></td>
-        <td class="{{ 'neg' if not r.segment }}">{{ r.segment or '未分級' }}</td>
         <td>{{ r.customer_type or '' }}</td>
         <td>{{ r.chan or '' }}</td>
         <td>{{ r.phone or '' }}</td>

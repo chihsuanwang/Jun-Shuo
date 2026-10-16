@@ -17,8 +17,8 @@
     <h3 class="serif">基本資料</h3>
     <table>
       <tbody>
-      <tr><td class="muted">分級</td><td style="text-align:left" class="{{ 'neg' if not c.segment }}">{{ c.segment or '未分級' }}</td></tr>
-      <tr><td class="muted">類型</td><td style="text-align:left">{{ c.customer_type or '—' }}</td></tr>
+      <tr><td class="muted">客戶編號</td><td style="text-align:left">{{ c.cust_no or '—' }}</td></tr>
+      <tr><td class="muted">客戶分類</td><td style="text-align:left">{{ c.customer_type or '—' }}</td></tr>
       <tr><td class="muted">電話 / Email</td><td style="text-align:left">{{ c.phone or '—' }} / {{ c.email or '—' }}</td></tr>
       <tr><td class="muted">聯絡人</td><td style="text-align:left">{{ c.contact_person or '—' }}</td></tr>
       <tr><td class="muted">發票抬頭 / 統編</td><td style="text-align:left">{{ c.invoice_title or '—' }} / {{ c.tax_id or '—' }}</td></tr>

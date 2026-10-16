@@ -8,7 +8,7 @@
 <hr class="rule">
 <div class="card">
   <table>
-    <thead><tr><th>商品編號</th><th>品名</th><th>型態</th><th>產品線</th><th>內容量</th><th>單位</th><th>每單位克數</th><th>保存天數</th><th>狀態</th><th></th></tr></thead>
+    <thead><tr><th>品項代碼</th><th>品名</th><th>型態</th><th>產品線</th><th>內容量</th><th>單位</th><th>每單位克數</th><th>保存天數</th><th>狀態</th><th></th></tr></thead>
     <tbody>{% for r in rows %}
       <tr>
         <td>{{ r.sku }}</td><td>{{ r.name }}</td><td>{{ r.product_type or '' }}</td>

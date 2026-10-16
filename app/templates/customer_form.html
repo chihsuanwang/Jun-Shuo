@@ -15,7 +15,7 @@
   <table style="margin-bottom:10px">
     <thead><tr><th>名稱</th><th>分級</th><th>電話</th><th>訂單數</th><th>最近購買</th><th>地址</th><th></th></tr></thead>
     <tbody>{% for d in dups %}
-      <tr><td>{{ d.display_name }}</td><td>{{ d.segment or '未分級' }}</td><td>{{ d.phone or '—' }}</td>
+      <tr><td>{{ d.display_name }}</td><td>{{ d.customer_type or '—' }}</td><td>{{ d.phone or '—' }}</td>
           <td>{{ d.n }}</td><td>{{ d.last_order or '—' }}</td>
           <td style="text-align:left">{{ d.addr or '—' }}</td>
           <td><a href="/customers/{{ d.customer_id }}" target="_blank">查看</a></td></tr>
@@ -38,11 +38,10 @@
     <div><label>名稱</label><input name="display_name" id="cf_name" value="{{ cust.display_name if cust else '' }}" required>
       <div id="cf_namehint" class="muted" style="font-size:11px;margin-top:4px"></div></div>
     <div><label>電話</label><input name="phone" value="{{ (cust.phone or '') if cust else '' }}"></div>
-    <div><label>類型</label><select name="customer_type"><option value="">—</option>
+    <div><label>客戶分類</label><select name="customer_type"><option value="">—</option>
       {% for t in types %}<option {{ 'selected' if cust and cust.customer_type==t }}>{{ t }}</option>{% endfor %}
     </select></div>
-    <div><label>分級</label><select name="segment"><option value="">未分級</option>
-      {% for s in segs %}<option {{ 'selected' if cust and cust.segment==s }}>{{ s }}</option>{% endfor %}
+    <div><label>客戶編號</label><input value="{{ cust.cust_no if cust and cust.cust_no else '存檔後自動編號' }}" disabled>
     </select></div>
     <div><label>主要銷售管道</label><select name="primary_channel_id"><option value="">—</option>
       {% for c in channels %}<option value="{{ c.channel_id }}" {{ 'selected' if cust and cust.primary_channel_id==c.channel_id }}>{{ c.name }}</option>{% endfor %}

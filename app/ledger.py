@@ -118,8 +118,8 @@ AR_ACCOUNT = ("1172", "應收帳款")
 # 銷貨成本(COGS 借方)——不依產品線拆,同事「會計科目表」正式版裡只有一條
 COGS_EXPENSE_ACCOUNT = ("5111", "銷貨成本")
 
-# 應付帳款(2026-10-08 貿易公司模式):訂單成立時向小農進貨的成本記在這裡(貸方),
-# 付小農貨款時沖掉(借方)。小農只有一個,不分人。
+# 應付帳款:2026-10-16 起成本改在「進口商品」時直接付現記,系統不再自動記應付帳款,
+# 科目留在科目表裡(帳務調整可以用)。
 AP_ACCOUNT = ("2171", "應付帳款")
 
 # 只退款不退貨(2026-10-08):不管退多少一律算其他支出。同事會計科目表沒有「其他支出」,
@@ -143,10 +143,15 @@ def _cash_account(payment_account):
     return chart.cash_account(payment_account)
 
 
-def compose_expense_entries(category, amount, tax_amount=0, payment_account=None):
+def compose_expense_entries(account, amount, tax_amount=0, payment_account=None):
+    """營運支出(VD)/ 其他費用(VE):借 費用科目 + 進項稅額 / 貸 現金或銀行。
+    account 是科目代碼(2026-10-16 起表單直接選科目);舊資料傳的是類別名稱時,退回舊對照表。"""
     amount = amount or 0
     tax_amount = tax_amount or 0
-    code, name = EXPENSE_ACCOUNTS.get(category, EXPENSE_ACCOUNTS["其他"])
+    if q1("SELECT 1 FROM account WHERE code=?", (account,)):
+        code, name = account, chart.name_of(account)
+    else:
+        code, name = EXPENSE_ACCOUNTS.get(account, ("6188-99", "其他費用-其他"))
     cash_code, cash_name = _cash_account(payment_account)
     legs = [dict(account_code=code, account_name=name, debit=amount, credit=0)]
     if tax_amount:
@@ -156,59 +161,44 @@ def compose_expense_entries(category, amount, tax_amount=0, payment_account=None
     return legs
 
 
-def compose_order_sale_entries(lines, order_kind, shipping_cost=0, ship_payer="店家吸收", sales_tax=0):
-    """訂單成立分錄:不管收沒收到錢都記。lines 是每個訂單明細的
-    (product_group_name 或 None, revenue, cogs) 三元組列表,revenue 是含稅金額。
-    order_kind 不是「銷售」(贈送/樣品/內部領用等)回傳空 list,不記這筆。
-
-    2026-10-08 貿易公司模式(見檔頭):
-    - 售價含稅,sales_tax 是家易在訂單上手動填的銷項稅額(系統不算)。應收帳款記含稅
-      全額;貸方拆成銷項稅額 + 銷貨收入,銷貨收入依各產品線含稅金額佔比扣掉稅額,
-      尾差併進金額最大的那條線,確保借貸平衡。
-    - 成本不再沖存貨,改成借銷貨成本 / 貸應付帳款(欠小農)。
-    shipping_cost(2026-10-02):運費 > 0 時跟著記借:運費 / 貸:現金。
-    ship_payer='客戶付'(2026-10-03):應收帳款多收這筆運費,運費科目借貸互相沖平。"""
+def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0):
+    """訂單成立分錄(2026-10-16 依 1015 版帳務設定表「銷售商品」+ UA 銷售紀錄彙總表):
+    借 1172 應收帳款(含稅、含跟客人收的運費)/ 貸 2214 銷項稅額 + 貸 4111-xx 銷貨收入。
+    - lines = [(產品線名稱或 None, 含稅小計), …]。銷貨收入依產品線拆;跟客人收的運費依各線
+      含稅金額佔比分進去,再依同樣佔比扣掉家易填的銷項稅額,尾差併進金額最大的那條線。
+    - **不記成本**:成本在「進口商品」時記(借 採購成本 / 貸 現金),見 compose_goods_purchase_entries。
+    - 運費支出不在這裡記,家易從營運支出記 6114 運費。
+    order_kind 不是「銷售」(贈送/樣品/內部領用等)回傳空 list,不記這筆。"""
     if order_kind != "銷售":
         return []
-    rev_by_line = {}
-    total_rev, total_cogs = 0.0, 0.0
-    for pg_name, revenue, cogs in lines:
-        revenue, cogs = revenue or 0, cogs or 0
-        rev_by_line[pg_name] = rev_by_line.get(pg_name, 0) + revenue
-        total_rev += revenue
-        total_cogs += cogs
-    shipping_cost = shipping_cost or 0
+    gross = {}
+    for pg_name, amt in lines:
+        gross[pg_name] = gross.get(pg_name, 0) + (amt or 0)
+    goods = sum(gross.values())
+    shipping_fee = shipping_fee or 0
     sales_tax = sales_tax or 0
-    if total_rev == 0 and total_cogs == 0 and shipping_cost <= 0:
+    total = goods + shipping_fee
+    if total <= 0:
         return []
-    legs = [dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=total_rev, credit=0)]
+    if not gross or goods == 0:
+        gross = {None: 0}
+        goods = 0
+    net = {}
+    for pg, amt in gross.items():
+        share = (amt / goods) if goods else 1 / len(gross)
+        net[pg] = round(amt + shipping_fee * share - sales_tax * share, 2)
+    diff = round(total - sales_tax - sum(net.values()), 2)
+    if diff:
+        biggest = max(net, key=lambda k: gross[k])
+        net[biggest] = round(net[biggest] + diff, 2)
+    legs = [dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=total, credit=0)]
     if sales_tax:
         legs.append(dict(account_code=SALES_TAX_OUTPUT_ACCOUNT[0], account_name=SALES_TAX_OUTPUT_ACCOUNT[1],
                           debit=0, credit=sales_tax))
-    net_by_line = {}
-    for pg_name, amt in rev_by_line.items():
+    for pg, amt in net.items():
         if amt:
-            net_by_line[pg_name] = round(amt - (sales_tax * amt / total_rev if total_rev else 0), 2)
-    if net_by_line:
-        diff = round(total_rev - sales_tax - sum(net_by_line.values()), 2)
-        if diff:
-            biggest = max(net_by_line, key=lambda k: abs(rev_by_line[k]))
-            net_by_line[biggest] = round(net_by_line[biggest] + diff, 2)
-    for pg_name, amt in net_by_line.items():
-        code, name = REVENUE_ACCOUNTS.get(pg_name, REVENUE_DEFAULT)
-        legs.append(dict(account_code=code, account_name=name, debit=0, credit=amt))
-    if total_cogs:
-        legs.append(dict(account_code=COGS_EXPENSE_ACCOUNT[0], account_name=COGS_EXPENSE_ACCOUNT[1],
-                          debit=total_cogs, credit=0))
-        legs.append(dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1],
-                          debit=0, credit=total_cogs))
-    if shipping_cost > 0:
-        ship_code, ship_name = EXPENSE_ACCOUNTS["運費"]
-        if ship_payer == "客戶付":
-            legs[0]["debit"] += shipping_cost   # 應收帳款多收這筆運費(客人真正要付的總額)
-            legs.append(dict(account_code=ship_code, account_name=ship_name, debit=0, credit=shipping_cost))
-        legs.append(dict(account_code=ship_code, account_name=ship_name, debit=shipping_cost, credit=0))
-        legs.append(dict(account_code=CASH_ACCOUNT[0], account_name=CASH_ACCOUNT[1], debit=0, credit=shipping_cost))
+            code, name = REVENUE_ACCOUNTS.get(pg, REVENUE_DEFAULT)
+            legs.append(dict(account_code=code, account_name=name, debit=0, credit=amt))
     return legs
 
 
@@ -224,14 +214,15 @@ def compose_order_payment_entries(paid_amount, payment_account=None):
     ]
 
 
-def compose_farmer_payment_entries(amount, payment_account=None):
-    """付小農貨款(2026-10-08):借應付帳款 / 貸現金或銀行。"""
+def compose_goods_purchase_entries(cost_account, amount, payment_account=None):
+    """進口商品(2026-10-16,1015 版帳務設定表「進口商品」):向小農買貨的當下記成本——
+    借 VA 採購成本(依產品線,例 5111-02 採購成本-龍眼乾)/ 貸 現金或銀行。不記進項稅額。"""
     amount = amount or 0
-    if amount <= 0:
+    if amount <= 0 or not cost_account:
         return []
     cash_code, cash_name = _cash_account(payment_account)
     return [
-        dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1], debit=amount, credit=0),
+        dict(account_code=cost_account, account_name=chart.name_of(cost_account), debit=amount, credit=0),
         dict(account_code=cash_code, account_name=cash_name, debit=0, credit=amount),
     ]
 
@@ -277,7 +268,10 @@ def compose_other_income_entries(category, amount, tax_amount=0, payment_account
     tax_amount = tax_amount or 0
     if amount <= 0 and tax_amount <= 0:
         return []
-    code, name = OTHER_INCOME_ACCOUNTS.get(category, OTHER_INCOME_ACCOUNTS["其他"])
+    if q1("SELECT 1 FROM account WHERE code=?", (category,)):   # 2026-10-16 起傳的是 UB 科目代碼
+        code, name = category, chart.name_of(category)
+    else:
+        code, name = OTHER_INCOME_ACCOUNTS.get(category, OTHER_INCOME_ACCOUNTS["其他"])
     cash_code, cash_name = _cash_account(payment_account)
     legs = [dict(account_code=cash_code, account_name=cash_name, debit=amount + tax_amount, credit=0),
             dict(account_code=code, account_name=name, debit=0, credit=amount)]
@@ -321,19 +315,20 @@ def compose_manual_entries(debit_code, debit_name, credit_code, credit_name, amo
     ]
 
 
-def compose_asset_acquire_entries(category, cost, grant_amount=0, payment_account=None):
-    """設備買入:借設備科目(全額成本)/貸現金(淨額)+ 貸政府補助收入(補助額,>0 才加)。"""
+def compose_asset_acquire_entries(category, cost, tax_amount=0, payment_account=None):
+    """設備買入(1015 版帳務設定表「設備相關」):借 1616 機器設備 + 1423 進項稅額 / 貸 現金或銀行。
+    2026-10-16 起沒有政府補助這欄;K 組只有機器設備一個科目,類別只是描述用。"""
     cost = cost or 0
-    grant_amount = grant_amount or 0
+    tax_amount = tax_amount or 0
     if cost <= 0:
         return []
-    code, name = FIXED_ASSET_ACCOUNTS.get(category, FIXED_ASSET_DEFAULT)
+    code, name = FIXED_ASSET_DEFAULT
     cash_code, cash_name = _cash_account(payment_account)
-    legs = [dict(account_code=code, account_name=name, debit=cost, credit=0),
-            dict(account_code=cash_code, account_name=cash_name, debit=0, credit=cost - grant_amount)]
-    if grant_amount:
-        gcode, gname = OTHER_INCOME_ACCOUNTS["政府補助收入"]
-        legs.append(dict(account_code=gcode, account_name=gname, debit=0, credit=grant_amount))
+    legs = [dict(account_code=code, account_name=name, debit=cost, credit=0)]
+    if tax_amount:
+        legs.append(dict(account_code=TAX_INPUT_ACCOUNT[0], account_name=TAX_INPUT_ACCOUNT[1],
+                          debit=tax_amount, credit=0))
+    legs.append(dict(account_code=cash_code, account_name=cash_name, debit=0, credit=cost + tax_amount))
     return legs
 
 
@@ -353,26 +348,26 @@ def compose_depreciation_entries(monthly_amount):
 RETURN_KINDS = ("退款", "退回小農")
 
 
-def compose_sales_return_entries(kind, amount, already_paid, payment_account=None):
-    """訂單的退款 / 退貨(2026-10-08 貿易公司模式,取代原本的銷貨退回/折讓):
-    - 「退款」= 只退款不退貨,不管退多少一律算其他支出:借其他損失 / 貸現金或銀行
-      (已收款,真的退錢)或應收帳款(還沒收款,少收這筆)。
-    - 「退回小農」= 退貨但不退款給客人,貨退給小農、小農把採購成本還給郡碩:
-      借應付帳款 / 貸銷貨成本。
+def compose_sales_return_entries(kind, amount, already_paid, payment_account=None, cost_account=None):
+    """訂單的退款 / 退貨(2026-10-16 起照 1015 版的成本做法):
+    - 「退款」= 只退款不退貨,不管退多少一律算其他支出(暫記 6188-99,待同仁確認):
+      借 其他支出 / 貸 現金或銀行(已收款,真的退錢)或應收帳款(還沒收款,少收這筆)。
+    - 「退回小農」= 退貨但不退款,貨退給小農、小農把錢退回來:
+      借 現金或銀行 / 貸 採購成本(cost_account,VA 組)。
     退貨又退款不走這裡,直接刪訂單(總帳一起刪)。"""
     amount = amount or 0
     if amount <= 0:
         return []
+    cash_code, cash_name = _cash_account(payment_account)
     if kind == "退回小農":
+        cost_account = cost_account or "5111-01"
         return [
-            dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1], debit=amount, credit=0),
-            dict(account_code=COGS_EXPENSE_ACCOUNT[0], account_name=COGS_EXPENSE_ACCOUNT[1],
-                 debit=0, credit=amount),
+            dict(account_code=cash_code, account_name=cash_name, debit=amount, credit=0),
+            dict(account_code=cost_account, account_name=chart.name_of(cost_account), debit=0, credit=amount),
         ]
     legs = [dict(account_code=REFUND_LOSS_ACCOUNT[0], account_name=REFUND_LOSS_ACCOUNT[1],
                  debit=amount, credit=0)]
     if already_paid:
-        cash_code, cash_name = _cash_account(payment_account)
         legs.append(dict(account_code=cash_code, account_name=cash_name, debit=0, credit=amount))
     else:
         legs.append(dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=0, credit=amount))

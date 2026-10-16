@@ -126,6 +126,29 @@ def migrate_db():
             execute("""UPDATE order_line SET unit_cost=(SELECT unit_cost FROM product p
                        WHERE p.product_id=order_line.product_id)""")
             print("[migrate] order_line.unit_cost 已補上(用商品目錄目前的成本)")
+        icols = [r["name"] for r in q("PRAGMA table_info(other_income)")]
+        for col in ("account_code", "doc_type", "invoice_no"):
+            if col not in icols:
+                execute(f"ALTER TABLE other_income ADD COLUMN {col} TEXT")
+        acols = [r["name"] for r in q("PRAGMA table_info(fixed_asset)")]
+        if "life_months" not in acols:
+            execute("ALTER TABLE fixed_asset ADD COLUMN life_months INTEGER")
+        if "tax_amount" not in acols:
+            execute("ALTER TABLE fixed_asset ADD COLUMN tax_amount REAL NOT NULL DEFAULT 0")
+        scols = [r["name"] for r in q("PRAGMA table_info(sales_return)")]
+        for col in ("payment_account", "cost_account"):
+            if col not in scols:
+                execute(f"ALTER TABLE sales_return ADD COLUMN {col} TEXT")
+        ecols = [r["name"] for r in q("PRAGMA table_info(op_expense)")]
+        if "account_code" not in ecols:
+            execute("ALTER TABLE op_expense ADD COLUMN account_code TEXT")
+        ccols = [r["name"] for r in q("PRAGMA table_info(customer)")]
+        if "cust_no" not in ccols:
+            execute("ALTER TABLE customer ADD COLUMN cust_no TEXT")
+            for i, r in enumerate(q("SELECT customer_id FROM customer ORDER BY customer_id"), start=1):
+                execute("UPDATE customer SET cust_no=? WHERE customer_id=?",
+                        (f"C{dt.date.today().year}{i:03d}", r["customer_id"]))
+            print("[migrate] customer.cust_no 已補上")
         if "sales_tax" not in ocols:
             execute('ALTER TABLE "order" ADD COLUMN sales_tax REAL NOT NULL DEFAULT 0')
             print("[migrate] order.sales_tax 已補上")
@@ -144,7 +167,7 @@ def migrate_db():
                     execute("INSERT INTO account(code,name,grp,sort) VALUES(?,?,'C',999)",
                             (b["account_code"], b["name"]))
         lsql = q1("SELECT sql FROM sqlite_master WHERE name='ledger_entry'").get("sql") or ""
-        if lsql and "farmer_payment" not in lsql:
+        if lsql and "goods_purchase" not in lsql:
             print("[migrate] 警告:資料庫還是改版前的結構(有存貨/進貨那一版),"
                   "付小農貨款、退款/退回小農會存不進去,請重建資料庫")
     except Exception as e:
@@ -496,9 +519,10 @@ async def product_line_assign(request: Request):
 
 # ---------- 固定資產卡 + 折舊(v2 回合 3) -------------------
 # 2026-10-08 同仁回饋:耐用年數最少 10 年(畫面跟存檔都擋),殘值一律 0
-ASSET_MIN_LIFE = 10
-ASSET_CATS = {"機器設備": 10, "生財器具": 10, "運輸設備": 10,
-              "電腦設備": 10, "房屋建築": 30, "其他": 10}
+ASSET_MIN_LIFE = 10          # 年;2026-10-16 起表單填「月」,最少 ASSET_MIN_LIFE*12 = 120 個月
+ASSET_MIN_MONTHS = ASSET_MIN_LIFE * 12
+ASSET_CATS = {"機器設備": 120, "生財器具": 120, "運輸設備": 120,
+              "電腦設備": 120, "房屋建築": 360, "其他": 120}   # 預設使用年限(月)
 
 @app.get("/assets", response_class=HTMLResponse)
 def assets_page(request: Request):
@@ -516,8 +540,8 @@ def assets_page(request: Request):
 
 def _asset_form_ctx(request, a, prefill=None):
     return dict(request=request, active="asset", a=a, prefill=prefill,
-               cats=ASSET_CATS, min_life=ASSET_MIN_LIFE, today=dt.date.today().isoformat(),
-               bank_names=Q.payment_account_names())
+               cats=ASSET_CATS, min_months=ASSET_MIN_MONTHS, today=dt.date.today().isoformat(),
+               cash_accounts=chart.accounts(["C"]))
 
 @app.get("/assets/new", response_class=HTMLResponse)
 def asset_new(request: Request):
@@ -546,26 +570,20 @@ async def asset_save(request: Request):
     if not (name and date):
         return RedirectResponse("/assets", status_code=303)
     try:
-        life = int(f.get("life_years") or ASSET_MIN_LIFE)
+        months = int(f.get("life_months") or ASSET_MIN_MONTHS)
     except ValueError:
-        life = 0
-    if life < ASSET_MIN_LIFE:   # 畫面已經擋了,這裡是防有人繞過畫面直接送
+        months = 0
+    if months < ASSET_MIN_MONTHS:   # 畫面已經擋了,這裡是防有人繞過畫面直接送
         back = f"/assets/{aid}/edit" if aid else "/assets/new"
         return RedirectResponse(f"{back}?err=life", status_code=303)
     cost = fl("cost")
-    grant = fl("grant_amount")
-    salvage = 0   # 殘值一律 0,不開放填
+    tax = fl("tax_amount")
     category = g("category")
-    payment_account = g("payment_account")
-    if payment_account == "__new__":   # 下拉選「其他帳戶」→ 用手動輸入的名稱(第一次用到會自動建帳戶代碼)
-        payment_account = g("payment_account_new")
-        if not payment_account:
-            back = f"/assets/{aid}/edit" if aid else "/assets/new"
-            return RedirectResponse(f"{back}?err=acct", status_code=303)
+    payment_account = g("payment_account") or "現金"
     cols = dict(
         name=name, category=category,
-        acquire_date=date, cost=cost, grant_amount=grant, salvage=salvage,
-        life_years=life, method="平均法",
+        acquire_date=date, cost=cost, grant_amount=0, salvage=0, tax_amount=tax,
+        life_months=months, life_years=months // 12, method="平均法",
         disposed_date=g("disposed_date"), payment_account=payment_account, note=g("note"))
     if aid:
         sets = ",".join(f"{k}=:{k}" for k in cols)
@@ -574,19 +592,19 @@ async def asset_save(request: Request):
     else:
         keys = ",".join(cols)
         new_id = execute(f"INSERT INTO fixed_asset({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
-    legs = ledger.compose_asset_acquire_entries(category, cost, grant, payment_account)
+    legs = ledger.compose_asset_acquire_entries(category, cost, tax, payment_account)
     ledger.save_voucher("asset_acquire", new_id, date, legs, note=f"設備取得:{name}")
     return RedirectResponse("/assets", status_code=303)
 
 
 # ---------- 商品目錄 + 定價 -----------------------------------
-PRICE_SEGS = ['零售', '批發', '團購', '機構', '內部']   # price_list.customer_segment
+PRICE_SEGS = ['零售']   # 2026-10-16 客戶不分級,商品只剩一個售價(存在 price_list 的「零售」那列)
 PROD_TYPES = ['單品', '組合', '禮盒', '裸裝', '試吃包', '加購贈品']
 PKG_FORMS  = ['夾鏈袋', '罐', '禮盒', '真空袋', '裸裝']
 UOMS       = ['包', '斤', '盒', '罐', '支']
 STORAGE    = ['常溫', '冷藏', '冷凍']
 # customer.segment -> price_list.customer_segment
-SEG_MAP = {'零售': '零售', '批發': '批發', '團購主': '團購', '機構': '機構', '公關對象': '內部'}
+SEG_MAP = {}   # 2026-10-16 客戶不分級:一律用「零售」那一欄的價(商品目錄只剩一個售價)
 
 @app.get("/products", response_class=HTMLResponse)
 def products(request: Request):
@@ -651,7 +669,7 @@ async def product_save(request: Request):
         return RedirectResponse("/products", status_code=303)
     g = lambda k: (f.get(k) or "").strip() or None
     ig = lambda k: int(f.get(k)) if (f.get(k) or "").strip() else None
-    cols = dict(sku=(f.get("sku") or "").strip(), name=(f.get("name") or "").strip(),
+    cols = dict(sku=(f.get("sku") or "").strip() or next_product_code(), name=(f.get("name") or "").strip(),
                 product_type=g("product_type"), type_code_raw=g("type_code_raw"),
                 product_group_id=ig("product_group_id"),
                 net_weight_g=ig("net_weight_g"), gross_weight_g=ig("gross_weight_g"),
@@ -743,7 +761,21 @@ async def channel_save(request: Request):
 
 
 # ---------- 客戶資料庫 -----------------------------------------
-CUST_TYPES = ['個人', '公司', '機構團體', '通路商', '內部']
+CUST_TYPES = ['企業戶', '個人戶']   # 客戶分類(2026-10-16 依 Excel,客戶不分級)
+
+
+def next_cust_no(year=None):
+    """客戶編號 = C + 西曆年 + 當年 3 碼流水號(例 C2026001)。"""
+    y = str(year or dt.date.today().year)
+    m = q1("SELECT MAX(CAST(SUBSTR(cust_no, 6) AS INTEGER)) m FROM customer WHERE cust_no LIKE ?",
+           (f"C{y}%",)).get("m") or 0
+    return f"C{y}{m + 1:03d}"
+
+
+def next_product_code():
+    """品項代碼 = F + 3 碼流水號(例 F001,2026-10-16 依 Excel 自動編號)。"""
+    nums = [int(r["sku"][1:]) for r in q("SELECT sku FROM product WHERE sku LIKE 'F%'") if r["sku"][1:].isdigit()]
+    return f"F{(max(nums) if nums else 0) + 1:03d}"
 CUST_SEGS  = ['零售', '批發', '團購主', '機構', '公關對象']
 DOC_PREFS  = ['電子發票二聯', '電子發票三聯', '農民收據', '免開立']
 
@@ -782,7 +814,7 @@ def customer_new(request: Request, next: str = "/customers"):
 def api_customers(request: Request):
     kw = (request.query_params.get("q") or "").strip()
     if kw:
-        rows = q("""SELECT cu.customer_id id, cu.display_name name, cu.segment, cu.phone,
+        rows = q("""SELECT cu.customer_id id, cu.display_name name, cu.customer_type segment, cu.cust_no, cu.phone,
                       (SELECT MAX(order_date) FROM "order" o WHERE o.customer_id=cu.customer_id) last_order,
                       (SELECT COUNT(*) FROM "order" o WHERE o.customer_id=cu.customer_id AND o.order_kind='銷售') n_orders
                     FROM customer cu
@@ -791,7 +823,7 @@ def api_customers(request: Request):
                        UNION SELECT customer_id FROM customer_alias WHERE alias_text LIKE :k)
                     ORDER BY n_orders DESC, cu.display_name LIMIT 25""", {"k": f"%{kw}%"})
     else:
-        rows = q("""SELECT cu.customer_id id, cu.display_name name, cu.segment, cu.phone,
+        rows = q("""SELECT cu.customer_id id, cu.display_name name, cu.customer_type segment, cu.cust_no, cu.phone,
                       (SELECT MAX(order_date) FROM "order" o WHERE o.customer_id=cu.customer_id) last_order,
                       (SELECT COUNT(*) FROM "order" o WHERE o.customer_id=cu.customer_id AND o.order_kind='銷售') n_orders
                     FROM customer cu ORDER BY last_order DESC NULLS LAST, cu.display_name LIMIT 8""")
@@ -799,7 +831,7 @@ def api_customers(request: Request):
 
 @app.get("/api/customers/{cid}")
 def api_customer(cid: int):
-    c = q("""SELECT customer_id id, display_name name, segment, phone, contact_person
+    c = q("""SELECT customer_id id, display_name name, customer_type segment, cust_no, phone, contact_person
              FROM customer WHERE customer_id=?""", (cid,))
     if not c:
         return JSONResponse({}, status_code=404)
@@ -864,7 +896,7 @@ async def customer_save(request: Request):
     if not name:
         back = f"/customers/{cid}/edit" if cid else "/customers/new"
         return RedirectResponse(back, status_code=303)
-    cols = dict(display_name=name, customer_type=g("customer_type"), segment=g("segment"),
+    cols = dict(display_name=name, customer_type=g("customer_type"),
                 primary_channel_id=ch, phone=g("phone"), email=g("email"),
                 contact_person=g("contact_person"), invoice_title=g("invoice_title"),
                 tax_id=g("tax_id"), tax_doc_pref=g("tax_doc_pref"),
@@ -891,6 +923,7 @@ async def customer_save(request: Request):
                     next=f.get("next") or "/customers", dups=dups,
                     channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id"),
                     types=CUST_TYPES, segs=CUST_SEGS, docs=DOC_PREFS))
+        cols["cust_no"] = next_cust_no()
         keys = ",".join(cols)
         cid = execute(f'INSERT INTO customer({keys}) VALUES({",".join(":"+k for k in cols)})', cols)
         execute("INSERT OR IGNORE INTO customer_alias(customer_id,alias_text) VALUES(?,?)", (cid, name))
@@ -949,11 +982,12 @@ async def customer_merge(request: Request, cid: int):
     return RedirectResponse(f"/customers/{tgt}?merged=1", status_code=303)
 
 
-def next_order_no():
-    """依現有單號最大編號 +1(不是用筆數算,避免刪過訂單後編號撞號)。"""
-    row = q("SELECT MAX(CAST(SUBSTR(order_no,2) AS INTEGER)) m FROM \"order\" WHERE order_no LIKE 'S%'")
-    m = (row[0]["m"] or 0) + 1
-    return f"S{m:04d}"
+def next_order_no(date=None):
+    """訂單編號 = S + 訂單日期 YYYYMMDD + 當天 3 碼流水號(例 S20260904001,1015 版 Excel)。"""
+    ymd = (date or dt.date.today().isoformat()).replace("-", "")
+    m = q1("SELECT MAX(CAST(SUBSTR(order_no, 10) AS INTEGER)) m FROM \"order\" WHERE order_no LIKE ?",
+           (f"S{ymd}%",)).get("m") or 0
+    return f"S{ymd}{m + 1:03d}"
 
 
 # ---------- 新增訂單 -------------------------------------------
@@ -970,7 +1004,7 @@ def order_new(request: Request):
         products=q("SELECT product_id,sku,name,uom FROM product WHERE status='在售' ORDER BY sku"),
         today=dt.date.today().isoformat(),
         prices_json=json.dumps(prices), cust_seg_json=json.dumps(cust_seg),
-        ship_payers=SHIP_PAYERS,
+
     ))
 
 
@@ -1022,28 +1056,25 @@ async def order_create(request: Request):
     subtotal = sum(qv * up for _, qv, up, _, _ in lines)
     # 每列的成交價已是實收價;discount_total 只放使用者另外填的整單折讓。
     # 「賣得比定價低」的差額改由 list_price 於報表即時計算,不重複扣。
-    # 應收金額本來不含運費(運費只是家易花多少錢的紀錄,不跟客人收的部分另外拆帳)——
-    # 但「運費由誰負擔」選「客戶付」時,客人真正要付的錢裡面有包含運費,這裡要算進去,
-    # 不然收款時會把應收帳款沖過頭(見 2026-10-03 討論,ledger.py 那邊會把運費科目借貸
-    # 互相沖平,對公司損益淨影響還是 0,只是應收/收款金額要對)。
-    ship_payer = one("ship_payer", "店家吸收")
-    shipping_cost_actual = flt("shipping_cost_actual")
-    total = subtotal - discount_total + (shipping_cost_actual if ship_payer == "客戶付" else 0)
+    # 運費(2026-10-16,1015 版 Excel):這裡的運費是「跟客人收的」,算進應收、也算收入。
+    # 實際付給物流的運費由家易從營運支出記(6114 運費),訂單不再自動記運費支出。
+    shipping_fee = flt("shipping_fee_charged")
+    total = subtotal - discount_total + shipping_fee
     invoiced = 1 if one("invoiced") else 0
     if invoiced and not one("tax_doc_no"):
         return RedirectResponse("/orders/new?err=invoice", status_code=303)
     # 銷項稅額(2026-10-08):售價含稅,家易自己填稅額,系統不算;只擋明顯打錯(負數或比商品金額還大)
     sales_tax = flt("sales_tax") if order_kind == "銷售" else 0.0
-    if sales_tax < 0 or (sales_tax and sales_tax >= subtotal):
+    if sales_tax < 0 or (sales_tax and sales_tax >= total):
         return RedirectResponse("/orders/new?err=tax", status_code=303)
     oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
                      discount_total,order_total,sales_tax,payment_method,payment_status,
-                     shipping_cost_actual,ship_payer,ship_method,ship_status,invoiced,tax_doc_no)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
-                  (next_order_no(), order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
+                     shipping_fee_charged,ship_method,ship_status,invoiced,tax_doc_no)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
+                  (next_order_no(order_date), order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
                    discount_total, total, sales_tax,
                    one("payment_method") or None, one("payment_status", "待收款"),
-                   shipping_cost_actual, ship_payer, one("ship_method") or None,
+                   shipping_fee, one("ship_method") or None,
                    invoiced, one("tax_doc_no") or None))
     for p, qv, up, b, lp in lines:
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,unit_cost)
@@ -1065,10 +1096,9 @@ def _post_order_ledger(oid):
     o, lines = Q.order_get(oid)
     if not o:
         return
-    sale_lines = [(l["pg_name"], l["line_subtotal"] or 0, (l["qty"] or 0) * (l["unit_cost"] or 0))
-                  for l in lines if not l["is_gift"]]
-    sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_cost_actual"],
-                                                  o["ship_payer"], o["sales_tax"])
+    sale_lines = [(l["pg_name"], l["line_subtotal"] or 0) for l in lines if not l["is_gift"]]
+    sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_fee_charged"],
+                                                  o["sales_tax"])
     ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, note=f"訂單 {o['order_no']}")
 
     pay_legs = ledger.compose_order_payment_entries(o["paid_amount"], o["payment_account"])
@@ -1078,7 +1108,7 @@ def _post_order_ledger(oid):
 
 # ---------- 訂單管理:清單 / 明細 / 更新 -----------------------
 PAY_METHODS  = ['現金', '銀行匯款', '貨到付款', '行動支付', '信用卡', '平台代收', '未收款']
-PAY_STATUS   = ['待收款', '部分收款', '已收款', '免收款']
+PAY_STATUS   = ['待收款', '已收款', '免收款']
 SHIP_METHODS = ['自行配送', '客戶自取', '宅配', '超商店到店', '超商賣貨便', '冷藏宅配']
 SHIP_STATUS  = ['待出貨', '已出貨', '已送達', '退回', '遺失', '破損']
 SHIP_PAYERS  = ['店家吸收', '客戶付']
@@ -1152,9 +1182,9 @@ async def order_import_confirm(request: Request):
             continue
         resolve = f.get(f"resolve_{i}", "new")
         if resolve == "new":
-            cid = execute("""INSERT INTO customer(display_name,customer_type,segment,primary_channel_id,phone)
+            cid = execute("""INSERT INTO customer(cust_no,display_name,customer_type,primary_channel_id,phone)
                               VALUES(?,?,?,?,?)""",
-                          (row["customer_name"] or row["phone"], "個人", "零售", channel_id,
+                          (next_cust_no(), row["customer_name"] or row["phone"], "個人戶", channel_id,
                            row["phone_raw"] or row["phone"]))
             execute("INSERT OR IGNORE INTO customer_alias(customer_id,alias_text) VALUES(?,?)",
                     (cid, row["customer_name"] or row["phone"]))
@@ -1182,7 +1212,7 @@ async def order_import_confirm(request: Request):
         oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
                          order_total,payment_method,payment_status,ship_status,source_ref,note)
                          VALUES(?,?,?,?,?, '銷售', ?,?, '待收款', '待出貨', ?,?)""",
-                      (next_order_no(), row["order_date"], Q.season_of(row["order_date"]), cid, channel_id,
+                      (next_order_no(row["order_date"]), row["order_date"], Q.season_of(row["order_date"]), cid, channel_id,
                        subtotal, row.get("payment_method"), row["source_ref"], row.get("note") or None))
         for pid, qty, up in built_lines:
             execute("""INSERT INTO order_line(order_id,product_id,qty,unit_price,line_subtotal,unit_cost)
@@ -1210,7 +1240,9 @@ def order_detail(request: Request, oid: int):
         request=request, active="order", o=o, lines=lines,
         products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
         pay_methods=PAY_METHODS, pay_status=PAY_STATUS,
-        ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, ship_payers=SHIP_PAYERS, kinds=ORDER_KINDS,
+        ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, kinds=ORDER_KINDS,
+        cash_accounts=chart.accounts(["C"]),
+        va_accounts=chart.accounts(["VA"]),
         returns=Q.returns_list(oid), return_kinds=ledger.RETURN_KINDS,
         order_cost=sum((l["qty"] or 0) * (l["unit_cost"] or 0) for l in lines if not l["is_gift"]),
         today=dt.date.today().isoformat()))
@@ -1219,10 +1251,11 @@ def order_detail(request: Request, oid: int):
 # ---------- 訂單退款 / 退回小農(2026-10-08 貿易公司模式) -----------
 #   退貨又退款 → 直接刪訂單(order_delete 會連總帳一起刪),不走這裡。
 #   退款 = 只退款不退貨(其他損失);退回小農 = 退貨不退款(小農退成本,沖應付帳款)。
-def _post_return_ledger(rid, oid, date, kind, amount):
+def _post_return_ledger(rid, oid, date, kind, amount, payment_account=None, cost_account=None):
     o = q1('SELECT payment_status, payment_account FROM "order" WHERE order_id=?', (oid,))
-    already_paid = o.get("payment_status") in ("已收款", "部分收款")
-    legs = ledger.compose_sales_return_entries(kind, amount, already_paid, o.get("payment_account"))
+    already_paid = o.get("payment_status") == "已收款"
+    legs = ledger.compose_sales_return_entries(kind, amount, already_paid,
+                                                payment_account or o.get("payment_account"), cost_account)
     ledger.save_voucher("sales_return", rid, date, legs, note=f"{kind}:訂單#{oid}")
 
 @app.get("/returns", response_class=HTMLResponse)
@@ -1250,9 +1283,11 @@ async def order_return_create(request: Request, oid: int):
     if amount <= 0:
         return RedirectResponse(f"/orders/{oid}?rerr=1", status_code=303)
     reason = (f.get("reason") or "").strip() or None
-    rid = execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,reason)
-                     VALUES(?,?,?,?,?,?)""", (oid, date, Q.season_of(date), kind, amount, reason))
-    _post_return_ledger(rid, oid, date, kind, amount)
+    acct = (f.get("payment_account") or "").strip() or None
+    cost = (f.get("cost_account") or "").strip() or None if kind == "退回小農" else None
+    rid = execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,payment_account,cost_account,reason)
+                     VALUES(?,?,?,?,?,?,?,?)""", (oid, date, Q.season_of(date), kind, amount, acct, cost, reason))
+    _post_return_ledger(rid, oid, date, kind, amount, acct, cost)
     return RedirectResponse(f"/orders/{oid}?rok=1", status_code=303)
 
 
@@ -1312,34 +1347,31 @@ async def order_update(request: Request, oid: int):
 
     subtotal = sum(qv * up for _, qv, up, _, gf in new_lines if not gf)
     disc = o["discount_total"] or 0  # 折扣欄位已不開放編輯,沿用原值(通常是 0)
-    ship_payer = g("ship_payer") or "店家吸收"
-    shipping_cost_actual = flt("shipping_cost_actual")
-    # 「客戶付」時客人真正要付的錢裡含運費,應收要算進去,不然收款時應收帳款會沖過頭
-    # (見 2026-10-03 討論,ledger.py 會把運費科目借貸互相沖平,對損益淨影響還是 0)。
-    total = subtotal - disc + (shipping_cost_actual if ship_payer == "客戶付" else 0)
+    shipping_fee = flt("shipping_fee_charged")   # 跟客人收的運費,算進應收(2026-10-16)
+    total = subtotal - disc + shipping_fee
 
     if f.get("invoiced") and not g("tax_doc_no"):
         return RedirectResponse(f"/orders/{oid}?err=invoice", status_code=303)
     sales_tax = flt("sales_tax") if (g("order_kind") or o["order_kind"]) == "銷售" else 0.0
-    if sales_tax < 0 or (sales_tax and sales_tax >= subtotal):
+    if sales_tax < 0 or (sales_tax and sales_tax >= total):
         return RedirectResponse(f"/orders/{oid}?err=tax", status_code=303)
-    # 收款狀態/出貨狀態不能用下拉選單直接跳成「已收款/部分收款」「已出貨」——
-    # 要嘛走上面專門的「標記已收款」「標記已出貨」按鈕,要嘛在這裡把對應欄位一起填齊,
+    # 收款要一次收齊(2026-10-16):選「已收款」就要有收款日,實收金額 = 應收合計,
     # 不然會出現「狀態寫已收款,但總帳沒有收款分錄」這種看起來做了其實沒做的情況。
-    if g("payment_status") in ("已收款", "部分收款") and flt("paid_amount") <= 0:
+    paid = g("payment_status") == "已收款"
+    if paid and not g("paid_date"):
         return RedirectResponse(f"/orders/{oid}?payerr=1", status_code=303)
     if g("ship_status") == "已出貨" and not (g("ship_method") and g("shipped_date")):
         return RedirectResponse(f"/orders/{oid}?shiperr=1", status_code=303)
     cust_id = f.get("customer_id")
     cols = dict(order_date=g("order_date"), order_kind=g("order_kind"),
                 payment_method=g("payment_method"), payment_status=g("payment_status") or "待收款",
-                paid_date=g("paid_date"), paid_amount=(flt("paid_amount") or None),
+                paid_date=(g("paid_date") if paid else None), paid_amount=(total if paid else None),
+                payment_account=(g("payment_account") if paid else None),
                 order_total=total, sales_tax=sales_tax,
                 ship_method=g("ship_method"), carrier=g("carrier"), tracking_no=g("tracking_no"),
                 shipped_date=g("shipped_date"), delivered_date=g("delivered_date"),
                 ship_status=g("ship_status") or "待出貨",
-                shipping_cost_actual=shipping_cost_actual,
-                ship_payer=ship_payer, note=g("note"),
+                shipping_fee_charged=shipping_fee, note=g("note"),
                 invoiced=(1 if f.get("invoiced") else 0), tax_doc_no=g("tax_doc_no"))
     if cust_id and cust_id.isdigit():
         cols["customer_id"] = int(cust_id)
@@ -1369,8 +1401,9 @@ def order_copy(oid: int):
                 (noid, l["product_id"], l["batch_id"], l["qty"], l["unit_price"],
                  l["list_price"], 0 if l["is_gift"] else l["qty"] * l["unit_price"], l["is_gift"],
                  _product_cost(l["product_id"])))
-    execute('UPDATE "order" SET order_total=?, sales_tax=? WHERE order_id=?',
-            (subtotal, o["sales_tax"] or 0, noid))
+    ship = o["shipping_fee_charged"] or 0
+    execute('UPDATE "order" SET order_total=?, sales_tax=?, shipping_fee_charged=? WHERE order_id=?',
+            (subtotal + ship, o["sales_tax"] or 0, ship, noid))
     _post_order_ledger(noid)
     return RedirectResponse(f"/orders/{noid}?ok=1", status_code=303)
 
@@ -1397,17 +1430,11 @@ async def order_mark_paid(request: Request, oid: int):
     o, _ = Q.order_get(oid)
     if not o:
         return RedirectResponse("/orders", status_code=303)
-    try:
-        amt = float(f.get("paid_amount") or 0)
-    except ValueError:
-        amt = 0.0
-    if amt <= 0:
-        return RedirectResponse(f"/orders/{oid}?perr=1", status_code=303)
+    # 2026-10-16:收款一次收齊,實收 = 應收合計;收到哪個帳戶用選的(會計科目表 C 組)
     pdate = (f.get("paid_date") or "").strip() or dt.date.today().isoformat()
-    # 實收 >= 應收(差一點四捨五入誤差也算)→ 已收款;不足 → 部分收款
-    status = "已收款" if amt >= (o["order_total"] or 0) - 0.5 else "部分收款"
-    execute("""UPDATE "order" SET payment_status=?, paid_date=?, paid_amount=?
-               WHERE order_id=?""", (status, pdate, amt, oid))
+    acct = (f.get("payment_account") or "").strip() or "現金"
+    execute("""UPDATE "order" SET payment_status='已收款', paid_date=?, paid_amount=order_total,
+               payment_account=? WHERE order_id=?""", (pdate, acct, oid))
     _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?done=paid", status_code=303)
 
@@ -1505,10 +1532,10 @@ def finance_page(request: Request):
                   else [Q.season_finance(s) for s in Q.seasons()])
     return tpl.TemplateResponse("finance.html", dict(
         request=request, active="finance",
-        fin_json=json.dumps(fin), cats=Q.OPEX_CATS,
+        fin_json=json.dumps(fin), cats=Q.opex_cats(),
         seasons_fin=fin_totals, **ctx))
 
-DOC_TYPES = ['三聯式發票', '二聯式發票', '收據', '農民收據', '無憑證']   # 營運費用的憑證類型
+DOC_TYPES = ['發票', '收據']   # 憑證類型(1015 版 Excel:發票、收據;發票要填號碼)
 
 @app.get("/finance/expenses", response_class=HTMLResponse)
 def finance_expenses(request: Request):
@@ -1516,15 +1543,20 @@ def finance_expenses(request: Request):
     return tpl.TemplateResponse("finance_expenses.html", dict(
         request=request, active="expenses", rows=rows))
 
-def _expense_form_ctx(request, e):
+def _expense_form_ctx(request, e, grp="VD"):
+    """營運支出(VD)/ 其他費用(VE)共用這個表單,項目直接選會計科目(2026-10-16)。"""
     months = Q.months_with_data()
-    return dict(request=request, active="expenses", e=e, cats=Q.OPEX_CATS,
+    if e and e.get("account_code"):
+        grp = q1("SELECT grp FROM account WHERE code=?", (e["account_code"],)).get("grp") or grp
+    grp = grp if grp in ("VD", "VE") else "VD"
+    return dict(request=request, active="expenses", e=e, grp=grp, accts=chart.accounts([grp]),
                docs=DOC_TYPES,
                ym_default=(months[-1] if months else dt.date.today().strftime("%Y-%m")))
 
 @app.get("/finance/expenses/new", response_class=HTMLResponse)
 def finance_expense_new(request: Request):
-    return tpl.TemplateResponse("finance_expense_form.html", _expense_form_ctx(request, None))
+    return tpl.TemplateResponse("finance_expense_form.html",
+                                _expense_form_ctx(request, None, request.query_params.get("grp") or "VD"))
 
 @app.get("/finance/expenses/{eid}/edit", response_class=HTMLResponse)
 def finance_expense_edit(request: Request, eid: int):
@@ -1559,19 +1591,21 @@ async def finance_expense_save(request: Request):
         _expense_delete(eid)
         return RedirectResponse("/finance/expenses", status_code=303)
     ym = (f.get("ym") or "").strip()
-    cat = (f.get("category") or "").strip()
-    if not (ym and cat):
+    code = (f.get("account_code") or "").strip()
+    acct = q1("SELECT code, name FROM account WHERE code=? AND grp IN ('VD','VE')", (code,))
+    if not (ym and acct):
         return RedirectResponse("/finance/expenses", status_code=303)
+    cat = acct["name"]
     am = f.get("amortize_months") or ""
     cols = dict(
-        ym=ym, category=cat, amount=fl("amount"),
+        ym=ym, category=cat, account_code=code, amount=fl("amount"),
         amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
         note=g("note"))
 
     # 走確認畫面,存檔動作交給 /finance/expenses/confirm
     existing = q1("SELECT tax_amount, payment_account, doc_type, invoice_no FROM op_expense WHERE expense_id=?",
                   (int(eid),)) if eid else {}
-    acct_code, acct_name = ledger.EXPENSE_ACCOUNTS.get(cat, ledger.EXPENSE_ACCOUNTS["其他"])
+    acct_code, acct_name = acct["code"], acct["name"]
     hidden = dict(cols)
     if eid:
         hidden["expense_id"] = eid
@@ -1589,7 +1623,7 @@ async def finance_expense_save(request: Request):
         tax_account=ledger.TAX_INPUT_ACCOUNT, cash_account=ledger.CASH_ACCOUNT,
         bank_codes={r["name"]: r["code"] for r in chart.bank_accounts()},
         tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
-        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES, bank_names=Q.payment_account_names(),
+        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES, cash_accounts=chart.accounts(["C"]),
         invoice_no=existing.get("invoice_no"),
     ))
 
@@ -1604,20 +1638,21 @@ async def finance_expense_confirm(request: Request):
     payment_account = g("payment_account")
     am = f.get("amortize_months") or ""
     ym = (f.get("ym") or "").strip()
-    cat = (f.get("category") or "").strip()
+    code = (f.get("account_code") or "").strip()
+    cat = chart.name_of(code, f.get("category"))
     doc_type = g("doc_type")
     invoice_no = g("invoice_no")
     if doc_type and "發票" in doc_type and not invoice_no:
         back = f"/finance/expenses/{eid}/edit" if eid else "/finance/expenses/new"
         return RedirectResponse(f"{back}?ierr=1", status_code=303)
     cols = dict(
-        ym=ym, category=cat, amount=fl("amount"),
+        ym=ym, category=cat, account_code=code, amount=fl("amount"),
         amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
         tax_amount=tax_amount, payment_account=payment_account, doc_type=doc_type,
         invoice_no=invoice_no,
         note=g("note"))
     new_id = _expense_upsert(cols, eid)
-    legs = ledger.compose_expense_entries(cat, cols["amount"], tax_amount, payment_account)
+    legs = ledger.compose_expense_entries(code, cols["amount"], tax_amount, payment_account)
     ledger.save_voucher("op_expense", new_id, f"{ym}-01", legs, note=f"營運費用:{cat}")
     return RedirectResponse("/finance/expenses", status_code=303)
 
@@ -1625,11 +1660,11 @@ async def finance_expense_confirm(request: Request):
 # ---------- 9 宮格 B 類:首頁入口 ----------------------------
 ENTRY_CARDS = [
     dict(title="銷售 / 出貨", href="/orders/new", desc="開一張訂單,存檔就自動記應收帳款/銷貨收入。"),
-    dict(title="付小農貨款", href="/farmer-payments", desc="訂單成立時欠小農的錢,真的付款時在這裡登記。"),
+    dict(title="進口商品", href="/goods-purchases", desc="跟小農買貨時記一筆,成本依產品線記進採購成本。"),
     dict(title="營運支出", href="/finance/expenses/new", desc="逐月費用登記,存檔前會給你看一次分錄。"),
     dict(title="設備相關", href="/assets/new", desc="機器/器具採購,建固定資產卡,系統會自動記分錄、每月提折舊。"),
     dict(title="其他收益", href="/other-income/new", desc="利息收入、政府補助等非銷售的進帳。"),
-    dict(title="其他費用", href="/finance/expenses/new", desc="勞務費/檢驗費/規費等雜項費用,在「營運支出」的類別選單裡就找得到。"),
+    dict(title="其他費用", href="/finance/expenses/new?grp=VE", desc="利息費用、所得稅這類不屬於營運的費用。"),
     dict(title="資本異動", href="/equity/new", desc="現金增資、盈餘轉列公積。"),
     dict(title="帳務調整", href="/adjustments/new", desc="上面都套不上時,手動指定一組借/貸科目記一筆。"),
 ]
@@ -1640,7 +1675,7 @@ def entry_page(request: Request):
 
 
 # ---------- 9 宮格 B 類:其他收益 ----------------------------
-OTHER_INCOME_CATS = list(ledger.OTHER_INCOME_ACCOUNTS.keys())
+OTHER_INCOME_CATS = list(ledger.OTHER_INCOME_ACCOUNTS.keys())   # 舊資料用;2026-10-16 起選 UB 科目
 
 @app.get("/other-income", response_class=HTMLResponse)
 def other_income_list(request: Request):
@@ -1649,8 +1684,8 @@ def other_income_list(request: Request):
         request=request, active="other_income", rows=rows))
 
 def _other_income_form_ctx(request, r):
-    return dict(request=request, active="other_income", r=r, cats=OTHER_INCOME_CATS,
-                bank_names=Q.payment_account_names())
+    return dict(request=request, active="other_income", r=r, accts=chart.accounts(["UB"]),
+                cash_accounts=chart.accounts(["C"]), docs=DOC_TYPES)
 
 @app.get("/other-income/new", response_class=HTMLResponse)
 def other_income_new(request: Request):
@@ -1677,10 +1712,17 @@ async def other_income_save(request: Request):
         _other_income_delete(iid)
         return RedirectResponse("/other-income", status_code=303)
     date = (f.get("income_date") or "").strip()
-    cat = g("category")
-    if not (date and cat):
+    code = g("account_code")
+    acct = q1("SELECT code, name FROM account WHERE code=? AND grp='UB'", (code,))
+    if not (date and acct):
         return RedirectResponse("/other-income", status_code=303)
-    cols = dict(income_date=date, category=cat, amount=fl("amount"), tax_amount=fl("tax_amount"),
+    doc = g("doc_type")
+    if doc == "發票" and not g("invoice_no"):
+        back = f"/other-income/{iid}/edit" if iid else "/other-income/new"
+        return RedirectResponse(f"{back}?ierr=1", status_code=303)
+    cat = acct["name"]
+    cols = dict(income_date=date, category=cat, account_code=code, amount=fl("amount"), tax_amount=fl("tax_amount"),
+                doc_type=doc, invoice_no=(g("invoice_no") if doc == "發票" else None),
                 payment_account=g("payment_account"), note=g("note"))
     if iid:
         sets = ",".join(f"{k}=:{k}" for k in cols)
@@ -1689,7 +1731,7 @@ async def other_income_save(request: Request):
     else:
         keys = ",".join(cols)
         new_id = execute(f"INSERT INTO other_income({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
-    legs = ledger.compose_other_income_entries(cat, cols["amount"], cols["tax_amount"], cols["payment_account"])
+    legs = ledger.compose_other_income_entries(code, cols["amount"], cols["tax_amount"], cols["payment_account"])
     ledger.save_voucher("other_income", new_id, date, legs, note=f"其他收益:{cat}")
     return RedirectResponse("/other-income", status_code=303)
 
@@ -1703,7 +1745,7 @@ def equity_list(request: Request):
 @app.get("/equity/new", response_class=HTMLResponse)
 def equity_new(request: Request):
     return tpl.TemplateResponse("equity_form.html", dict(
-        request=request, active="equity", r=None, bank_names=Q.payment_account_names()))
+        request=request, active="equity", r=None, cash_accounts=chart.accounts(["C"])))
 
 @app.get("/equity/{tid}/edit", response_class=HTMLResponse)
 def equity_edit(request: Request, tid: int):
@@ -1711,7 +1753,7 @@ def equity_edit(request: Request, tid: int):
     if not r:
         return RedirectResponse("/equity", status_code=303)
     return tpl.TemplateResponse("equity_form.html", dict(
-        request=request, active="equity", r=r[0], bank_names=Q.payment_account_names()))
+        request=request, active="equity", r=r[0], cash_accounts=chart.accounts(["C"])))
 
 def _equity_delete(tid):
     execute("DELETE FROM equity_txn WHERE txn_id=?", (int(tid),))
@@ -1801,7 +1843,7 @@ def ledger_page(request: Request):
     src = request.query_params.get("source") or ""
     where, args = ["1=1"], []
     if src in ("op_expense", "order_sale", "order_payment",
-               "farmer_payment", "other_income", "equity", "manual_adjustment",
+               "goods_purchase", "other_income", "equity", "manual_adjustment",
                "asset_acquire", "asset_depreciation", "sales_return", "year_closing"):
         where.append("source_type=?"); args.append(src)
     rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
@@ -1844,7 +1886,7 @@ def _voucher_edit_url(source_type, source_id):
         "op_expense": f"/finance/expenses/{source_id}/edit",
         "order_sale": f"/orders/{source_id}",
         "order_payment": f"/orders/{source_id}",
-        "farmer_payment": "/farmer-payments",
+        "goods_purchase": "/goods-purchases",
         "other_income": f"/other-income/{source_id}/edit",
         "equity": f"/equity/{source_id}/edit",
         "manual_adjustment": f"/adjustments/{source_id}/edit",
@@ -2116,46 +2158,52 @@ async def targets_save(request: Request):
     return RedirectResponse("/targets", status_code=303)
 
 
-# ---------- 付小農貨款(2026-10-08 貿易公司模式) -------------------
-#   訂單成立時成本記「借銷貨成本 / 貸應付帳款」,這裡登記真的付錢給小農(借應付帳款 /
-#   貸現金或銀行)。小農只有一個,不分人;目前欠多少直接看總帳 2171 的餘額。
-@app.get("/farmer-payments", response_class=HTMLResponse)
-def farmer_payments_page(request: Request):
-    owed = q1("""SELECT COALESCE(SUM(credit - debit),0) v FROM ledger_entry
-                 WHERE account_code=?""", (ledger.AP_ACCOUNT[0],))["v"]
-    rows = q("SELECT * FROM farmer_payment ORDER BY pay_date DESC, payment_id DESC")
-    return tpl.TemplateResponse("farmer_payments.html", dict(
-        request=request, active="farmer", rows=rows, owed=owed,
-        total_paid=sum(r["amount"] or 0 for r in rows),
-        bank_names=Q.payment_account_names(), today=dt.date.today().isoformat()))
+# ---------- 進口商品(2026-10-16,取代付小農貨款)-------------------------
+#   1015 版帳務設定表:向小農買貨的當下記「借 採購成本(VA)/ 貸 現金或銀行」。欄位照
+#   「VA 採購成本明細」:成本種類、交易日期、憑證類型(發票 / 收據,發票要填號碼)、金額(整數)、備註。
+@app.get("/goods-purchases", response_class=HTMLResponse)
+def goods_purchases_page(request: Request):
+    rows = q("""SELECT g.*, a.name cost_name FROM goods_purchase g
+                LEFT JOIN account a ON a.code=g.cost_account
+                ORDER BY g.purchase_date DESC, g.purchase_id DESC""")
+    return tpl.TemplateResponse("goods_purchases.html", dict(
+        request=request, active="goods", rows=rows, total=sum(r["amount"] or 0 for r in rows),
+        va_accounts=chart.accounts(["VA"]), cash_accounts=chart.accounts(["C"]),
+        today=dt.date.today().isoformat()))
 
-@app.post("/farmer-payments")
-async def farmer_payment_create(request: Request):
+@app.post("/goods-purchases")
+async def goods_purchase_create(request: Request):
     f = await request.form()
-    date = (f.get("pay_date") or "").strip() or dt.date.today().isoformat()
+    g = lambda k: (f.get(k) or "").strip() or None
+    date = g("purchase_date") or dt.date.today().isoformat()
+    cost = g("cost_account")
+    doc = g("doc_type") or "收據"
+    inv = g("invoice_no")
     try:
-        amount = float(f.get("amount") or 0)
+        amount = int(float(f.get("amount") or 0))
     except ValueError:
-        amount = 0.0
-    if amount <= 0:
-        return RedirectResponse("/farmer-payments?err=1", status_code=303)
-    acct = (f.get("payment_account") or "").strip() or None
-    note = (f.get("note") or "").strip() or None
-    new_id = execute("INSERT INTO farmer_payment(pay_date,amount,payment_account,note) VALUES(?,?,?,?)",
-                     (date, amount, acct, note))
-    legs = ledger.compose_farmer_payment_entries(amount, acct)
-    ledger.save_voucher("farmer_payment", new_id, date, legs,
-                        note="付小農貨款" + (f":{note}" if note else ""))
-    return RedirectResponse("/farmer-payments?ok=1", status_code=303)
+        amount = 0
+    if amount <= 0 or not cost or not q1("SELECT 1 FROM account WHERE code=? AND grp='VA'", (cost,)):
+        return RedirectResponse("/goods-purchases?err=1", status_code=303)
+    if doc == "發票" and not inv:
+        return RedirectResponse("/goods-purchases?err=invoice", status_code=303)
+    acct = g("payment_account") or "現金"
+    new_id = execute("""INSERT INTO goods_purchase(purchase_date,cost_account,doc_type,invoice_no,amount,
+                        payment_account,note) VALUES(?,?,?,?,?,?,?)""",
+                     (date, cost, doc, inv if doc == "發票" else None, amount, acct, g("note")))
+    legs = ledger.compose_goods_purchase_entries(cost, amount, acct)
+    ledger.save_voucher("goods_purchase", new_id, date, legs,
+                        note="進口商品" + (f":{g('note')}" if g("note") else ""))
+    return RedirectResponse("/goods-purchases?ok=1", status_code=303)
 
-def _farmer_payment_delete(pid):
-    execute("DELETE FROM farmer_payment WHERE payment_id=?", (pid,))
-    ledger.delete_voucher_for("farmer_payment", pid)
+def _goods_purchase_delete(pid):
+    execute("DELETE FROM goods_purchase WHERE purchase_id=?", (pid,))
+    ledger.delete_voucher_for("goods_purchase", pid)
 
-@app.post("/farmer-payments/{pid}/delete")
-def farmer_payment_delete(pid: int):
-    _farmer_payment_delete(pid)
-    return RedirectResponse("/farmer-payments", status_code=303)
+@app.post("/goods-purchases/{pid}/delete")
+def goods_purchase_delete(pid: int):
+    _goods_purchase_delete(pid)
+    return RedirectResponse("/goods-purchases", status_code=303)
 
 
 # 傳票勾選刪除:連來源紀錄一起刪(重用各來源自己的刪除邏輯,不繞過既有規則)
@@ -2163,7 +2211,7 @@ _LEDGER_DELETERS = {
     "op_expense": _expense_delete,
     "order_sale": order_delete,
     "order_payment": order_delete,
-    "farmer_payment": _farmer_payment_delete,
+    "goods_purchase": _goods_purchase_delete,
     "other_income": _other_income_delete,
     "equity": _equity_delete,
     "manual_adjustment": _adjustment_delete,
