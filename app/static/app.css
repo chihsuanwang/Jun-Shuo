@@ -159,6 +159,15 @@ table.stmt thead th:nth-child(2), table.stmt tbody td:nth-child(2) { text-align:
 /* 總帳傳票表格:科目名稱靠左(合計列第二格是金額,不套) */
 table.vt thead th:nth-child(2), table.vt tbody tr:not(.sum) td:nth-child(2) { text-align: left; }
 
+/* --- 總帳(2026-10-16,照 1015 版一行一筆的大表格)--- */
+table.gl th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+table.gl th.sortable::after { content: attr(data-arrow); color: var(--seal); }
+table.gl th, table.gl td { text-align: left; white-space: nowrap; }
+table.gl th[data-num], table.gl td.r { text-align: right; }
+table.gl tr.filters th { padding: 4px 4px 8px; }
+table.gl tr.filters input { padding: 4px 6px; font-size: 12px; min-width: 70px; }
+table.gl tbody tr.picked { background: #F6E3D6; }
+
 /* --- 列印(揀貨單 / 標籤 / 食品標示) --- */
 @media print {
   .side, .print-hide, .head a, .head button, nav { display: none !important; }

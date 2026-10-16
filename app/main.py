@@ -1846,43 +1846,51 @@ async def adjustment_save(request: Request):
 
 
 # ---------- 總帳(進貨/營運費用/訂單/9宮格B類 自動過帳)-------
+LEDGER_SOURCES = {"order_sale": "訂單成立", "order_payment": "訂單收款", "goods_purchase": "進口商品(付小農)",
+                  "op_expense": "營運支出 / 其他支出", "other_income": "其他收益", "equity": "資本異動",
+                  "manual_adjustment": "帳務調整", "asset_acquire": "設備取得", "asset_depreciation": "折舊",
+                  "sales_return": "退款 / 退回小農", "year_closing": "年度結轉"}
+
+
+def _ledger_invoice_map():
+    """識別碼 = 發票號碼(2026-10-16 同仁確認)。依來源抓各自的發票號碼;沒有發票的留空。"""
+    m = {}
+    for r in q('SELECT order_id, tax_doc_no FROM "order" WHERE tax_doc_no IS NOT NULL AND tax_doc_no<>\'\''):
+        m[("order_sale", r["order_id"])] = m[("order_payment", r["order_id"])] = r["tax_doc_no"]
+    for st, sql in [("op_expense", "SELECT expense_id i, invoice_no v FROM op_expense"),
+                    ("other_income", "SELECT income_id i, invoice_no v FROM other_income"),
+                    ("goods_purchase", "SELECT purchase_id i, invoice_no v FROM goods_purchase")]:
+        for r in q(sql + " WHERE invoice_no IS NOT NULL AND invoice_no<>''"):
+            m[(st, r["i"])] = r["v"]
+    return m
+
+
+# ---------- 總帳(2026-10-16 照同事 1015 版「總帳」工作表)-------------------
+#   一行一筆分錄:勾選 / 傳票號碼 / 交易日期 / 科目代碼 / 會計項目 / 識別碼(發票號碼)/
+#   借方 / 貸方 / 異動金額(借 − 貸)/ 備註。預設依傳票號碼由小到大;點欄位標題排序、
+#   表頭下一排篩選(前端 JS)。勾選一行會把同一張傳票的所有行一起勾,刪除一次刪整張。
 @app.get("/ledger", response_class=HTMLResponse)
 def ledger_page(request: Request):
     src = request.query_params.get("source") or ""
     where, args = ["1=1"], []
-    if src in ("op_expense", "order_sale", "order_payment",
-               "goods_purchase", "other_income", "equity", "manual_adjustment",
-               "asset_acquire", "asset_depreciation", "sales_return", "year_closing"):
+    if src in LEDGER_SOURCES:
         where.append("source_type=?"); args.append(src)
     rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
-                 ORDER BY voucher_no, entry_id""", args)   # 2026-10-08 同仁回饋:預設依傳票號碼由小到大
-    vouchers = []
-    seen = {}
+                 ORDER BY voucher_no, entry_id""", args)
+    inv = _ledger_invoice_map()
+    edit_cache = {}
     for r in rows:
-        if r["voucher_no"] not in seen:
-            seen[r["voucher_no"]] = dict(voucher_no=r["voucher_no"], entry_date=r["entry_date"],
-                                          source_type=r["source_type"], source_id=r["source_id"],
-                                          note=r["note"], lines=[], total_debit=0, total_credit=0)
-            vouchers.append(seen[r["voucher_no"]])
-        v = seen[r["voucher_no"]]
-        v["lines"].append(r)
-        v["total_debit"] += r["debit"] or 0
-        v["total_credit"] += r["credit"] or 0
-    # 2026-10-08 同仁回饋:要刪除 / 編輯傳票,必須先篩選「指定日期 + 指定傳票號碼」,
-    # 篩到那一張才出現刪除 / 編輯按鈕,一次只處理一整張傳票,不能批次勾選。
-    pick_date = request.query_params.get("date") or ""
-    pick_no = request.query_params.get("voucher") or ""
-    picked = None
-    if pick_date and pick_no:
-        picked = next((v for v in vouchers if v["voucher_no"] == pick_no and v["entry_date"] == pick_date), None)
-        if picked:
-            picked["edit_url"] = _voucher_edit_url(picked["source_type"], picked["source_id"])
-            picked["deletable"] = picked["source_type"] in _LEDGER_DELETERS
-            vouchers = [picked]
+        key = (r["source_type"], r["source_id"])
+        r["invoice_no"] = inv.get(key, "")
+        r["amount"] = (r["debit"] or 0) - (r["credit"] or 0)
+        r["deletable"] = r["source_type"] in _LEDGER_DELETERS
+        if key not in edit_cache:
+            edit_cache[key] = _voucher_edit_url(*key)
+        r["edit_url"] = edit_cache[key]
+        r["src_label"] = LEDGER_SOURCES.get(r["source_type"], r["source_type"])
     return tpl.TemplateResponse("ledger.html", dict(
-        request=request, active="ledger", vouchers=vouchers, src=src,
-        pick_date=pick_date, pick_no=pick_no, picked=picked,
-        all_vouchers=[(v["entry_date"], v["voucher_no"]) for v in seen.values()]))
+        request=request, active="ledger", rows=rows, src=src, sources=LEDGER_SOURCES,
+        total_debit=sum(r["debit"] or 0 for r in rows), total_credit=sum(r["credit"] or 0 for r in rows)))
 
 
 def _voucher_edit_url(source_type, source_id):
@@ -2227,16 +2235,25 @@ _LEDGER_DELETERS = {
 
 @app.post("/ledger/delete")
 async def ledger_delete(request: Request):
-    """一次只刪一整張傳票,而且日期跟傳票號碼都要對得上(2026-10-08 同仁回饋)。"""
+    """勾選刪除(1015 版「總帳」工作表:只能一次刪除同一筆傳票號碼的全部,不可分開刪其中某一筆)。
+    收傳票號碼清單,每張找出來源、呼叫該來源自己的刪除邏輯(連來源資料一起刪)。
+    設備取得 / 折舊 / 年度結轉不能從這裡刪(要到固定資產 / 正式報表處理),會略過。"""
     f = await request.form()
-    date = (f.get("date") or "").strip()
-    vno = (f.get("voucher_no") or "").strip()
-    r = q1("SELECT source_type, source_id FROM ledger_entry WHERE voucher_no=? AND entry_date=? LIMIT 1",
-           (vno, date)) if (date and vno) else {}
-    if not r or r["source_type"] not in _LEDGER_DELETERS:
-        return RedirectResponse("/ledger?delerr=1", status_code=303)
-    _LEDGER_DELETERS[r["source_type"]](int(r["source_id"]))
-    return RedirectResponse(f"/ledger?deleted={vno}", status_code=303)
+    done, deleted, skipped = set(), [], []
+    for vno in dict.fromkeys(v.strip() for v in f.getlist("voucher_no") if v.strip()):
+        r = q1("SELECT source_type, source_id FROM ledger_entry WHERE voucher_no=? LIMIT 1", (vno,))
+        if not r:
+            continue
+        key = (r["source_type"], r["source_id"])
+        if r["source_type"] not in _LEDGER_DELETERS:
+            skipped.append(vno); continue
+        if key not in done:
+            _LEDGER_DELETERS[r["source_type"]](int(r["source_id"]))
+            done.add(key)
+        deleted.append(vno)
+    from urllib.parse import quote
+    return RedirectResponse(f"/ledger?deleted={quote(','.join(deleted))}&skipped={quote(','.join(skipped))}",
+                            status_code=303)
 
 
 # ---------- 出貨作業:揀貨單 / 標籤 / 食品標示 ---------------
