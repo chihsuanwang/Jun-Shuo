@@ -25,10 +25,12 @@ if os.path.exists(DB):
             print("取消。"); sys.exit(0)
     os.remove(DB)
 
-cx = sqlite3.connect(DB, isolation_level=None)   # 自動 commit——2026-09-23 起 ledger._cash_account()
-# 存新銀行帳戶時會另外開一條連線寫 bank_account,這條連線不能一直握著沒 commit 的交易,
+cx = sqlite3.connect(DB, isolation_level=None)   # 自動 commit——chart.cash_account() 存新銀行帳戶時
+# 會另外開一條連線寫 account 表,這條連線不能一直握著沒 commit 的交易,
 # 不然會跟那條連線互相卡住(database is locked)。
 cx.executescript(open(SQL, encoding="utf-8").read())
+import chart
+chart.ensure_chart(cx)   # 會計科目表(空白資料庫也要有,不然記帳畫面的下拉選單是空的)
 
 if "--empty" in sys.argv:
     cx.close()
@@ -46,7 +48,7 @@ def add_voucher(date, legs, source_type, source_id, note=None):
     key = date.replace("-", "")
     _voucher_seq[key] = _voucher_seq.get(key, 0) + 1
     vno = f"GL{key}{_voucher_seq[key]:03d}"
-    for leg in legs:
+    for leg in ledger.named_legs(legs):
         c.execute("""INSERT INTO ledger_entry(voucher_no,entry_date,account_code,account_name,
                      debit,credit,source_type,source_id,note) VALUES(?,?,?,?,?,?,?,?,?)""",
                   (vno, date, leg["account_code"], leg["account_name"],
@@ -59,7 +61,7 @@ for name, srt in [("龍眼", 1), ("蜂蜜", 2)]:
     bu[name] = c.lastrowid
 pg = {}
 for i, (gname, buname) in enumerate(
-        [("龍眼鮮果", "龍眼"), ("龍眼乾", "龍眼"), ("龍眼肉", "龍眼"), ("蜂蜜", "蜂蜜")]):
+        [("龍眼鮮果", "龍眼"), ("龍眼乾", "龍眼"), ("龍眼肉", "龍眼"), ("龍眼花", "龍眼"), ("蜂蜜", "蜂蜜")]):
     c.execute("INSERT INTO product_group(bu_id,name,sort) VALUES(?,?,?)", (bu[buname], gname, i))
     pg[gname] = c.lastrowid
 
@@ -179,7 +181,7 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (f"S{order_no:04d}", d.isoformat(), season, cid, ch[chan], kind,
                None, 0, total, sales_tax,
-               pm, "郵局" if pm == "銀行匯款" else None, pay_status,
+               pm, "合庫" if pm == "銀行匯款" else None, pay_status,
                d.isoformat() if pay_status == "已收款" else None, paid_amount,
                invoiced, tax_doc_no, ship_method, carrier, ship_cost, ship_status))
     oid = c.lastrowid
@@ -199,7 +201,7 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
                   for sku, qty, gift in lines if not gift]
     sale_legs = ledger.compose_order_sale_entries(sale_lines, kind, ship_cost, "店家吸收", sales_tax)
     add_voucher(d.isoformat(), sale_legs, "order_sale", oid, f"訂單 S{order_no:04d}")
-    pay_legs = ledger.compose_order_payment_entries(paid_amount, "郵局" if pm == "銀行匯款" else None)
+    pay_legs = ledger.compose_order_payment_entries(paid_amount, "合庫" if pm == "銀行匯款" else None)
     add_voucher(d.isoformat(), pay_legs, "order_payment", oid, f"訂單 S{order_no:04d} 收款")
     return oid
 
@@ -290,8 +292,8 @@ for f_date, f_note in [("2026-07-10", "示範:5~6 月貨款")]:   # 7 月以後�
     if f_amt <= 0:
         continue
     c.execute("INSERT INTO farmer_payment(pay_date,amount,payment_account,note) VALUES(?,?,?,?)",
-              (f_date, f_amt, "郵局", f_note))
-    add_voucher(f_date, ledger.compose_farmer_payment_entries(f_amt, "郵局"), "farmer_payment",
+              (f_date, f_amt, "合庫", f_note))
+    add_voucher(f_date, ledger.compose_farmer_payment_entries(f_amt, "合庫"), "farmer_payment",
                 c.lastrowid, f"付小農貨款:{f_note}")
 
 # ---- 固定資產卡(2:柴焙灶〔有政府補助〕/ 搖蜜機)----
@@ -315,9 +317,9 @@ for name, cat, pgname, adate, cost, grant, sv, life in assets:
 
 # ---- 9 宮格 B 類示範(各給 1 筆,讓同事一打開就看得到長相)--------
 c.execute("""INSERT INTO other_income(income_date,category,amount,tax_amount,payment_account,note)
-             VALUES(?,?,?,?,?,?)""", ("2026-08-31", "利息收入", 85, 0, "郵局", "示範:8 月存款利息"))
+             VALUES(?,?,?,?,?,?)""", ("2026-08-31", "利息收入", 85, 0, "合庫", "示範:8 月存款利息"))
 inc_id = c.lastrowid
-legs = ledger.compose_other_income_entries("利息收入", 85, 0, "郵局")
+legs = ledger.compose_other_income_entries("利息收入", 85, 0, "合庫")
 add_voucher("2026-08-31", legs, "other_income", inc_id, "其他收益示範")
 
 c.execute("""INSERT INTO equity_txn(txn_date,txn_type,amount,payment_account,note)
@@ -326,7 +328,7 @@ eq_id = c.lastrowid
 legs = ledger.compose_equity_entries("現金增資", 50000, "現金")
 add_voucher("2025-04-01", legs, "equity", eq_id, "資本異動示範")
 
-bank_code, bank_name = ledger._cash_account("郵局")   # 2026-09-23 起代碼是自動指派的,不再硬寫死 1103
+bank_code, bank_name = chart.cash_account("合庫")   # 1103-01,依會計科目表
 c.execute("""INSERT INTO manual_entry(entry_date,debit_code,debit_name,credit_code,credit_name,amount,note)
              VALUES(?,?,?,?,?,?,?)""",
           ("2026-09-10", "1102", "現金", bank_code, bank_name, 500, "示範:提領零用金(帳戶間轉帳,套不進其他 8 類)"))

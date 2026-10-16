@@ -11,33 +11,33 @@
 {% if request.query_params.get('err') == 'dup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這個名字已經有別的帳戶在用了 —— 是同一家銀行的話,改用下面「併入」,不要改名。</div>{% endif %}
 {% if request.query_params.get('err') == '1' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">併入失敗,請重新選一次。</div>{% endif %}
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">
-  訂單/營運費用/付小農貨款等畫面的「付款帳戶」欄位打過的銀行名稱,第一次用到就會自動出現在這裡、
-  自動配一個固定代碼(現金不用列,留白就是現金)——**不用另外「新增」**。代碼配好就不會
-  再變,這裡可以改名字(連已經記過的舊傳票一起改,不會拆成兩行),或者發現同一家銀行
+  銀行帳戶就是<a href="/accounts#g-C">會計科目設定</a>裡「現金 / 銀行」那一組的 1103 科目(合庫 1103-01、
+  凱基 1103-02、台新 1103-03)。付款帳戶欄位打一個新的銀行名稱,存檔時也會自動接著編號新增
+  (現金不用列,留白就是現金)。這裡可以改名字(連已經記過的舊傳票一起改),或者發現同一家銀行
   被打成兩個不同名字時「併入」成一個。
 </p>
 <div class="card">
   <table>
-    <thead><tr><th>科目代碼</th><th>名稱</th><th>建立時間</th><th>併入別的帳戶</th></tr></thead>
+    <thead><tr><th>科目代碼</th><th>名稱</th><th>狀態</th><th>併入別的帳戶</th></tr></thead>
     <tbody>{% for r in rows %}
       <tr>
-        <td>{{ r.account_code }}</td>
+        <td>{{ r.code }}</td>
         <td>
           <form method="post" action="/bank-accounts" style="display:flex;gap:6px;align-items:center">
-            <input type="hidden" name="bank_account_id" value="{{ r.bank_account_id }}">
+            <input type="hidden" name="code" value="{{ r.code }}">
             <input type="text" name="name" value="{{ r.name }}" style="width:160px">
             <button type="submit" class="ghost">改名</button>
           </form>
         </td>
-        <td class="muted" style="font-size:12px">{{ r.created_at }}</td>
+        <td class="muted" style="font-size:12px">{{ '使用中' if r.active else '已停用' }}</td>
         <td>
           {% if rows|length > 1 %}
           <form method="post" action="/bank-accounts/merge" style="display:flex;gap:6px;align-items:center"
                 onsubmit="return confirm('把「{{ r.name }}」底下所有傳票併進選的帳戶,「{{ r.name }}」這個帳戶會被刪掉,確定嗎?(無法復原)')">
-            <input type="hidden" name="from_id" value="{{ r.bank_account_id }}">
-            <select name="to_id" style="width:140px">
-              {% for o in rows if o.bank_account_id != r.bank_account_id %}
-              <option value="{{ o.bank_account_id }}">併入「{{ o.name }}」</option>
+            <input type="hidden" name="from_code" value="{{ r.code }}">
+            <select name="to_code" style="width:140px">
+              {% for o in rows if o.code != r.code %}
+              <option value="{{ o.code }}">併入「{{ o.name }}」</option>
               {% endfor %}
             </select>
             <button type="submit" class="ghost">併入</button>

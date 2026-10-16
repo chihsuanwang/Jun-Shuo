@@ -55,8 +55,14 @@ queries.OPEX_CATS 的下拉也拿掉,seed.py 對應的示範資料改用既有�
 採購(原料 / 農民收據)取代。剩 3 個待確認:運輸設備、法定盈餘公積、3351-03。
 """
 from db import q, q1, execute
+import chart
 
-CASH_ACCOUNT = ("1102", "現金")   # 正式表這個代碼叫「零用金」,沿用「現金」這個家易更好懂的講法
+# 2026-10-16 起:科目代碼照同事「記帳系統_1015.xlsx」帳務設定表,科目表本身存在資料庫
+# (chart.py / account 表,「會計科目設定」頁可以改)。下面這些常數只決定「哪個角色用哪個
+# 代碼」,實際寫進總帳的科目名稱一律在 save_voucher() 依科目表重新帶一次(named_legs),
+# 所以在設定頁改名,新傳票就會用新名字。
+
+CASH_ACCOUNT = ("1102", "現金")
 TAX_INPUT_ACCOUNT = ("1423", "進項稅額")   # 原本誤用 1150(正式表沒有這個碼);1423 才是進項稅額
 
 # 營運費用類別(對應 queries.OPEX_CATS)-> 借方費用科目。直接人工/人事共用「薪資支出」
@@ -118,33 +124,23 @@ AP_ACCOUNT = ("2171", "應付帳款")
 
 # 只退款不退貨(2026-10-08):不管退多少一律算其他支出。同事會計科目表沒有「其他支出」,
 # 先用最接近的 6499 其他損失;之後拿到完整科目表再改這裡就好。
-REFUND_LOSS_ACCOUNT = ("6499", "其他損失")
+REFUND_LOSS_ACCOUNT = ("6188-99", "其他費用-其他")   # 2026-10-16:暫定,待同仁確認
 
 # 產品線 -> 銷貨收入科目(貸方)。沒歸屬產品線的商品用 REVENUE_DEFAULT。
 REVENUE_ACCOUNTS = {
     "龍眼鮮果": ("4111-01", "銷貨收入-龍眼鮮果"),
     "龍眼乾":   ("4111-02", "銷貨收入-龍眼乾"),
     "龍眼肉":   ("4111-03", "銷貨收入-龍眼肉"),
-    "蜂蜜":     ("4111-04", "銷貨收入-蜂蜜"),
+    "龍眼花":   ("4111-04", "銷貨收入-龍眼花"),     # 2026-10-16 新增產品線
+    "蜂蜜":     ("4111-05", "銷貨收入-龍眼蜂蜜"),   # 1015 版起蜂蜜改成 -05
+    "龍眼蜂蜜": ("4111-05", "銷貨收入-龍眼蜂蜜"),
 }
 REVENUE_DEFAULT = ("4110", "銷貨收入")
 
 def _cash_account(payment_account):
-    """現金或某家銀行的科目代碼。銀行帳戶 2026-09-23 起各自有固定子代碼(比照同事正式表
-    的合庫/凱基/台新分開編號,不再全部共用 1103)——查 bank_account 主檔,第一次用到某個
-    名字時自動新增一筆並指派代碼(用 AUTOINCREMENT 的 id 組出 1103-01/02/03…,刪除不重複
-    發號,代碼一旦指派永久不變)。"""
-    name = (payment_account or "").strip()
-    if not name or name == "現金":
-        return CASH_ACCOUNT
-    row = q1("SELECT account_code FROM bank_account WHERE name=?", (name,))
-    if row:
-        return (row["account_code"], f"銀行存款-{name}")
-    next_id = (q1("SELECT MAX(bank_account_id) m FROM bank_account").get("m") or 0) + 1
-    code = f"1103-{next_id:02d}"
-    execute("INSERT INTO bank_account(bank_account_id, name, account_code) VALUES(?,?,?)",
-            (next_id, name, code))
-    return (code, f"銀行存款-{name}")
+    """現金或某家銀行的科目代碼。2026-10-16 起銀行帳戶是會計科目表 C 組裡的科目,
+    找不到時自動接著編號新增,見 chart.cash_account()。"""
+    return chart.cash_account(payment_account)
 
 
 def compose_expense_entries(category, amount, tax_amount=0, payment_account=None):
@@ -254,8 +250,8 @@ OTHER_INCOME_ACCOUNTS = {
 
 # 資本異動科目
 EQUITY_STOCK_ACCOUNT    = ("3110", "普通股股本")
-EQUITY_RESERVE_ACCOUNT  = ("3310", "法定盈餘公積")   # 同事草稿有、正式科目表沒列,先照草稿放
-EQUITY_RETAINED_ACCOUNT = ("3351", "累積盈虧")
+EQUITY_RESERVE_ACCOUNT  = ("3310-03", "法定盈餘公積")
+EQUITY_RETAINED_ACCOUNT = ("3351-03", "累積盈虧")
 
 # 固定資產類別(對應 main.ASSET_CATS)-> 借方資產科目。正式表沒有「生財器具」「運輸設備」
 # 專門科目,電腦設備/生財器具先併記辦公設備,運輸設備標「待確認」。
@@ -272,7 +268,7 @@ FIXED_ASSET_DEFAULT = ("1616", "機器設備")
 # 折舊費用(借方)/累計折舊(貸方,共用一個科目,不分資產類別——正式表沒有專門對應,
 # 比照正式表自己的 1405生產性生物資產/1406累計折舊-生產性生物資產那組命名模式類推)
 DEPRECIATION_EXPENSE_ACCOUNT = ("6124", "折舊")
-ACCUM_DEP_ACCOUNT = ("1616-99", "累計折舊")
+ACCUM_DEP_ACCOUNT = ("1618", "累計折舊-機器設備")
 
 
 def compose_other_income_entries(category, amount, tax_amount=0, payment_account=None):
@@ -417,26 +413,17 @@ def compose_year_closing_entries(year):
     return legs
 
 
-def _all_accounts():
-    """攤平現有所有科目常數,去重、依代碼排序,給「帳務調整」畫面的科目下拉用。"""
-    pairs = [CASH_ACCOUNT, TAX_INPUT_ACCOUNT, AR_ACCOUNT, COGS_EXPENSE_ACCOUNT,
-             REVENUE_DEFAULT, AP_ACCOUNT, REFUND_LOSS_ACCOUNT,
-             SALES_TAX_OUTPUT_ACCOUNT, EQUITY_STOCK_ACCOUNT, EQUITY_RESERVE_ACCOUNT,
-             EQUITY_RETAINED_ACCOUNT, FIXED_ASSET_DEFAULT, DEPRECIATION_EXPENSE_ACCOUNT,
-             ACCUM_DEP_ACCOUNT]
-    for d in (EXPENSE_ACCOUNTS, REVENUE_ACCOUNTS, OTHER_INCOME_ACCOUNTS, FIXED_ASSET_ACCOUNTS):
-        pairs.extend(d.values())
-    seen, out = set(), []
-    for code, name in pairs:
-        if code in seen:
-            continue
-        seen.add(code)
-        out.append((code, name))
-    out.sort(key=lambda t: t[0])
-    return out
+def all_accounts():
+    """「帳務調整」下拉用:會計科目表裡所有啟用、可以記帳的科目,(代碼, 名稱) 依代碼排序。"""
+    return [(r["code"], r["name"]) for r in chart.accounts(postable_only=True)]
 
 
-ALL_ACCOUNTS = _all_accounts()
+def named_legs(legs):
+    """分錄的科目名稱一律以會計科目表為準(科目表沒有的代碼保留原名)。"""
+    names = {r["code"]: r["name"] for r in q("SELECT code, name FROM account")}
+    for leg in legs:
+        leg["account_name"] = names.get(leg["account_code"], leg["account_name"])
+    return legs
 
 
 def next_voucher_no(date):
@@ -456,7 +443,7 @@ def save_voucher(source_type, source_id, date, legs, note=None):
     if not legs:
         return None
     voucher_no = next_voucher_no(date)
-    for leg in legs:
+    for leg in named_legs(legs):
         execute("""INSERT INTO ledger_entry(voucher_no, entry_date, account_code, account_name,
                      debit, credit, source_type, source_id, note)
                    VALUES(?,?,?,?,?,?,?,?,?)""",
@@ -475,7 +462,7 @@ def save_voucher_if_new(source_type, source_id, date, legs, note=None):
     if existing:
         return None
     voucher_no = next_voucher_no(date)
-    for leg in legs:
+    for leg in named_legs(legs):
         execute("""INSERT INTO ledger_entry(voucher_no, entry_date, account_code, account_name,
                      debit, credit, source_type, source_id, note)
                    VALUES(?,?,?,?,?,?,?,?,?)""",

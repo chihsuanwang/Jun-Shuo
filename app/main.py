@@ -11,6 +11,7 @@ import paths
 import queries as Q
 import db as _db
 import ledger
+import chart
 import order_import as OI
 import manual_export as ME
 from db import q, q1, execute
@@ -131,6 +132,17 @@ def migrate_db():
         # 2026-10-08 改成貿易公司模式(沒有存貨、退貨/折讓改成退款/退回小農):總帳的
         # source_type CHECK 跟 sales_return 的 kind CHECK 都換了,SQLite 沒辦法直接改 CHECK,
         # 舊資料庫要整個重建(seed.py --force 或 --empty),這裡只提醒、不自動動資料。
+        # 2026-10-16:會計科目表(取代 bank_account)。舊資料庫補表、灌初值,原本的銀行帳戶併進 C 組。
+        execute("""CREATE TABLE IF NOT EXISTS account (code TEXT PRIMARY KEY, name TEXT NOT NULL,
+                   grp TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 0,
+                   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+                   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')))""")
+        chart.ensure_chart()
+        if q1("SELECT 1 FROM sqlite_master WHERE name='bank_account'"):
+            for b in q("SELECT name, account_code FROM bank_account"):
+                if not q1("SELECT 1 FROM account WHERE code=?", (b["account_code"],)):
+                    execute("INSERT INTO account(code,name,grp,sort) VALUES(?,?,'C',999)",
+                            (b["account_code"], b["name"]))
         lsql = q1("SELECT sql FROM sqlite_master WHERE name='ledger_entry'").get("sql") or ""
         if lsql and "farmer_payment" not in lsql:
             print("[migrate] 警告:資料庫還是改版前的結構(有存貨/進貨那一版),"
@@ -1575,7 +1587,7 @@ async def finance_expense_save(request: Request):
         hidden=hidden,
         amount=cols["amount"], primary_account_code=acct_code, primary_account_name=acct_name,
         tax_account=ledger.TAX_INPUT_ACCOUNT, cash_account=ledger.CASH_ACCOUNT,
-        bank_codes={r["name"]: r["account_code"] for r in q("SELECT name, account_code FROM bank_account")},
+        bank_codes={r["name"]: r["code"] for r in chart.bank_accounts()},
         tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
         doc_type=existing.get("doc_type"), doc_types=DOC_TYPES, bank_names=Q.payment_account_names(),
         invoice_no=existing.get("invoice_no"),
@@ -1741,7 +1753,7 @@ def adjustment_list(request: Request):
 @app.get("/adjustments/new", response_class=HTMLResponse)
 def adjustment_new(request: Request):
     return tpl.TemplateResponse("adjustment_form.html", dict(
-        request=request, active="adjust", r=None, accounts=ledger.ALL_ACCOUNTS))
+        request=request, active="adjust", r=None, accounts=ledger.all_accounts()))
 
 @app.get("/adjustments/{mid}/edit", response_class=HTMLResponse)
 def adjustment_edit(request: Request, mid: int):
@@ -1749,7 +1761,7 @@ def adjustment_edit(request: Request, mid: int):
     if not r:
         return RedirectResponse("/adjustments", status_code=303)
     return tpl.TemplateResponse("adjustment_form.html", dict(
-        request=request, active="adjust", r=r[0], accounts=ledger.ALL_ACCOUNTS))
+        request=request, active="adjust", r=r[0], accounts=ledger.all_accounts()))
 
 def _adjustment_delete(mid):
     execute("DELETE FROM manual_entry WHERE entry_id=?", (int(mid),))
@@ -1842,50 +1854,98 @@ def _voucher_edit_url(source_type, source_id):
     }.get(source_type)
 
 
-# ---------- 銀行帳戶主檔(2026-09-23,每家銀行固定子代碼)-------
-#   代碼是第一次用到某個名字時 ledger._cash_account() 自動指派的(見該函式註解),
-#   「新增」不用另外做功能——付款帳戶欄位打一個新名字,存檔就自動生一筆。這裡是
-#   給同事/家易看清單、改名字、併重複帳戶用。
+# ---------- 會計科目設定(2026-10-16,依同事 1015 版帳務設定表)-------------
+#   科目存在 account 表(初值見 chart.DEFAULT_CHART)。可以新增、改名(連總帳已記過的名稱
+#   一起改)、停用(下拉選單不再出現,舊傳票照常顯示)、刪除(只限從沒記過帳的科目)。
+@app.get("/accounts", response_class=HTMLResponse)
+def accounts_page(request: Request):
+    used = {r["account_code"]: r["n"] for r in
+            q("SELECT account_code, COUNT(*) n FROM ledger_entry GROUP BY account_code")}
+    rows = chart.accounts(active_only=False)
+    groups = [dict(key=k, label=lbl, rows=[dict(r, used=used.get(r["code"], 0)) for r in rows if r["grp"] == k])
+              for k, lbl in chart.GROUPS]
+    return tpl.TemplateResponse("accounts.html", dict(
+        request=request, active="accounts", groups=groups, computed=chart.COMPUTED_CODES))
+
+@app.post("/accounts")
+async def account_add(request: Request):
+    f = await request.form()
+    grp = (f.get("grp") or "").strip()
+    code = (f.get("code") or "").strip()
+    name = (f.get("name") or "").strip()
+    if grp not in chart.GROUP_LABEL or not code or not name:
+        return RedirectResponse("/accounts?err=missing", status_code=303)
+    if q1("SELECT 1 FROM account WHERE code=?", (code,)):
+        return RedirectResponse(f"/accounts?err=dup&code={code}", status_code=303)
+    sort = (q1("SELECT MAX(sort) m FROM account").get("m") or 0) + 1
+    execute("INSERT INTO account(code,name,grp,sort) VALUES(?,?,?,?)", (code, name, grp, sort))
+    return RedirectResponse(f"/accounts?added={code}#g-{grp}", status_code=303)
+
+@app.post("/accounts/{code}/rename")
+async def account_rename(request: Request, code: str):
+    f = await request.form()
+    name = (f.get("name") or "").strip()
+    row = q1("SELECT grp FROM account WHERE code=?", (code,))
+    if row and name:
+        if row["grp"] == "C" and q1("SELECT 1 FROM account WHERE grp='C' AND name=? AND code!=?", (name, code)):
+            return RedirectResponse("/accounts?err=bankdup#g-C", status_code=303)
+        execute("UPDATE account SET name=? WHERE code=?", (name, code))
+        execute("UPDATE ledger_entry SET account_name=? WHERE account_code=?", (name, code))
+    return RedirectResponse(f"/accounts?renamed={code}#g-{row.get('grp', '')}", status_code=303)
+
+@app.post("/accounts/{code}/toggle")
+def account_toggle(code: str):
+    row = q1("SELECT grp FROM account WHERE code=?", (code,))
+    execute("UPDATE account SET active=1-active WHERE code=?", (code,))
+    return RedirectResponse(f"/accounts#g-{row.get('grp', '')}", status_code=303)
+
+@app.post("/accounts/{code}/delete")
+def account_delete(code: str):
+    row = q1("SELECT grp FROM account WHERE code=?", (code,))
+    if q1("SELECT 1 FROM ledger_entry WHERE account_code=? LIMIT 1", (code,)):
+        return RedirectResponse(f"/accounts?err=used&code={code}#g-{row.get('grp', '')}", status_code=303)
+    execute("DELETE FROM account WHERE code=?", (code,))
+    return RedirectResponse(f"/accounts?deleted={code}#g-{row.get('grp', '')}", status_code=303)
+
+
+# ---------- 銀行帳戶(2026-10-16 起是會計科目表 C 組的 1103-NN)-------
+#   付款帳戶欄位打一個新名字,存檔時 chart.cash_account() 會自動接著編號新增。這頁給
+#   同事 / 家易看清單、改名字、把同一家銀行打成兩個名字的帳戶併成一個。
 @app.get("/bank-accounts", response_class=HTMLResponse)
 def bank_accounts_page(request: Request):
-    rows = q("SELECT * FROM bank_account ORDER BY account_code")
     return tpl.TemplateResponse("bank_accounts.html", dict(
-        request=request, active="bankacct", rows=rows))
+        request=request, active="bankacct", rows=chart.bank_accounts(active_only=False)))
 
 @app.post("/bank-accounts")
 async def bank_account_save(request: Request):
-    """改名:連已經記過的舊傳票 account_name 一起回填,不然 /cash 會把改名前後拆成兩行
-    (代碼一樣、名稱不一樣)。"""
+    """改名:連已經記過的舊傳票 account_name 一起回填。"""
     f = await request.form()
-    bid = f.get("bank_account_id")
+    code = (f.get("code") or "").strip()
     name = (f.get("name") or "").strip()
-    if bid and name:
-        bid = int(bid)
-        row = q1("SELECT account_code, name FROM bank_account WHERE bank_account_id=?", (bid,))
-        if row and row["name"] != name:
-            if q1("SELECT 1 FROM bank_account WHERE name=? AND bank_account_id!=?", (name, bid)):
-                return RedirectResponse("/bank-accounts?err=dup", status_code=303)
-            execute("UPDATE bank_account SET name=? WHERE bank_account_id=?", (name, bid))
-            execute("UPDATE ledger_entry SET account_name=? WHERE account_code=?",
-                    (f"銀行存款-{name}", row["account_code"]))
+    row = q1("SELECT name FROM account WHERE code=? AND grp='C'", (code,))
+    if row and name and row["name"] != name:
+        if q1("SELECT 1 FROM account WHERE grp='C' AND name=? AND code!=?", (name, code)):
+            return RedirectResponse("/bank-accounts?err=dup", status_code=303)
+        execute("UPDATE account SET name=? WHERE code=?", (name, code))
+        execute("UPDATE ledger_entry SET account_name=? WHERE account_code=?", (name, code))
     return RedirectResponse("/bank-accounts?renamed=1", status_code=303)
 
 @app.post("/bank-accounts/merge")
 async def bank_account_merge(request: Request):
-    """合併:同一家銀行不小心被打成兩個不同名字、各自都已經累積傳票時用——把來源帳戶
-    (from)底下所有傳票的科目代碼/名稱全部改成目標帳戶(to)的,再刪掉來源帳戶主檔。
-    代碼一旦刪除不會再被指派(_cash_account 用 MAX(id)+1 發號),不會撞號。"""
+    """合併:把來源帳戶底下所有傳票的科目代碼/名稱改成目標帳戶的,再刪掉來源科目。
+    chart.cash_account() 用目前最大號 +1 發號,刪掉的號碼如果剛好是最大號會被重新使用,
+    但那時候它底下已經沒有任何傳票,不會混帳。"""
     f = await request.form()
-    from_id, to_id = f.get("from_id"), f.get("to_id")
-    if not (from_id and to_id) or from_id == to_id:
+    src_code, dst_code = f.get("from_code"), f.get("to_code")
+    if not (src_code and dst_code) or src_code == dst_code:
         return RedirectResponse("/bank-accounts?err=1", status_code=303)
-    src = q1("SELECT * FROM bank_account WHERE bank_account_id=?", (int(from_id),))
-    dst = q1("SELECT * FROM bank_account WHERE bank_account_id=?", (int(to_id),))
-    if not (src and dst):
+    src = q1("SELECT * FROM account WHERE code=? AND grp='C'", (src_code,))
+    dst = q1("SELECT * FROM account WHERE code=? AND grp='C'", (dst_code,))
+    if not (src and dst) or "1102" in (src_code, dst_code):
         return RedirectResponse("/bank-accounts?err=1", status_code=303)
     execute("UPDATE ledger_entry SET account_code=?, account_name=? WHERE account_code=?",
-            (dst["account_code"], f"銀行存款-{dst['name']}", src["account_code"]))
-    execute("DELETE FROM bank_account WHERE bank_account_id=?", (int(from_id),))
+            (dst["code"], dst["name"], src["code"]))
+    execute("DELETE FROM account WHERE code=?", (src["code"],))
     return RedirectResponse(f"/bank-accounts?merged={src['name']}", status_code=303)
 
 

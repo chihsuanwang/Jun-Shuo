@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}會計科目設定 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup">桂圓帳房 / 設定一次的</div>
+  <h1 class="serif">會計科目設定</h1>
+</div></div>
+<hr class="rule">
+{% set qp = request.query_params %}
+{% if qp.get('added') %}<div class="ok">已新增 {{ qp.get('added') }}。</div>{% endif %}
+{% if qp.get('renamed') %}<div class="ok">已改名(之前記過的傳票也一起改了)。</div>{% endif %}
+{% if qp.get('deleted') %}<div class="ok">已刪除 {{ qp.get('deleted') }}。</div>{% endif %}
+{% if qp.get('err') == 'dup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">科目代碼 {{ qp.get('code') }} 已經有了,請換一個。</div>{% endif %}
+{% if qp.get('err') == 'missing' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">科目代碼跟名稱都要填。</div>{% endif %}
+{% if qp.get('err') == 'used' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">{{ qp.get('code') }} 已經記過帳,不能刪除;不想再用的話按「停用」。</div>{% endif %}
+{% if qp.get('err') == 'bankdup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">已經有別的銀行帳戶叫這個名字了。</div>{% endif %}
+
+<p class="muted" style="font-size:13px;margin:-4px 0 16px;line-height:1.7">
+  系統所有記帳畫面的科目都從這裡來,分組照同事的「帳務設定表」。<br>
+  <b>改名</b>:連之前已經記過的傳票一起改。<b>停用</b>:下拉選單不再出現,舊傳票照常顯示。
+  <b>刪除</b>:只有從來沒記過帳的科目才能刪。
+</p>
+
+<div class="chips" style="margin-bottom:16px;font-size:13px">
+  {% for g in groups %}<a class="chip" href="#g-{{ g.key }}">{{ g.key }} {{ g.label }}</a>{% endfor %}
+</div>
+
+{% for g in groups %}
+<div class="card" id="g-{{ g.key }}" style="max-width:760px;margin-bottom:16px">
+  <h3 class="serif">{{ g.key }} · {{ g.label }}</h3>
+  <table class="vt">
+    <thead><tr><th>科目代碼</th><th>科目名稱</th><th>已記帳</th><th></th></tr></thead>
+    <tbody>
+    {% for r in g.rows %}
+      <tr style="{{ 'opacity:.5' if not r.active }}">
+        <td>{{ r.code }}</td>
+        <td>
+          <form method="post" action="/accounts/{{ r.code }}/rename" style="display:flex;gap:6px;align-items:center;margin:0">
+            <input name="name" value="{{ r.name }}" style="width:220px">
+            <button type="submit" class="ghost" style="padding:4px 10px">改名</button>
+          </form>
+        </td>
+        <td class="r">{{ r.used }} 筆</td>
+        <td style="white-space:nowrap">
+          {% if r.code not in computed %}
+          <form method="post" action="/accounts/{{ r.code }}/toggle" style="display:inline;margin:0">
+            <button type="submit" class="ghost" style="padding:4px 10px">{{ '停用' if r.active else '恢復使用' }}</button>
+          </form>
+          {% else %}<span class="muted" style="font-size:12px">報表算出來的</span>{% endif %}
+          {% if not r.used %}
+          <form method="post" action="/accounts/{{ r.code }}/delete" style="display:inline;margin:0"
+                onsubmit="return confirm('刪除科目 {{ r.code }} {{ r.name }}?')">
+            <button type="submit" class="ghost" style="padding:4px 10px">刪除</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}<tr><td colspan="4" class="muted" style="text-align:left">這組還沒有科目。</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/accounts" style="display:flex;gap:8px;align-items:end;margin-top:12px;flex-wrap:wrap">
+    <input type="hidden" name="grp" value="{{ g.key }}">
+    <div><label>新增科目代碼</label><input name="code" placeholder="例:6188-06" style="width:130px" required></div>
+    <div><label>科目名稱</label><input name="name" placeholder="例:其他費用-包裝費" style="width:220px" required></div>
+    <button type="submit" class="ghost">＋ 新增到這組</button>
+  </form>
+</div>
+{% endfor %}
+{% endblock %}

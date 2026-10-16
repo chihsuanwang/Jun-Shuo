@@ -265,7 +265,7 @@ CASH_SRC_LABEL = {'op_expense': '營運費用', 'order_sale': '訂單成立',
 
 def cash_accounts():
     """現金 / 各銀行帳戶清單——依 ledger_entry 裡實際用過的科目抓,不是另外維護的固定名單。
-    2026-09-23 起每家銀行有自己的子代碼(1103-01/02/03…,見 bank_account 主檔),用 LIKE
+    2026-09-23 起每家銀行有自己的子代碼(1103-01/02/03…,2026-10-16 起在會計科目表 C 組),用 LIKE
     抓整組,不是只比對『1103』這個舊的共用代碼。"""
     return q("""SELECT DISTINCT account_code, account_name FROM ledger_entry
                 WHERE account_code='1102' OR account_code LIKE '1103%'
@@ -275,7 +275,8 @@ def cash_accounts():
 def payment_account_names():
     """「付款/收款帳戶」欄位的自動完成建議清單——2026-09-23 起直接讀 bank_account 主檔
     (銀行帳戶已經有專門的主檔跟固定子代碼,不用再從 ledger_entry 的科目名稱反推)。"""
-    return [r["name"] for r in q("SELECT name FROM bank_account ORDER BY name")]
+    import chart
+    return [r["name"] for r in chart.bank_accounts()]
 
 
 def cash_ledger(account_code, account_name):
@@ -1109,7 +1110,7 @@ def trial_balance(as_of, all_accounts=False):
     代碼開頭 3 就會自動含這列,不用再像以前那樣另外呼叫一次 `_unclosed_pnl` 重算。
 
     all_accounts=True(2026-10-08 同仁回饋,試算表頁 / 下載用):沒有金額的科目也列出來,
-    借貸都是 0。科目清單 = ledger.ALL_ACCOUNTS(系統會記到的所有科目)+ 銀行帳戶主檔。
+    借貸都是 0。科目清單 = 會計科目表(account 表,含停用的;不含 3353 / 5950 這種算出來的)。
     資產負債表不傳這個參數,維持只列有餘額的科目。"""
     rows = q("""SELECT account_code, account_name, SUM(debit) db, SUM(credit) cr
                 FROM ledger_entry WHERE entry_date<=?
@@ -1123,8 +1124,8 @@ def trial_balance(as_of, all_accounts=False):
     if all_accounts:
         import ledger
         have = {r["account_code"] for r in rows}
-        chart = list(ledger.ALL_ACCOUNTS) + [(b["account_code"], f"銀行存款-{b['name']}")
-                                             for b in q("SELECT name, account_code FROM bank_account")]
+        import chart as _chart
+        chart = [(r["code"], r["name"]) for r in _chart.accounts(active_only=False, postable_only=True)]
         for code, name in chart:
             if code in have or code == PNL_SUMMARY_ACCOUNT[0]:
                 continue

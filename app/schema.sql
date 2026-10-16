@@ -363,18 +363,19 @@ CREATE TABLE manual_entry (
 );
 CREATE INDEX ix_manual_date ON manual_entry(entry_date);
 
--- 23. 銀行帳戶主檔(2026-09-23,正式三表)------------------------------
---     取代「所有銀行帳戶都共用科目代碼 1103」——同事的正式科目表對每家銀行都有自己的
---     子代碼(1103-01/02/03…)。名字第一次在付款帳戶欄位被打出來時,ledger._cash_account()
---     自動在這張表新增一筆、指派代碼,不需要家易先手動開戶。代碼一旦指派永久不變,
---     所以這張表不提供刪除,只能改名(bank_account_id 是 AUTOINCREMENT,不會因為刪除
---     而重複發號)。
-CREATE TABLE bank_account (
-  bank_account_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name         TEXT NOT NULL UNIQUE,    -- 例:合庫、凱基、郵局
-  account_code TEXT NOT NULL UNIQUE,    -- 例:1103-01
-  note         TEXT,
-  created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+-- 23. 會計科目表(2026-10-16,取代原本的 bank_account)------------------------
+--     依同事「郡碩農創_記帳系統_1015.xlsx」帳務設定表建立,初值在 chart.DEFAULT_CHART。
+--     grp = 帳務設定表的分組字母(C 現金銀行 / UA 銷貨收入 / VD 營運費用 …),各記帳畫面
+--     的下拉選單只列自己用得到的組。「會計科目設定」頁(/accounts)可以新增、改名、停用;
+--     改名會連總帳裡已經記過的科目名稱一起改。銀行帳戶 = C 組裡 1103-NN 的科目,付款帳戶
+--     打一個新名字時 chart.cash_account() 會自動接著編號新增。
+CREATE TABLE account (
+  code       TEXT PRIMARY KEY,           -- 例:1103-01、4111-02
+  name       TEXT NOT NULL,              -- 例:合庫、銷貨收入-龍眼乾
+  grp        TEXT NOT NULL,              -- C / E / F / G / J / K / N / P / T / UA / VA / VC / VD / UB / VE / 其他
+  sort       INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),   -- 0 = 停用(下拉選單不出現,舊傳票照常顯示)
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
 -- 24. 全鏈路毛利分析(2026-10,管理視角估算,不進總帳/不影響報稅)----------
