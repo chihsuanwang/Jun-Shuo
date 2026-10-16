@@ -1666,15 +1666,16 @@ async def finance_expense_confirm(request: Request):
 
 
 # ---------- 9 宮格 B 類:首頁入口 ----------------------------
+# 順序照同事 1015 版帳務設定表的交易類型(0921 修改意見第 5 條)
 ENTRY_CARDS = [
-    dict(title="銷售 / 出貨", href="/orders/new", desc="開一張訂單,存檔就自動記應收帳款/銷貨收入。"),
+    dict(title="銷售商品", href="/orders/new", desc="開一張訂單,存檔就自動記應收帳款、銷貨收入、銷項稅額,跟欠小農的成本。"),
     dict(title="進口商品", href="/goods-purchases", desc="付錢給小農時記一筆,沖掉開訂單時記的欠款。"),
-    dict(title="營運支出", href="/finance/expenses/new", desc="逐月費用登記,存檔前會給你看一次分錄。"),
-    dict(title="設備相關", href="/assets/new", desc="機器/器具採購,建固定資產卡,系統會自動記分錄、每月提折舊。"),
+    dict(title="營運支出", href="/finance/expenses/new", desc="房租、郵電、運費、薪資…營運相關的花費。"),
     dict(title="其他收益", href="/other-income/new", desc="利息收入、政府補助等非銷售的進帳。"),
     dict(title="其他支出", href="/finance/expenses/new?grp=VE", desc="利息費用、所得稅這類不屬於營運的支出。"),
-    dict(title="資本異動", href="/equity/new", desc="現金增資、盈餘轉列公積。"),
-    dict(title="帳務調整", href="/adjustments/new", desc="上面都套不上時,手動指定一組借/貸科目記一筆。"),
+    dict(title="設備相關", href="/assets/new", desc="機器/器具採購,建固定資產卡,系統會自動記分錄、每月提折舊。"),
+    dict(title="資本異動", href="/equity/new", desc="增資、減資、提列法定盈餘公積。"),
+    dict(title="帳務調整", href="/adjustments/new", desc="上面都套不上時,手動指定借/貸科目記一筆。"),
 ]
 
 @app.get("/entry", response_class=HTMLResponse)
@@ -1852,6 +1853,17 @@ LEDGER_SOURCES = {"order_sale": "訂單成立", "order_payment": "訂單收款",
                   "sales_return": "退款 / 退回小農", "year_closing": "年度結轉"}
 
 
+def _ledger_explain(code, debit, credit):
+    """解釋文字(2026-10-16 同仁 1001 回饋第 3 條):依科目方向用中文說明這一筆讓科目增加還是減少。
+    借方正常的科目(資產 / 成本 / 費用)借方 = 增加、貸方 = 減少;貸方正常的(負債 / 權益 / 收入)相反。
+    例:現金借 10 →「增加 $10」;收入貸 5 →「增加 $5」;現金貸 3 →「減少 $3」。"""
+    amt = debit - credit
+    if not amt:
+        return ""
+    up = (amt > 0) == Q._is_debit_normal(code)
+    return f"{'增加' if up else '減少'} ${abs(amt):,.0f}"
+
+
 def _ledger_invoice_map():
     """識別碼 = 發票號碼(2026-10-16 同仁確認)。依來源抓各自的發票號碼;沒有發票的留空。"""
     m = {}
@@ -1888,8 +1900,10 @@ def ledger_page(request: Request):
             edit_cache[key] = _voucher_edit_url(*key)
         r["edit_url"] = edit_cache[key]
         r["src_label"] = LEDGER_SOURCES.get(r["source_type"], r["source_type"])
+        r["explain"] = _ledger_explain(r["account_code"], r["debit"] or 0, r["credit"] or 0)
+    accts = sorted({(r["account_code"], r["account_name"]) for r in rows})
     return tpl.TemplateResponse("ledger.html", dict(
-        request=request, active="ledger", rows=rows, src=src, sources=LEDGER_SOURCES,
+        request=request, active="ledger", rows=rows, src=src, sources=LEDGER_SOURCES, accts=accts,
         total_debit=sum(r["debit"] or 0 for r in rows), total_credit=sum(r["credit"] or 0 for r in rows)))
 
 
@@ -2300,7 +2314,7 @@ _LEDGER_DELETERS = {
 async def ledger_delete(request: Request):
     """勾選刪除(1015 版「總帳」工作表:只能一次刪除同一筆傳票號碼的全部,不可分開刪其中某一筆)。
     收傳票號碼清單,每張找出來源、呼叫該來源自己的刪除邏輯(連來源資料一起刪)。
-    設備取得 / 折舊 / 年度結轉不能從這裡刪(要到固定資產 / 正式報表處理),會略過。"""
+    設備取得 / 折舊 / 年度結轉不能從這裡刪(要到固定資產 / 財務報表處理),會略過。"""
     f = await request.form()
     done, deleted, skipped = set(), [], []
     for vno in dict.fromkeys(v.strip() for v in f.getlist("voucher_no") if v.strip()):

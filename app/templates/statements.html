@@ -2,7 +2,7 @@
 {% block title %}{{ tabs[tab] }} · 桂圓帳房{% endblock %}
 {% block body %}
 <div class="head">
-  <div><div class="sup">桂圓帳房 / 正式報表</div><h1 class="serif">{{ tabs[tab] }}</h1></div>
+  <div><div class="sup">桂圓帳房 / 財務報表</div><h1 class="serif">{{ tabs[tab] }}</h1></div>
   <div style="text-align:right">
     <form method="get" action="/statements" style="display:inline-flex;gap:8px;align-items:center">
       <input type="hidden" name="tab" value="{{ tab }}">
@@ -30,7 +30,7 @@
   </div>
 </div>
 
-<div class="chips" style="margin:14px 0 20px;font-size:13px">
+<div class="chips" style="margin:14px 0 20px;font-size:13px"><span class="muted" style="align-self:center;margin-right:4px">報表類型:</span>
   {% for key, label in tabs.items() %}
     <a class="chip" href="/statements?tab={{ key }}&year={{ year }}"
        style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if tab==key }}">{{ label }}</a>

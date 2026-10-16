@@ -11,9 +11,9 @@
 {% if qp.get('skipped') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">{{ qp.get('skipped') }} 是設備取得 / 折舊 / 年度結轉,不能從這裡刪,沒有動。</div>{% endif %}
 <p class="muted" style="font-size:13px;margin:-4px 0 14px;line-height:1.7">
   各記帳畫面存檔時,系統自動組出的分錄,一行一筆。<b>點欄位標題可以排序</b>(再點一次反過來),
-  標題下面那一排可以篩選。要改內容請點傳票號碼,回到原始資料修改;
+  標題下面那一排可以篩選(傳票號碼可以用 * 跟 ?,例如 GL202609* 是九月全部的傳票;科目用下拉選)。要改內容請點傳票號碼,回到原始資料修改;
   <b>勾選任何一行,同一張傳票會整張一起勾,刪除會連同來源那筆資料(那張訂單 / 那筆費用…)一起刪掉</b>。
-  「設備取得」「折舊」要到<a href="/assets">固定資產</a>處理,「年度結轉」要到<a href="/statements">正式報表</a>撤銷,不能勾選。
+  「設備取得」「折舊」要到<a href="/assets">固定資產</a>處理,「年度結轉」要到<a href="/statements">財務報表</a>撤銷,不能勾選。
 </p>
 
 <form method="get" action="/ledger" style="display:flex;gap:10px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
@@ -44,25 +44,28 @@
         <th data-k="dr" data-t="n" class="sortable" data-num>借方</th>
         <th data-k="cr" data-t="n" class="sortable" data-num>貸方</th>
         <th data-k="a" data-t="n" class="sortable" data-num>異動金額</th>
+        <th data-k="x" data-t="s" class="sortable">解釋</th>
         <th data-k="m" data-t="s" class="sortable">備註</th>
       </tr>
       <tr class="filters">
         <th></th>
-        <th><input data-f="v" placeholder="篩選"></th>
+        <th><input data-f="v" placeholder="例:GL202609*" title="可以用 * 代表任意多個字、? 代表一個字"></th>
         <th><input data-f="d" placeholder="例:2026-09"></th>
-        <th><input data-f="c" placeholder="篩選"></th>
-        <th><input data-f="n" placeholder="篩選"></th>
+        <th colspan="2"><select data-f="c" data-exact="1" style="font-size:12px;padding:4px 6px;min-width:150px">
+          <option value="">全部科目</option>
+          {% for code, name in accts %}<option value="{{ code }}">{{ code }} {{ name }}</option>{% endfor %}
+        </select></th>
         <th><input data-f="i" placeholder="篩選"></th>
-        <th></th><th></th><th></th>
+        <th></th><th></th><th></th><th></th>
         <th><input data-f="m" placeholder="篩選"></th>
       </tr>
     </thead>
     <tbody>
     {% for r in rows %}
       <tr data-v="{{ r.voucher_no }}" data-d="{{ r.entry_date }}" data-c="{{ r.account_code }}" data-n="{{ r.account_name }}"
-          data-i="{{ r.invoice_no }}" data-dr="{{ r.debit or 0 }}" data-cr="{{ r.credit or 0 }}" data-a="{{ r.amount }}"
+          data-i="{{ r.invoice_no }}" data-dr="{{ r.debit or 0 }}" data-cr="{{ r.credit or 0 }}" data-a="{{ r.amount }}" data-x="{{ r.explain }}"
           data-m="{{ r.note or '' }} {{ r.src_label }}" data-o="{{ loop.index }}">
-        <td>{% if r.deletable %}<input type="checkbox" class="vchk" name="voucher_no" value="{{ r.voucher_no }}" style="width:auto">{% else %}<span class="muted" title="要到固定資產 / 正式報表處理">—</span>{% endif %}</td>
+        <td>{% if r.deletable %}<input type="checkbox" class="vchk" name="voucher_no" value="{{ r.voucher_no }}" style="width:auto">{% else %}<span class="muted" title="要到固定資產 / 財務報表處理">—</span>{% endif %}</td>
         <td>{% if r.edit_url %}<a href="{{ r.edit_url }}" title="到原始資料修改({{ r.src_label }})">{{ r.voucher_no }}</a>{% else %}{{ r.voucher_no }}{% endif %}</td>
         <td>{{ r.entry_date }}</td>
         <td>{{ r.account_code }}</td>
@@ -71,16 +74,17 @@
         <td class="r">{{ r.debit|money if r.debit else '' }}</td>
         <td class="r">{{ r.credit|money if r.credit else '' }}</td>
         <td class="r {{ 'neg' if r.amount < 0 }}">{% if r.amount < 0 %}({{ (-r.amount)|money }}){% else %}{{ r.amount|money }}{% endif %}</td>
+        <td>{{ r.explain }}</td>
         <td class="muted">{{ r.note or '' }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="10" class="muted" style="text-align:left">還沒有分錄。開一張訂單或記一筆營運支出,存檔後就會出現在這裡。</td></tr>
+      <tr><td colspan="11" class="muted" style="text-align:left">還沒有分錄。開一張訂單或記一筆營運支出,存檔後就會出現在這裡。</td></tr>
     {% endfor %}
     </tbody>
     {% if rows %}
     <tfoot><tr class="sum"><td colspan="6" class="r">顯示中的合計</td>
       <td class="r" id="sumDr">{{ total_debit|money }}</td><td class="r" id="sumCr">{{ total_credit|money }}</td>
-      <td class="r" id="sumA"></td><td></td></tr></tfoot>
+      <td class="r" id="sumA"></td><td></td><td></td></tr></tfoot>
     {% endif %}
   </table>
 </div>
@@ -91,18 +95,27 @@
   var tb = document.querySelector('#glTable tbody');
   if (!tb) return;
   var rows = [].slice.call(tb.querySelectorAll('tr[data-v]'));
-  var inputs = [].slice.call(document.querySelectorAll('#glTable input[data-f]'));
+  var inputs = [].slice.call(document.querySelectorAll('#glTable [data-f]'));
   var cnt = document.getElementById('fCount'), sel = document.getElementById('selInfo');
   function money(n) { return Math.round(n).toLocaleString(); }
 
-  // --- 篩選:每欄「包含」這段文字 ---
+  // --- 篩選:每欄「包含」這段文字;有 * 或 ? 時當萬用字元(* 任意多個字、? 一個字,
+  //     整段比對,例 GL202609* = 九月全部傳票);科目是下拉選單,要完全相同 ---
+  function matcher(i) {
+    var v = (i.value || '').trim().toLowerCase();
+    if (!v) return null;
+    if (i.dataset.exact) return function (s) { return s.toLowerCase() === v; };
+    if (/[*?]/.test(v)) {
+      var re = new RegExp('^' + v.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+      return function (s) { return re.test(s.toLowerCase()); };
+    }
+    return function (s) { return s.toLowerCase().indexOf(v) !== -1; };
+  }
   function apply() {
     var dr = 0, cr = 0, shown = 0;
+    var ms = inputs.map(function (i) { return [i.dataset.f, matcher(i)]; }).filter(function (x) { return x[1]; });
     rows.forEach(function (r) {
-      var ok = inputs.every(function (i) {
-        var v = (i.value || '').trim().toLowerCase();
-        return !v || (r.dataset[i.dataset.f] || '').toLowerCase().indexOf(v) !== -1;
-      });
+      var ok = ms.every(function (m) { return m[1](r.dataset[m[0]] || ''); });
       r.hidden = !ok;
       if (ok) { shown++; dr += +r.dataset.dr; cr += +r.dataset.cr; }
     });
@@ -112,7 +125,7 @@
     document.getElementById('sumCr').textContent = money(cr);
     document.getElementById('sumA').textContent = a < 0 ? '(' + money(-a) + ')' : money(a);
   }
-  inputs.forEach(function (i) { i.addEventListener('input', apply); });
+  inputs.forEach(function (i) { i.addEventListener('input', apply); i.addEventListener('change', apply); });
   document.getElementById('clearF').addEventListener('click', function (e) {
     e.preventDefault(); inputs.forEach(function (i) { i.value = ''; }); apply();
   });
