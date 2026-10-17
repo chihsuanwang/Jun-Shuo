@@ -417,11 +417,12 @@ def season_compare():
 # ---------- 財務健康:月損益 ----------------------------------
 #   前 4 類多半可歸到某條產品線;後面幾類通常是共同費用。
 def opex_cats():
-    """財務健康頁的費用項目清單:會計科目表 VD + VE 的名稱(2026-10-16 起項目就是科目),
+    """財務健康頁的費用項目清單:會計科目表 VD 的名稱(2026-10-16 起項目就是科目;VE 其他支出不算),
     再補上舊資料裡出現過、但已經不在科目表的名稱。"""
     import chart
-    names = [r["name"] for r in chart.accounts(["VD", "VE"], active_only=False)]
-    for r in q("SELECT DISTINCT category FROM op_expense"):
+    names = [r["name"] for r in chart.accounts(["VD"], active_only=False)]
+    for r in q("""SELECT DISTINCT category FROM op_expense
+                  WHERE account_code IS NULL OR account_code NOT IN (SELECT code FROM account WHERE grp='VE')"""):
         if r["category"] and r["category"] not in names:
             names.append(r["category"])
     return names
@@ -497,7 +498,9 @@ def opex_rows(lo=None, hi=None):
     amortize_months 空或 <=1 → 當月全額;N → 從 ym 起每月 amount/N,共 N 個月。
     給 lo/hi(YYYY-MM)時只回落在區間內的月份。"""
     out = []
-    for r in q("SELECT ym, category, product_group_id, amount, amortize_months FROM op_expense"):
+    # 2026-10-17:其他支出(VE 組,利息 / 所得稅)是獨立功能,不算營運費用
+    for r in q("""SELECT ym, category, product_group_id, amount, amortize_months FROM op_expense
+                  WHERE account_code IS NULL OR account_code NOT IN (SELECT code FROM account WHERE grp='VE')"""):
         n = int(r["amortize_months"]) if r["amortize_months"] and r["amortize_months"] > 1 else 1
         per = (r["amount"] or 0) / n
         for i in range(n):

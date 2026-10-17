@@ -232,7 +232,8 @@ CREATE TABLE review_queue (
 -- 12. 營運費用(月)(v2 回合 2b:加產品線標記 + 攤提 + 報稅欄) ----
 CREATE TABLE op_expense (
   expense_id  INTEGER PRIMARY KEY,
-  ym          TEXT NOT NULL,          -- YYYY-MM(攤提時 = 起始月)
+  ym          TEXT NOT NULL,          -- YYYY-MM(由 expense_date 推;舊資料攤提時 = 起始月)
+  expense_date TEXT,                  -- 交易日期(2026-10-17:同仁意見「日期就是日期」,傳票日期用這個)
   category    TEXT NOT NULL,          -- 直接人工 / 田間管理 / 驗證費 / 研發 / 人事 / 場地・倉儲 / 行銷 / 金流手續費 / 設備維護 / 培訓 / 其他
   account_code  TEXT,                 -- 2026-10-16:費用科目(VD 營運費用 / VE 其他費用),category 存科目名稱
   amount      REAL NOT NULL DEFAULT 0,       -- 帳載值(實際花的錢;B 層報稅看這個)

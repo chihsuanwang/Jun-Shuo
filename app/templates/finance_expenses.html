@@ -1,44 +1,40 @@
 {% extends "base.html" %}
-{% block title %}營運費用 · 桂圓帳房{% endblock %}
+{% block title %}{{ kind.label }} · 桂圓帳房{% endblock %}
 {% block body %}
 <div class="head">
-  <div><div class="sup"><a href="/finance">財務健康</a> / 營運費用</div><h1 class="serif">營運費用(逐月)</h1></div>
-  <a href="/finance/expenses/new"><button>＋ 新增一筆</button></a>
+  <div><div class="sup">桂圓帳房 / {{ kind.label }}</div><h1 class="serif">{{ kind.label }}</h1></div>
+  <a href="{{ '/other-expenses/new' if grp == 'VE' else '/finance/expenses/new' }}"><button>＋ 新增一筆</button></a>
 </div>
 <hr class="rule">
+{% if request.query_params.get('ok') %}<div class="ok">已儲存,總帳也已經記好。</div>{% endif %}
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">
-  每個月每個項目登一筆(淡月也要填)。
-  一次性的大支出(例:研發、設備)可設「攤提月數」,系統會分月認列。
-  <b>這個「分月認列」只影響這裡跟財務健康頁的月損益數字</b>——<a href="/ledger">總帳</a>記的是
-  存檔當下現金真正付出去的全額(錢確實是那時候付的,沒有錯),跟這裡分月看到的數字不是同一件事,
-  兩邊本來就是不同用途:這裡是管理估算,總帳是實際現金紀錄。
+  {% if grp == 'VE' %}利息費用、所得稅這類不屬於營運的支出,獨立記在這裡,不算進營運費用。
+  {% else %}房租、郵電、運費、薪資…營運相關的花費,每筆照發票記(淡月也要記)。其他支出(利息、所得稅)請到<a href="/other-expenses">其他支出</a>。{% endif %}
 </p>
 
 <div class="card" style="overflow-x:auto">
   <table class="sortable">
     <thead><tr>
-      <th>月份</th><th>項目</th>
-      <th data-num>金額</th><th>攤提</th><th>憑證</th>
+      <th>日期</th><th>科目</th>
+      <th data-num>發票金額</th><th data-num>進項稅額</th><th>帳戶</th><th>憑證</th>
       <th>修改日期</th><th>備註</th><th></th>
     </tr></thead>
     <tbody>{% for r in rows %}
     <tr>
-      <td>{{ r.ym }}</td>
-      <td>{{ r.category }}</td>
-      <td>{{ r.amount|money }}</td>
-      <td>{{ (r.amortize_months ~ ' 個月') if r.amortize_months else '—' }}</td>
+      <td>{{ r.expense_date or r.ym }}</td>
+      <td>{{ r.account_code or '' }} {{ r.category }}</td>
+      <td>{{ ((r.amount or 0) + (r.tax_amount or 0))|money }}</td>
+      <td>{{ (r.tax_amount or 0)|money }}</td>
+      <td class="muted">{{ r.payment_account or '現金' }}</td>
       <td class="muted" style="font-size:12px">{{ r.doc_type or '' }}{{ (' ' ~ r.invoice_no) if r.invoice_no else '' }}</td>
       <td class="muted">{{ (r.updated_at or '')[:16] }}</td>
       <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
       <td><a href="/finance/expenses/{{ r.expense_id }}/edit">編輯</a></td>
     </tr>
-    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="9" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
-<div class="muted" style="font-size:11px;margin-top:8px">
-  點欄位標題可排序(再點一次換升 / 降冪)。
-  「金額」是實際花的錢;設了「攤提」時,財務健康的月損益會把它分月攤開,整季 / 整年合計不變。
-</div>
+<div class="muted" style="font-size:11px;margin-top:8px">點欄位標題可排序(再點一次換升 / 降冪)。</div>
 
 <script>
 (function () {

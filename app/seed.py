@@ -273,8 +273,8 @@ _OPX_CODE = {"人事": "6110-01", "直接人工": "6110-01", "場地・倉儲": 
 def opx(ym, cat, amt, pgname=None, amort=None):
     """2026-10-16:營運費用的項目就是 VD 科目;示範資料沿用原本的類別,這裡換成對應科目。"""
     code = _OPX_CODE[cat]
-    c.execute("""INSERT INTO op_expense(ym,category,account_code,amount,product_group_id,amortize_months,payment_account)
-                 VALUES(?,?,?,?,?,?,?)""", (ym, chart.name_of(code), code, amt, pg.get(pgname), amort, "現金"))
+    c.execute("""INSERT INTO op_expense(expense_date,ym,category,account_code,amount,product_group_id,amortize_months,payment_account)
+                 VALUES(?,?,?,?,?,?,?,?)""", (ym + "-01", ym, chart.name_of(code), code, amt, pg.get(pgname), amort, "現金"))
     return c.lastrowid
 
 for ym in opex_months:
@@ -288,7 +288,7 @@ for ym in opex_months:
         opx(ym, "直接人工", 15000, "龍眼乾")
         opx(ym, "直接人工", 8000, "龍眼肉")
         opx(ym, "直接人工", 3000, "蜂蜜")
-rnd_id = opx("2025-07", "研發", 120000, None, 24)     # 研發費 12 萬,分 24 個月攤
+rnd_id = opx("2025-07", "研發", 120000)     # 研發費 12 萬(2026-10-17 起不再攤提)
 add_voucher("2025-07-01", ledger.compose_expense_entries("612901", 120000, 0, "現金"),
             "op_expense", rnd_id, "營運費用:研究發展費")
 cert_id = opx("2026-06", "驗證費", 15000, "龍眼乾")     # 年度產銷履歷驗證費

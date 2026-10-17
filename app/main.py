@@ -147,6 +147,8 @@ def migrate_db():
         ecols = [r["name"] for r in q("PRAGMA table_info(op_expense)")]
         if "account_code" not in ecols:
             execute("ALTER TABLE op_expense ADD COLUMN account_code TEXT")
+        if "expense_date" not in ecols:
+            execute("ALTER TABLE op_expense ADD COLUMN expense_date TEXT")
         ccols = [r["name"] for r in q("PRAGMA table_info(customer)")]
         if "cust_no" not in ccols:
             execute("ALTER TABLE customer ADD COLUMN cust_no TEXT")
@@ -1547,26 +1549,49 @@ def finance_page(request: Request):
 
 DOC_TYPES = ['發票', '收據']   # 憑證類型(1015 版 Excel:發票、收據;發票要填號碼)
 
+# ---------- 營運支出(VD)/ 其他支出(VE)(2026-10-17 同仁修改意見:同一頁分模組區塊)--------
+#   營運支出 = VD 費用 + C 付款帳戶 + G 進項稅額;其他支出 = VE + C + G,兩個是獨立的清單跟入口,
+#   共用同一張 op_expense 表(用科目分組區分)。共用欄位(日期、備註)只填一次;憑證類型 / 發票號碼
+#   放在 G 區塊。金額填「發票金額(支付金額)」= 含稅付出去的錢,費用 = 發票金額 − 進項稅額。
+#   沒有攤提月數,也不再經過確認頁(分錄在同一頁即時預覽)。
+EXP_KINDS = {"VD": dict(label="營運支出", list_url="/finance/expenses", active="expenses"),
+             "VE": dict(label="其他支出", list_url="/other-expenses", active="otherexp")}
+
+
+def _expense_list(request, grp):
+    k = EXP_KINDS[grp]
+    rows = q("""SELECT e.* FROM op_expense e
+                WHERE COALESCE((SELECT grp FROM account a WHERE a.code=e.account_code), 'VD') = ?
+                ORDER BY COALESCE(e.expense_date, e.ym || '-01') DESC, e.expense_id DESC""", (grp,))
+    return tpl.TemplateResponse("finance_expenses.html", dict(
+        request=request, active=k["active"], rows=rows, grp=grp, kind=k))
+
 @app.get("/finance/expenses", response_class=HTMLResponse)
 def finance_expenses(request: Request):
-    rows = q("SELECT * FROM op_expense ORDER BY ym DESC, category")
-    return tpl.TemplateResponse("finance_expenses.html", dict(
-        request=request, active="expenses", rows=rows))
+    return _expense_list(request, "VD")
+
+@app.get("/other-expenses", response_class=HTMLResponse)
+def other_expenses(request: Request):
+    return _expense_list(request, "VE")
 
 def _expense_form_ctx(request, e, grp="VD"):
-    """營運支出(VD)/ 其他費用(VE)共用這個表單,項目直接選會計科目(2026-10-16)。"""
-    months = Q.months_with_data()
     if e and e.get("account_code"):
         grp = q1("SELECT grp FROM account WHERE code=?", (e["account_code"],)).get("grp") or grp
-    grp = grp if grp in ("VD", "VE") else "VD"
-    return dict(request=request, active="expenses", e=e, grp=grp, accts=chart.accounts([grp]),
-               docs=DOC_TYPES,
-               ym_default=(months[-1] if months else dt.date.today().strftime("%Y-%m")))
+    grp = grp if grp in EXP_KINDS else "VD"
+    return dict(request=request, active=EXP_KINDS[grp]["active"], e=e, grp=grp, kind=EXP_KINDS[grp],
+                accts=chart.accounts([grp]), cash_accounts=chart.accounts(["C"]), docs=DOC_TYPES,
+                bank_codes={r["name"]: r["code"] for r in chart.accounts(["C"])},
+                acct_names={r["code"]: r["name"] for r in chart.accounts([grp])},
+                today=dt.date.today().isoformat())
 
 @app.get("/finance/expenses/new", response_class=HTMLResponse)
 def finance_expense_new(request: Request):
     return tpl.TemplateResponse("finance_expense_form.html",
                                 _expense_form_ctx(request, None, request.query_params.get("grp") or "VD"))
+
+@app.get("/other-expenses/new", response_class=HTMLResponse)
+def other_expense_new(request: Request):
+    return tpl.TemplateResponse("finance_expense_form.html", _expense_form_ctx(request, None, "VE"))
 
 @app.get("/finance/expenses/{eid}/edit", response_class=HTMLResponse)
 def finance_expense_edit(request: Request, eid: int):
@@ -1574,17 +1599,6 @@ def finance_expense_edit(request: Request, eid: int):
     if not e:
         return RedirectResponse("/finance/expenses", status_code=303)
     return tpl.TemplateResponse("finance_expense_form.html", _expense_form_ctx(request, e[0]))
-
-def _expense_upsert(cols, eid):
-    """寫入 op_expense 主資料(不含分錄),回傳 expense_id。"""
-    if eid:
-        sets = ",".join(f"{k}=:{k}" for k in cols)
-        execute(f"UPDATE op_expense SET {sets}, updated_at=datetime('now','localtime') WHERE expense_id=:id",
-                {**cols, "id": int(eid)})
-        return int(eid)
-    keys = ",".join(cols)
-    return execute(f"INSERT INTO op_expense({keys}, updated_at) "
-                   f"VALUES({','.join(':' + k for k in cols)}, datetime('now','localtime'))", cols)
 
 
 def _expense_delete(eid):
@@ -1595,76 +1609,43 @@ def _expense_delete(eid):
 async def finance_expense_save(request: Request):
     f = await request.form()
     g = lambda k: (f.get(k) or "").strip() or None
-    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
+    fl = lambda k: _num(f.get(k))
     eid = f.get("expense_id")
+    code = g("account_code")
+    acct = q1("SELECT code, name, grp FROM account WHERE code=? AND grp IN ('VD','VE')", (code,))
+    grp = acct.get("grp") or (f.get("grp") if f.get("grp") in EXP_KINDS else "VD")
+    list_url = EXP_KINDS[grp]["list_url"]
     if f.get("_delete") and eid:
         _expense_delete(eid)
-        return RedirectResponse("/finance/expenses", status_code=303)
-    ym = (f.get("ym") or "").strip()
-    code = (f.get("account_code") or "").strip()
-    acct = q1("SELECT code, name FROM account WHERE code=? AND grp IN ('VD','VE')", (code,))
-    if not (ym and acct):
-        return RedirectResponse("/finance/expenses", status_code=303)
-    cat = acct["name"]
-    am = f.get("amortize_months") or ""
-    cols = dict(
-        ym=ym, category=cat, account_code=code, amount=fl("amount"),
-        amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
-        note=g("note"))
-
-    # 走確認畫面,存檔動作交給 /finance/expenses/confirm
-    existing = q1("SELECT tax_amount, payment_account, doc_type, invoice_no FROM op_expense WHERE expense_id=?",
-                  (int(eid),)) if eid else {}
-    acct_code, acct_name = acct["code"], acct["name"]
-    hidden = dict(cols)
-    if eid:
-        hidden["expense_id"] = eid
-    back = f"/finance/expenses/{eid}/edit" if eid else "/finance/expenses/new"
-    return tpl.TemplateResponse("ledger_confirm.html", dict(
-        request=request, active="expenses",
-        source_label="營運費用", back_url=back, commit_url="/finance/expenses/confirm",
-        summary=[
-            dict(label="月份", value=ym),
-            dict(label="項目", value=cat),
-            dict(label="金額", value=f"{cols['amount']:,.0f}"),
-        ],
-        hidden=hidden,
-        amount=cols["amount"], primary_account_code=acct_code, primary_account_name=acct_name,
-        tax_account=ledger.TAX_INPUT_ACCOUNT, cash_account=ledger.CASH_ACCOUNT,
-        bank_codes={r["name"]: r["code"] for r in chart.bank_accounts()},
-        tax_amount=existing.get("tax_amount"), payment_account=existing.get("payment_account"),
-        doc_type=existing.get("doc_type"), doc_types=DOC_TYPES, cash_accounts=chart.accounts(["C"]),
-        invoice_no=existing.get("invoice_no"),
-    ))
-
-
-@app.post("/finance/expenses/confirm")
-async def finance_expense_confirm(request: Request):
-    f = await request.form()
-    g = lambda k: (f.get(k) or "").strip() or None
-    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
-    eid = f.get("expense_id")
-    tax_amount = fl("tax_amount")
-    payment_account = g("payment_account")
-    am = f.get("amortize_months") or ""
-    ym = (f.get("ym") or "").strip()
-    code = (f.get("account_code") or "").strip()
-    cat = chart.name_of(code, f.get("category"))
-    doc_type = g("doc_type")
-    invoice_no = g("invoice_no")
-    if doc_type and "發票" in doc_type and not invoice_no:
-        back = f"/finance/expenses/{eid}/edit" if eid else "/finance/expenses/new"
+        return RedirectResponse(list_url, status_code=303)
+    back = f"/finance/expenses/{eid}/edit" if eid else (
+        "/other-expenses/new" if grp == "VE" else "/finance/expenses/new")
+    date = g("expense_date")
+    total = fl("invoice_amount")      # 發票金額(支付金額),含稅
+    tax = fl("tax_amount")
+    if not (date and acct) or total <= 0:
+        return RedirectResponse(f"{back}?err=1", status_code=303)
+    if tax >= total:
+        return RedirectResponse(f"{back}?err=tax", status_code=303)
+    doc = g("doc_type")
+    if doc == "發票" and not g("invoice_no"):
         return RedirectResponse(f"{back}?ierr=1", status_code=303)
-    cols = dict(
-        ym=ym, category=cat, account_code=code, amount=fl("amount"),
-        amortize_months=(int(am) if am.isdigit() and int(am) > 1 else None),
-        tax_amount=tax_amount, payment_account=payment_account, doc_type=doc_type,
-        invoice_no=invoice_no,
-        note=g("note"))
-    new_id = _expense_upsert(cols, eid)
-    legs = ledger.compose_expense_entries(code, cols["amount"], tax_amount, payment_account)
-    ledger.save_voucher("op_expense", new_id, f"{ym}-01", legs, note=f"營運費用:{cat}")
-    return RedirectResponse("/finance/expenses", status_code=303)
+    cols = dict(expense_date=date, ym=date[:7], category=acct["name"], account_code=code,
+                amount=total - tax, amortize_months=None, tax_amount=tax,
+                payment_account=g("payment_account") or "現金", doc_type=doc,
+                invoice_no=(g("invoice_no") if doc == "發票" else None), note=g("note"))
+    if eid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE op_expense SET {sets}, updated_at=datetime('now','localtime') WHERE expense_id=:id",
+                {**cols, "id": int(eid)})
+        new_id = int(eid)
+    else:
+        keys = ",".join(cols)
+        new_id = execute(f"INSERT INTO op_expense({keys}, updated_at) "
+                         f"VALUES({','.join(':' + k for k in cols)}, datetime('now','localtime'))", cols)
+    legs = ledger.compose_expense_entries(code, cols["amount"], tax, cols["payment_account"])
+    ledger.save_voucher("op_expense", new_id, date, legs, note=f"{EXP_KINDS[grp]['label']}:{acct['name']}")
+    return RedirectResponse(f"{list_url}?ok=1", status_code=303)
 
 
 # ---------- 9 宮格 B 類:首頁入口 ----------------------------
@@ -1673,7 +1654,7 @@ ENTRY_CARDS = [
     dict(title="銷售商品", href="/orders/new", desc="開一張訂單,存檔就自動記應收帳款、銷貨收入、銷項稅額,跟付給小農的成本。"),
     dict(title="營運支出", href="/finance/expenses/new", desc="房租、郵電、運費、薪資…營運相關的花費。"),
     dict(title="其他收益", href="/other-income/new", desc="利息收入、政府補助等非銷售的進帳。"),
-    dict(title="其他支出", href="/finance/expenses/new?grp=VE", desc="利息費用、所得稅這類不屬於營運的支出。"),
+    dict(title="其他支出", href="/other-expenses/new", desc="利息費用、所得稅這類不屬於營運的支出。"),
     dict(title="設備相關", href="/assets/new", desc="機器/器具採購,建固定資產卡,系統會自動記分錄、每月提折舊。"),
     dict(title="資本異動", href="/equity/new", desc="增資、減資、提列法定盈餘公積。"),
     dict(title="帳務調整", href="/adjustments/new", desc="上面都套不上時,手動指定借/貸科目記一筆。"),
@@ -1695,7 +1676,10 @@ def other_income_list(request: Request):
 
 def _other_income_form_ctx(request, r):
     return dict(request=request, active="other_income", r=r, accts=chart.accounts(["UB"]),
-                cash_accounts=chart.accounts(["C"]), docs=DOC_TYPES)
+                cash_accounts=chart.accounts(["C"]), docs=DOC_TYPES,
+                bank_codes={x["name"]: x["code"] for x in chart.accounts(["C"])},
+                acct_names={x["code"]: x["name"] for x in chart.accounts(["UB"])},
+                today=dt.date.today().isoformat())
 
 @app.get("/other-income/new", response_class=HTMLResponse)
 def other_income_new(request: Request):
@@ -1731,7 +1715,12 @@ async def other_income_save(request: Request):
         back = f"/other-income/{iid}/edit" if iid else "/other-income/new"
         return RedirectResponse(f"{back}?ierr=1", status_code=303)
     cat = acct["name"]
-    cols = dict(income_date=date, category=cat, account_code=code, amount=fl("amount"), tax_amount=fl("tax_amount"),
+    total = _num(f.get("invoice_amount"))   # 發票金額(實收金額),含稅(2026-10-17)
+    tax = _num(f.get("tax_amount"))
+    if total <= 0 or tax >= total:
+        back = f"/other-income/{iid}/edit" if iid else "/other-income/new"
+        return RedirectResponse(f"{back}?err=1", status_code=303)
+    cols = dict(income_date=date, category=cat, account_code=code, amount=total - tax, tax_amount=tax,
                 doc_type=doc, invoice_no=(g("invoice_no") if doc == "發票" else None),
                 payment_account=g("payment_account"), note=g("note"))
     if iid:

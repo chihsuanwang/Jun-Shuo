@@ -1,55 +1,97 @@
 {% extends "base.html" %}
-{% block title %}{{ '編輯費用' if e else '新增費用' }} · 桂圓帳房{% endblock %}
+{% block title %}{{ ('編輯' if e else '新增') ~ kind.label }} · 桂圓帳房{% endblock %}
 {% block body %}
+<style>
+.mods { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; margin-bottom:16px; max-width:980px; }
+.mod h3 { display:flex; gap:8px; align-items:baseline; }
+.mod h3 .tag { font-family:monospace; font-size:12px; background:var(--paper-2); border:1px solid var(--rule); border-radius:4px; padding:1px 6px; }
+</style>
 <div class="head"><div>
-  <div class="sup"><a href="/finance">財務健康</a> / <a href="/finance/expenses">營運費用</a> / {{ '編輯' if e else '新增' }}</div>
-  <h1 class="serif">{{ '編輯費用' if e else ('新增一筆其他支出' if grp == 'VE' else '新增一筆營運支出') }}</h1>
+  <div class="sup"><a href="{{ kind.list_url }}">{{ kind.label }}</a> / {{ '編輯' if e else '新增' }}</div>
+  <h1 class="serif">{{ ('編輯' if e else '新增一筆') ~ kind.label }}</h1>
 </div></div>
 <hr class="rule">
-{% if request.query_params.get('ierr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">憑證類型選了發票,發票號碼是必填的,請補上再存檔。</div>{% endif %}
+{% set qp = request.query_params %}
+{% if qp.get('ierr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">憑證類型選了發票,發票號碼要填。</div>{% endif %}
+{% if qp.get('err') == '1' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">日期、科目、發票金額都要填。</div>{% endif %}
+{% if qp.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">進項稅額不能大於或等於發票金額。</div>{% endif %}
 
-<form method="post" action="/finance/expenses">
+<form method="post" action="/finance/expenses" id="expForm">
 {% if e %}<input type="hidden" name="expense_id" value="{{ e.expense_id }}">{% endif %}
-<div class="card" style="max-width:680px">
-  <div class="grid" style="grid-template-columns:1fr 1fr">
-    <div><label>月份(攤提時 = 起始月)</label>
-      <input name="ym" value="{{ e.ym if e else ym_default }}" placeholder="2026-09" required></div>
-    <div><label>{{ '其他支出科目' if grp == 'VE' else '營運費用科目' }}</label>
-      <select name="account_code" id="cat" required>
-        {% for a in accts %}<option value="{{ a.code }}" {{ 'selected' if e and (e.account_code == a.code or e.category == a.name) }}>{{ a.code }} {{ a.name }}</option>{% endfor %}
-      </select>
-      <div class="muted" id="rndHint" hidden style="font-size:11px;margin-top:3px;color:var(--seal)">
-        如果是設備/機器的零件、組裝費用(例:烘焙機的元件),建議改到
-        <a href="/assets/new">固定資產</a> 登記,才會正確逐年提折舊——這裡的「研發」比較適合
-        沒有形成實體設備的費用(例:配方試驗、委外檢驗)。
-      </div>
-    </div>
-    <div><label>金額(實際花的錢)</label>
-      <input name="amount" type="number" step="1" value="{{ e.amount|round(0) if e else '' }}" required></div>
-    <div><label>攤提月數(一次性大支出才填)</label>
-      <input name="amortize_months" type="number" min="1" step="1"
-             value="{{ e.amortize_months if e and e.amortize_months else '' }}" placeholder="留白 = 當月全額">
-      <div class="muted" style="font-size:11px;margin-top:3px">例:研發花 30 萬、分 36 個月 → 填 36,每月認列約 8,333</div>
-    </div>
+<input type="hidden" name="grp" value="{{ grp }}">
+<div class="card" style="max-width:980px;margin-bottom:14px">
+  <div class="grid" style="grid-template-columns:200px 1fr">
+    <div><label>日期</label><input type="date" name="expense_date" value="{{ (e.expense_date or (e.ym ~ '-01')) if e else today }}" required></div>
+    <div><label>備註</label><input name="note" value="{{ (e.note or '') if e else '' }}"></div>
   </div>
-
-  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (e.note or '') if e else '' }}"></div>
-  <div style="margin-top:16px">
-    <button type="submit">儲存</button>
-    <a href="/finance/expenses" style="margin-left:12px">取消</a>
-    {% if e %}
-    <button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
-            onclick="return confirm('刪除這筆費用?')">刪除</button>
-    {% endif %}
+</div>
+<div class="mods">
+  <div class="card mod">
+    <h3 class="serif"><span class="tag">{{ grp }}</span>{{ '其他支出' if grp == 'VE' else '費用' }}</h3>
+    <label>科目</label>
+    <select name="account_code" id="acct" required>
+      {% for a in accts %}<option value="{{ a.code }}" {{ 'selected' if e and (e.account_code == a.code or e.category == a.name) }}>{{ a.code }} {{ a.name }}</option>{% endfor %}
+    </select>
+    <div class="muted" id="rndHint" hidden style="font-size:11px;margin-top:3px;color:var(--seal)">
+      如果是設備 / 機器的零件、組裝費用,建議改到 <a href="/assets/new">固定資產</a> 登記,才會逐年提折舊。
+    </div>
+    <label style="margin-top:10px">發票金額(支付金額)</label>
+    <input name="invoice_amount" id="amt" type="number" step="1" min="1" value="{{ ((e.amount or 0) + (e.tax_amount or 0))|round(0)|int if e else '' }}" required>
+    <div class="muted" style="font-size:11px;margin-top:3px">發票上的總額 = 實際付出去的錢(含稅)</div>
   </div>
+  <div class="card mod">
+    <h3 class="serif"><span class="tag">C</span>付款帳戶</h3>
+    <label>從哪個帳戶付</label>
+    <select name="payment_account" id="pay">
+      {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if ((e.payment_account if e else None) or '現金') == a.name }}>{{ a.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="card mod">
+    <h3 class="serif"><span class="tag">G</span>進項稅額</h3>
+    <label>進項稅額(沒有填 0)</label>
+    <input name="tax_amount" id="tax" type="number" step="1" min="0" value="{{ (e.tax_amount or 0)|round(0)|int if e else 0 }}">
+    <label style="margin-top:10px">憑證類型</label>
+    <select name="doc_type" id="docType"><option value="">—</option>
+      {% for d in docs %}<option {{ 'selected' if e and e.doc_type == d }}>{{ d }}</option>{% endfor %}</select>
+    <div id="invField"><label style="margin-top:10px">發票號碼</label>
+      <input name="invoice_no" id="invNo" value="{{ (e.invoice_no or '') if e else '' }}"></div>
+  </div>
+</div>
+<div class="card" style="max-width:980px;margin-bottom:16px">
+  <h3 class="serif">分錄預覽</h3>
+  <table class="vt"><thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>借方</th><th data-num>貸方</th></tr></thead>
+    <tbody id="pv"></tbody></table>
+  <div class="muted" id="pvNote" style="font-size:12px;margin-top:6px"></div>
+</div>
+<div style="max-width:980px">
+  <button type="submit">儲存</button>
+  <a href="{{ kind.list_url }}" style="margin-left:12px">取消</a>
+  {% if e %}
+  <button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
+          onclick="return confirm('刪除這筆{{ kind.label }}?總帳的傳票也會一起刪掉。')">刪除</button>
+  {% endif %}
 </div>
 </form>
 <script>
 (function () {
-  var cat = document.getElementById('cat'), hint = document.getElementById('rndHint');
-  function toggle() { hint.hidden = cat.value !== '612901'; }
-  cat.addEventListener('change', toggle);
-  toggle();
+  var NAMES = {{ acct_names | tojson }}, BANKS = {{ bank_codes | tojson }};
+  var acct = document.getElementById('acct'), amt = document.getElementById('amt'), tax = document.getElementById('tax'),
+      pay = document.getElementById('pay'), d = document.getElementById('docType'),
+      f = document.getElementById('invField'), n = document.getElementById('invNo'), hint = document.getElementById('rndHint');
+  function m(v) { return Math.round(v).toLocaleString(); }
+  function row(c, nm, dr, cr) { return '<tr><td>' + c + '</td><td>' + nm + '</td><td class="r">' + (dr ? m(dr) : '—') + '</td><td class="r">' + (cr ? m(cr) : '—') + '</td></tr>'; }
+  function upd() {
+    f.hidden = d.value !== '發票'; n.required = !f.hidden;
+    hint.hidden = (NAMES[acct.value] || '').indexOf('研發') === -1;
+    var t = +amt.value || 0, x = +tax.value || 0, net = t - x;
+    var h = row(acct.value, NAMES[acct.value] || '', net, 0);
+    if (x) h += row('1423', '進項稅額', x, 0);
+    h += row(BANKS[pay.value] || '1102', pay.value, 0, t);
+    document.getElementById('pv').innerHTML = h;
+    document.getElementById('pvNote').textContent = '費用 ' + m(net) + ' = 發票金額 ' + m(t) + ' − 進項稅額 ' + m(x);
+  }
+  [acct, amt, tax, pay, d].forEach(function (el) { el.addEventListener('input', upd); el.addEventListener('change', upd); });
+  upd();
 })();
 </script>
 {% endblock %}
