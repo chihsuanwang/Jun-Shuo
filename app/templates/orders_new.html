@@ -76,13 +76,11 @@
   <div class="card">
     <h3 class="serif">收款 / 發票</h3>
     <div class="grid" style="grid-template-columns:1fr 1fr">
-      <div><label>付款方式</label><select name="payment_method">
-        <option value="">—</option>{% for p in ['現金','銀行匯款','貨到付款','行動支付','信用卡','平台代收','未收款'] %}<option>{{ p }}</option>{% endfor %}
-      </select></div>
-      <div><label>收款狀態</label><select name="payment_status">
-        {% for p in ['待收款','免收款'] %}<option>{{ p }}</option>{% endfor %}
+      <div><label>收款</label><select name="receive_account">
+        <option value="">E 應收帳款(還沒收,之後再收)</option>
+        {% for a in cash_accounts %}<option value="{{ a.name }}">C 當場收到:{{ a.name }}</option>{% endfor %}
       </select>
-        <div class="muted" style="font-size:11px;margin-top:3px">收到錢之後在訂單頁按「標記已收款」</div>
+        <div class="muted" style="font-size:11px;margin-top:3px">還沒收到錢就選應收帳款,收到後到「應收帳款」頁勾選收款;當場收齊就選收到哪個帳戶</div>
       </div>
       <div style="display:flex;align-items:flex-end;padding-bottom:9px">
         <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">

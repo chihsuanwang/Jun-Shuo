@@ -26,11 +26,15 @@
   <button type="submit" class="ghost">搜尋</button>
 </form>
 
+<form method="post" action="/bulk-delete" class="bulkdel" data-msg="訂單裡的品項、退款紀錄也會一起刪。">
+<input type="hidden" name="kind" value="order"><input type="hidden" name="back" value="{{ request.url.path }}{{ ('?' ~ request.url.query) if request.url.query else '' }}">
+{% include "_bulk_delete.html" %}
 <div class="card">
   <table>
-    <thead><tr><th>單號</th><th>日期</th><th>客戶</th><th>管道</th><th>種類</th><th>金額</th><th>收款</th><th>實收</th><th>出貨</th><th>運費(跟客人收)</th><th>發票</th></tr></thead>
+    <thead><tr><th style="width:34px"><input type="checkbox" class="chkall" style="width:auto" title="全選"></th><th>單號</th><th>日期</th><th>客戶</th><th>管道</th><th>種類</th><th>金額</th><th>收款</th><th>實收</th><th>出貨</th><th>運費(跟客人收)</th><th>發票</th></tr></thead>
     <tbody>{% for r in rows %}
       <tr>
+        <td><input type="checkbox" name="id" value="{{ r.order_id }}" style="width:auto"></td>
         <td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td>
         <td>{{ r.order_date }}</td>
         <td>{{ r.cust or '—' }}</td>
@@ -43,7 +47,8 @@
         <td>{{ (r.shipping_fee_charged or 0)|money }}</td>
         <td class="{{ 'muted' if not r.invoiced }}">{{ '已開' if r.invoiced else '未開' }}</td>
       </tr>
-    {% else %}<tr><td colspan="11" class="muted" style="text-align:left">沒有符合的訂單。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="12" class="muted" style="text-align:left">沒有符合的訂單。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
+</form>
 {% endblock %}

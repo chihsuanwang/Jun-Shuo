@@ -12,15 +12,19 @@
   {% else %}房租、郵電、運費、薪資…營運相關的花費,每筆照發票記(淡月也要記)。其他支出(利息、所得稅)請到<a href="/other-expenses">其他支出</a>。{% endif %}
 </p>
 
+<form method="post" action="/bulk-delete" class="bulkdel" data-msg="">
+<input type="hidden" name="kind" value="op_expense"><input type="hidden" name="back" value="{{ kind.list_url }}">
+{% include "_bulk_delete.html" %}
 <div class="card" style="overflow-x:auto">
   <table class="sortable">
     <thead><tr>
-      <th>日期</th><th>科目</th>
+      <th style="width:34px"><input type="checkbox" class="chkall" style="width:auto" title="全選"></th><th>日期</th><th>科目</th>
       <th data-num>發票金額</th><th data-num>進項稅額</th><th>帳戶</th><th>憑證</th>
       <th>修改日期</th><th>備註</th><th></th>
     </tr></thead>
     <tbody>{% for r in rows %}
     <tr>
+      <td><input type="checkbox" name="id" value="{{ r.expense_id }}" style="width:auto"></td>
       <td>{{ r.expense_date or r.ym }}</td>
       <td>{{ r.account_code or '' }} {{ r.category }}</td>
       <td>{{ ((r.amount or 0) + (r.tax_amount or 0))|money }}</td>
@@ -31,9 +35,10 @@
       <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
       <td><a href="/finance/expenses/{{ r.expense_id }}/edit">編輯</a></td>
     </tr>
-    {% else %}<tr><td colspan="9" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="10" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
+</form>
 <div class="muted" style="font-size:11px;margin-top:8px">點欄位標題可排序(再點一次換升 / 降冪)。</div>
 
 <script>

@@ -1114,15 +1114,23 @@ async def order_create(request: Request):
     sales_tax = flt("sales_tax") if order_kind == "銷售" else 0.0
     if sales_tax < 0 or (sales_tax and sales_tax >= total):
         return RedirectResponse("/orders/new?err=tax", status_code=303)
+    # 收款(2026-10-17 同仁修改意見 0921 第 6 條):不再填「付款方式」「收款狀態」,改選收款科目——
+    # E 應收帳款 = 還沒收(之後到應收帳款頁勾選收款);C 現金 / 銀行 = 當場收齊,收款日 = 訂單日。
+    # 贈送 / 樣品等非銷售訂單一律免收款。
+    recv = one("receive_account") if order_kind == "銷售" else None
+    pay_status = "免收款" if order_kind != "銷售" else ("已收款" if recv else "待收款")
     oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
                      discount_total,order_total,sales_tax,cost_payment_account,payment_method,payment_status,
                      shipping_fee_charged,ship_method,ship_status,invoiced,tax_doc_no)
                      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
                   (next_order_no(order_date), order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
                    discount_total, total, sales_tax, one("cost_payment_account") or "現金",
-                   one("payment_method") or None, one("payment_status", "待收款"),
+                   None, pay_status,
                    shipping_fee, one("ship_method") or None,
                    invoiced, one("tax_doc_no") or None))
+    if recv:
+        execute('UPDATE "order" SET paid_date=order_date, paid_amount=order_total, payment_account=? WHERE order_id=?',
+                (recv, oid))
     for (p, qv, up, b, lp), lc in zip(lines, line_costs):
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,line_cost)
                    VALUES(?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up, lc))
@@ -1404,16 +1412,18 @@ async def order_update(request: Request, oid: int):
     sales_tax = flt("sales_tax") if (g("order_kind") or o["order_kind"]) == "銷售" else 0.0
     if sales_tax < 0 or (sales_tax and sales_tax >= total):
         return RedirectResponse(f"/orders/{oid}?err=tax", status_code=303)
-    # 收款要一次收齊(2026-10-16):選「已收款」就要有收款日,實收金額 = 應收合計,
-    # 不然會出現「狀態寫已收款,但總帳沒有收款分錄」這種看起來做了其實沒做的情況。
-    paid = g("payment_status") == "已收款"
+    # 收款要一次收齊(2026-10-16):收款帳戶選了現金 / 銀行(C)就要有收款日,實收金額 = 應收合計;
+    # 選 E 應收帳款 = 還沒收。2026-10-17 起不再有「收款狀態」欄位,狀態由這裡推出來。
+    kind = g("order_kind") or o["order_kind"]
+    paid = bool(g("payment_account")) and kind == "銷售"
+    pay_status = "免收款" if kind != "銷售" else ("已收款" if paid else "待收款")
     if paid and not g("paid_date"):
         return RedirectResponse(f"/orders/{oid}?payerr=1", status_code=303)
     if g("ship_status") == "已出貨" and not (g("ship_method") and g("shipped_date")):
         return RedirectResponse(f"/orders/{oid}?shiperr=1", status_code=303)
     cust_id = f.get("customer_id")
     cols = dict(order_date=g("order_date"), order_kind=g("order_kind"),
-                payment_method=g("payment_method"), payment_status=g("payment_status") or "待收款",
+                payment_status=pay_status,
                 paid_date=(g("paid_date") if paid else None), paid_amount=(total if paid else None),
                 payment_account=(g("payment_account") if paid else None),
                 order_total=total, sales_tax=sales_tax,
@@ -2344,6 +2354,29 @@ _LEDGER_DELETERS = {
     "manual_adjustment": _adjustment_delete,
     "sales_return": _return_delete,
 }
+
+# 清單勾選刪除(2026-10-17,0921 修改意見第 17 條「跟總帳一樣用勾選的方式刪」):
+# 訂單 / 營運支出 / 其他支出 / 其他收益 / 資本異動 / 帳務調整 / 退款清單都可以勾好幾筆一次刪,
+# 一樣連總帳的傳票一起刪(重用各自的刪除邏輯)。
+_BULK_DELETERS = {
+    "order": order_delete, "op_expense": _expense_delete, "other_income": _other_income_delete,
+    "equity": _equity_delete, "manual_adjustment": _adjustment_delete, "sales_return": _return_delete,
+}
+
+@app.post("/bulk-delete")
+async def bulk_delete(request: Request):
+    f = await request.form()
+    kind, back = f.get("kind"), f.get("back") or "/"
+    if not back.startswith("/") or back.startswith("//"):
+        back = "/"
+    n = 0
+    if kind in _BULK_DELETERS:
+        for i in dict.fromkeys(x for x in f.getlist("id") if str(x).isdigit()):
+            _BULK_DELETERS[kind](int(i))
+            n += 1
+    sep = "&" if "?" in back else "?"
+    return RedirectResponse(f"{back}{sep}bulkdel={n}", status_code=303)
+
 
 @app.post("/ledger/delete")
 async def ledger_delete(request: Request):

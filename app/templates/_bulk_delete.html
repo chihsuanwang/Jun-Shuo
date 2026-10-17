@@ -1,0 +1,28 @@
+{# 清單勾選刪除工具列(2026-10-17)。用法:清單外面包 <form method="post" action="/bulk-delete" class="bulkdel">,
+   表頭第一格放 <input type="checkbox" class="chkall">,每列第一格放 <input type="checkbox" name="id" value="…">。#}
+{% if request.query_params.get('bulkdel') %}<div class="ok">已刪除 {{ request.query_params.get('bulkdel') }} 筆(總帳的傳票也一起刪了)。</div>{% endif %}
+<div style="margin-bottom:10px;display:flex;gap:10px;align-items:center">
+  <button type="submit" class="ghost">刪除勾選的</button>
+  <span class="muted bulkinfo" style="font-size:12px"></span>
+</div>
+<script>
+(function () {
+  var f = document.currentScript.closest('form.bulkdel');
+  if (!f) return;
+  var boxes = function () { return [].slice.call(f.querySelectorAll('input[name=id]')); };
+  function info() {
+    var n = boxes().filter(function (b) { return b.checked; }).length;
+    f.querySelector('.bulkinfo').textContent = n ? '已勾選 ' + n + ' 筆' : '';
+    return n;
+  }
+  f.addEventListener('change', function (e) {
+    if (e.target.classList.contains('chkall')) boxes().forEach(function (b) { if (!b.closest('tr').hidden) b.checked = e.target.checked; });
+    info();
+  });
+  f.addEventListener('submit', function (e) {
+    var n = info();
+    if (!n) { e.preventDefault(); alert('請先勾選要刪除的資料。'); return; }
+    if (!confirm('確定刪除勾選的 ' + n + ' 筆?' + (f.dataset.msg || '') + '總帳的傳票會一起刪掉,不能復原。')) e.preventDefault();
+  });
+})();
+</script>

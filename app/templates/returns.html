@@ -12,13 +12,17 @@
   <b>退回小農</b>(客人退貨但不退錢):貨退給小農,小農把成本還給我們。
 </p>
 
+<form method="post" action="/bulk-delete" class="bulkdel" data-msg="">
+<input type="hidden" name="kind" value="sales_return"><input type="hidden" name="back" value="/returns">
+{% include "_bulk_delete.html" %}
 <div class="card" style="overflow-x:auto">
   <table>
     <thead><tr>
-      <th>發生日</th><th>單號</th><th>客戶</th><th>類型</th><th>金額</th><th>原因</th>
+      <th style="width:34px"><input type="checkbox" class="chkall" style="width:auto" title="全選"></th><th>發生日</th><th>單號</th><th>客戶</th><th>類型</th><th>金額</th><th>原因</th>
     </tr></thead>
     <tbody>{% for r in rows %}
     <tr>
+      <td><input type="checkbox" name="id" value="{{ r.return_id }}" style="width:auto"></td>
       <td>{{ r.return_date }}</td>
       <td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td>
       <td style="text-align:left">{{ r.cust or '—' }}</td>
@@ -26,11 +30,12 @@
       <td class="{{ 'neg' if r.kind == '退款' }}">{{ '−' if r.kind == '退款' else '+' }}{{ r.amount|money }}</td>
       <td class="muted" style="text-align:left">{{ r.reason or '' }}</td>
     </tr>
-    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">還沒有退款 / 退回小農的紀錄。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">還沒有退款 / 退回小農的紀錄。</td></tr>{% endfor %}</tbody>
     {% if rows %}<tfoot>
-      <tr class="sum"><td colspan="4" style="text-align:right">退給客人合計</td><td class="neg">−{{ refund_total|money }}</td><td></td></tr>
-      <tr class="sum"><td colspan="4" style="text-align:right">小農退回合計</td><td>+{{ farmer_total|money }}</td><td></td></tr>
+      <tr class="sum"><td colspan="5" style="text-align:right">退給客人合計</td><td class="neg">−{{ refund_total|money }}</td><td></td></tr>
+      <tr class="sum"><td colspan="5" style="text-align:right">小農退回合計</td><td>+{{ farmer_total|money }}</td><td></td></tr>
     </tfoot>{% endif %}
   </table>
 </div>
+</form>
 {% endblock %}

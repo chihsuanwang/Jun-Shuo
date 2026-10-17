@@ -188,3 +188,6 @@ table.gl tbody tr.picked { background: #F6E3D6; }
   line-height: 1.55; box-shadow: 0 4px 14px rgba(0,0,0,.28); max-width: 230px; }
 .fbar { cursor: default; }
 .fbar:hover, .fbar:focus { opacity: .85; outline: none; }
+
+/* --- 清單勾選刪除(2026-10-17):第一欄變成勾選框,原本的第一欄(單號 / 日期)維持靠左 --- */
+form.bulkdel table th:nth-child(2), form.bulkdel table td:nth-child(2) { text-align: left; }

@@ -9,11 +9,15 @@
 {% if request.query_params.get('ok') %}<div class="ok">已儲存,總帳也已經記好。</div>{% endif %}
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">增資、減資、提列法定盈餘公積這類股東權益異動,很少發生才會用到。</p>
 
+<form method="post" action="/bulk-delete" class="bulkdel" data-msg="">
+<input type="hidden" name="kind" value="equity"><input type="hidden" name="back" value="/equity">
+{% include "_bulk_delete.html" %}
 <div class="card" style="overflow-x:auto">
   <table>
-    <thead><tr><th>日期</th><th>類型</th><th>權益科目</th><th data-num>金額</th><th>帳戶</th><th>備註</th><th></th></tr></thead>
+    <thead><tr><th style="width:34px"><input type="checkbox" class="chkall" style="width:auto" title="全選"></th><th>日期</th><th>類型</th><th>權益科目</th><th data-num>金額</th><th>帳戶</th><th>備註</th><th></th></tr></thead>
     <tbody>{% for r in rows %}
     <tr>
+      <td><input type="checkbox" name="id" value="{{ r.txn_id }}" style="width:auto"></td>
       <td>{{ r.txn_date }}</td>
       <td>{{ r.txn_type }}</td>
       <td class="muted">{% if r.source_account %}{{ r.source_account }} {{ names.get(r.source_account, '') }} → {% endif %}{{ r.equity_account or '' }} {{ names.get(r.equity_account, '') }}</td>
@@ -22,7 +26,8 @@
       <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
       <td><a href="/equity/{{ r.txn_id }}/edit">編輯</a></td>
     </tr>
-    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
+</form>
 {% endblock %}

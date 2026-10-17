@@ -11,20 +11,25 @@
   其他交易類型都套不上的例外狀況,手動指定好幾行借 / 貸科目記一筆。用不到就不用管這頁。
 </p>
 
+<form method="post" action="/bulk-delete" class="bulkdel" data-msg="">
+<input type="hidden" name="kind" value="manual_adjustment"><input type="hidden" name="back" value="/adjustments">
+{% include "_bulk_delete.html" %}
 <div class="card" style="overflow-x:auto">
   <table>
-    <thead><tr><th>日期</th><th>科目代碼</th><th>科目名稱</th><th data-num>借方</th><th data-num>貸方</th><th>備註</th><th></th></tr></thead>
+    <thead><tr><th style="width:34px"><input type="checkbox" class="chkall" style="width:auto" title="全選"></th><th>日期</th><th>科目代碼</th><th>科目名稱</th><th data-num>借方</th><th data-num>貸方</th><th>備註</th><th></th></tr></thead>
     <tbody>{% for r in rows %}
       {% for l in r.lines %}
       <tr>
-        {% if loop.first %}<td rowspan="{{ r.lines|length }}">{{ r.entry_date }}</td>{% endif %}
+        {% if loop.first %}<td rowspan="{{ r.lines|length }}"><input type="checkbox" name="id" value="{{ r.entry_id }}" style="width:auto"></td>
+        <td rowspan="{{ r.lines|length }}">{{ r.entry_date }}</td>{% endif %}
         <td>{{ l.account_code }}</td><td>{{ l.account_name }}</td>
         <td>{{ l.debit|money if l.debit else '' }}</td><td>{{ l.credit|money if l.credit else '' }}</td>
         {% if loop.first %}<td rowspan="{{ r.lines|length }}" class="muted" style="text-align:left">{{ r.note or '' }}</td>
         <td rowspan="{{ r.lines|length }}"><a href="/adjustments/{{ r.entry_id }}/edit">編輯</a></td>{% endif %}
       </tr>
       {% endfor %}
-    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
+</form>
 {% endblock %}

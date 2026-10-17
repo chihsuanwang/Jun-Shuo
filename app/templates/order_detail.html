@@ -35,7 +35,7 @@
 {% if request.query_params.get('done') == 'shipped' %}<div class="ok">已標記為「已出貨」,出貨日填今天。</div>{% endif %}
 {% if request.query_params.get('rok') %}<div class="ok">已登記,總帳也已經記好。</div>{% endif %}
 {% if request.query_params.get('rerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">金額要大於 0。</div>{% endif %}
-{% if request.query_params.get('payerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">收款狀態選了「已收款」,但沒填收款日——請在下面「收款」卡補上,或改用上面「標記已收款」按鈕。</div>{% endif %}
+{% if request.query_params.get('payerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">收款帳戶選了現金 / 銀行,但沒填收款日——請在下面「收款」卡補上,或改用上面「標記已收款」按鈕。</div>{% endif %}
 {% if request.query_params.get('shiperr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">出貨狀態選了「已出貨」,但出貨方式 / 出貨日沒填——請在下面「出貨」卡補上,或改用上面「標記已出貨」按鈕。</div>{% endif %}
 {% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
@@ -104,14 +104,11 @@
     <div class="grid" style="grid-template-columns:1fr 1fr">
       <div><label>訂單種類</label><select name="order_kind">
         {% for k in kinds %}<option {{ 'selected' if o.order_kind==k }}>{{ k }}</option>{% endfor %}</select></div>
-      <div><label>付款方式</label><select name="payment_method"><option value="">—</option>
-        {% for p in pay_methods %}<option {{ 'selected' if o.payment_method==p }}>{{ p }}</option>{% endfor %}</select></div>
-      <div><label>收款狀態</label><select name="payment_status">
-        {% for p in pay_status %}<option {{ 'selected' if o.payment_status==p }}>{{ p }}</option>{% endfor %}</select></div>
       <div><label>收款日</label><input type="date" name="paid_date" id="paidDateField" value="{{ o.paid_date or '' }}"></div>
       <div><label>收款帳戶</label><select name="payment_account" id="paidAcctField">
-        {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if (o.payment_account or '現金') == a.name }}>{{ a.name }}</option>{% endfor %}
-      </select><div class="muted" style="font-size:11px;margin-top:3px">收款一次收齊,金額 = 應收合計</div></div>
+        <option value="" {{ 'selected' if not o.paid_date }}>E 應收帳款(還沒收)</option>
+        {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if o.paid_date and (o.payment_account or '現金') == a.name }}>C {{ a.name }}</option>{% endfor %}
+      </select><div class="muted" style="font-size:11px;margin-top:3px">收款一次收齊,金額 = 應收合計;選了帳戶就要填收款日</div></div>
       <div><label>銷項稅額<span class="muted">(售價裡含的稅)</span></label><input name="sales_tax" type="number" step="1" min="0" value="{{ (o.sales_tax or 0)|round(0)|int }}"></div>
       <div style="display:flex;align-items:flex-end;padding-bottom:9px">
         <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
@@ -273,8 +270,8 @@
     markPaidForm.addEventListener('submit', function (e) {
       var acct = document.getElementById('paidAcctField');
       if (!confirm('這張訂單 ' + (document.getElementById('ordertotal') || {}).textContent +
-                   ' 元一次收齊,收到「' + (acct ? acct.value : '現金') + '」,確定嗎?')) { e.preventDefault(); return; }
-      document.getElementById('markPaidAcct').value = acct ? acct.value : '現金';
+                   ' 元一次收齊,收到「' + ((acct && acct.value) || '現金') + '」,確定嗎?')) { e.preventDefault(); return; }
+      document.getElementById('markPaidAcct').value = (acct && acct.value) || '現金';
       var dateField = document.getElementById('paidDateField');
       document.getElementById('markPaidDate').value = (dateField && dateField.value) || '';
     });
