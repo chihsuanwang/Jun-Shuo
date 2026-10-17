@@ -197,7 +197,7 @@
       results.innerHTML = '<div class="ac-empty">找不到,請確認拼字或去新增客戶</div>';
     } else {
       results.innerHTML = rows.map(function (r) {
-        var meta = [r.segment || '未分級', r.phone || '無電話',
+        var meta = [r.segment || '未填分類', r.phone || '無電話',
                     r.last_order ? '最近 ' + r.last_order : '尚無訂單', r.n_orders + ' 筆'].join(' · ');
         return '<div class="ac-item" data-id="' + r.id + '" data-name="' + r.name.replace(/"/g, '&quot;') + '">' +
                '<b>' + r.name + '</b><small>' + meta + '</small></div>';
@@ -228,7 +228,7 @@
         return o.order_date + '　' + o.order_no + '　NT$ ' + Math.round(o.order_total) + '　' + o.payment_status;
       }).join('<br>') || '尚無訂單';
       card.innerHTML =
-        '<b>' + c.name + '</b>（' + (c.segment || '未分級') + '）　' + (c.phone || '無電話') +
+        '<b>' + c.name + '</b>（' + (c.segment || '未填分類') + '）　' + (c.phone || '無電話') +
         (c.contact_person ? '　聯絡人 ' + c.contact_person : '') +
         '<br>地址:' + (a.address_full || '未填') +
         '<br>累計消費:NT$ ' + Math.round(c.total || 0) +

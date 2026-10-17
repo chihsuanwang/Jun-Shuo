@@ -51,7 +51,7 @@
         <td style="vertical-align:top">
           {% for ln in r.lines %}{{ ln.name }} ×{{ ln.qty|int }}{% if not loop.last %}、{% endif %}{% endfor %}
         </td>
-        <td class="r muted" style="vertical-align:top;font-size:11px">確認匯入時<br>依客戶分級算</td>
+        <td class="r muted" style="vertical-align:top;font-size:11px">確認匯入時<br>帶商品售價</td>
         <td style="vertical-align:top">
           {% if r.status == 'ok' %}
             <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#E4EFDD;border:1px solid #9DBE86;color:#2F7A4F">可匯入</span>

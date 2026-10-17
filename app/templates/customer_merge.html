@@ -11,7 +11,7 @@
 <div class="card" style="max-width:640px;margin-bottom:16px">
   <h3 class="serif">來源(這位會被刪除)</h3>
   <p style="font-size:13px;margin:0">
-    <b>{{ src.display_name }}</b>（{{ src.segment or '未分級' }}）· {{ src.phone or '無電話' }}<br>
+    <b>{{ src.display_name }}</b>（{{ src.customer_type or '未填分類' }}）· {{ src.phone or '無電話' }}<br>
     訂單 {{ src.n_orders }} 筆 · 地址 {{ src.n_addr }} 筆
     {% if src.aliases %}<br>舊稱呼:{{ src.aliases | join('、') }}{% endif %}
   </p>
@@ -44,7 +44,7 @@
     rows = rows.filter(function (r) { return r.id !== SRC; });
     if (!rows.length) { results.innerHTML = '<div class="ac-empty">找不到</div>'; results.hidden = false; return; }
     results.innerHTML = rows.map(function (r) {
-      var meta = [r.segment || '未分級', r.phone || '無電話',
+      var meta = [r.segment || '未填分類', r.phone || '無電話',
                   r.last_order ? '最近 ' + r.last_order : '尚無訂單', r.n_orders + ' 筆'].join(' · ');
       return '<div class="ac-item" data-id="' + r.id + '" data-name="' + r.name.replace(/"/g, '&quot;') +
              '"><b>' + r.name + '</b><small>' + meta + '</small></div>';
@@ -64,7 +64,7 @@
     hid.value = it.dataset.id; search.value = it.dataset.name; results.hidden = true;
     fetch('/api/customers/' + it.dataset.id).then(function (r) { return r.json(); }).then(function (c) {
       var a = c.address || {};
-      card.innerHTML = '<b>' + c.name + '</b>（' + (c.segment || '未分級') + '）　' + (c.phone || '無電話') +
+      card.innerHTML = '<b>' + c.name + '</b>（' + (c.segment || '未填分類') + '）　' + (c.phone || '無電話') +
         '<br>地址:' + (a.address_full || '未填') + '<br>累計消費:NT$ ' + Math.round(c.total || 0);
       card.hidden = false;
     }).catch(function () {});

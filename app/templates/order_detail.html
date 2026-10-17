@@ -242,7 +242,7 @@
   function render(rows) {
     if (!rows.length) { results.innerHTML = '<div class="ac-empty">找不到</div>'; results.hidden = false; return; }
     results.innerHTML = rows.map(function (r) {
-      var meta = [r.segment || '未分級', r.phone || '無電話',
+      var meta = [r.segment || '未填分類', r.phone || '無電話',
                   r.last_order ? '最近 ' + r.last_order : '尚無訂單', r.n_orders + ' 筆'].join(' · ');
       return '<div class="ac-item" data-id="' + r.id + '" data-name="' + r.name.replace(/"/g, '&quot;') +
              '"><b>' + r.name + '</b><small>' + meta + '</small></div>';
