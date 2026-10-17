@@ -6,23 +6,25 @@
   <a href="/adjustments/new"><button>＋ 新增一筆</button></a>
 </div>
 <hr class="rule">
+{% if request.query_params.get('ok') %}<div class="ok">已儲存,總帳也已經記好。</div>{% endif %}
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">
-  其他 8 類都套不上的例外狀況,直接指定一組借/貸科目手動記一筆。用不到就不用管這頁。
+  其他交易類型都套不上的例外狀況,手動指定好幾行借 / 貸科目記一筆。用不到就不用管這頁。
 </p>
 
 <div class="card" style="overflow-x:auto">
   <table>
-    <thead><tr><th>日期</th><th>借方代碼</th><th>借方科目</th><th>貸方代碼</th><th>貸方科目</th><th data-num>金額</th><th>備註</th><th></th></tr></thead>
+    <thead><tr><th>日期</th><th>科目代碼</th><th>科目名稱</th><th data-num>借方</th><th data-num>貸方</th><th>備註</th><th></th></tr></thead>
     <tbody>{% for r in rows %}
-    <tr>
-      <td>{{ r.entry_date }}</td>
-      <td>{{ r.debit_code }}</td><td>{{ r.debit_name }}</td>
-      <td>{{ r.credit_code }}</td><td>{{ r.credit_name }}</td>
-      <td>{{ r.amount|money }}</td>
-      <td class="muted" style="text-align:left">{{ r.note or '' }}</td>
-      <td><a href="/adjustments/{{ r.entry_id }}/edit">編輯</a></td>
-    </tr>
-    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
+      {% for l in r.lines %}
+      <tr>
+        {% if loop.first %}<td rowspan="{{ r.lines|length }}">{{ r.entry_date }}</td>{% endif %}
+        <td>{{ l.account_code }}</td><td>{{ l.account_name }}</td>
+        <td>{{ l.debit|money if l.debit else '' }}</td><td>{{ l.credit|money if l.credit else '' }}</td>
+        {% if loop.first %}<td rowspan="{{ r.lines|length }}" class="muted" style="text-align:left">{{ r.note or '' }}</td>
+        <td rowspan="{{ r.lines|length }}"><a href="/adjustments/{{ r.entry_id }}/edit">編輯</a></td>{% endif %}
+      </tr>
+      {% endfor %}
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">還沒有資料。</td></tr>{% endfor %}</tbody>
   </table>
 </div>
 {% endblock %}

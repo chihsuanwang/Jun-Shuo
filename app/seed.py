@@ -321,18 +321,20 @@ inc_id = c.lastrowid
 legs = ledger.compose_other_income_entries("7101", 85, 0, "合庫")
 add_voucher("2026-08-31", legs, "other_income", inc_id, "其他收益示範")
 
-c.execute("""INSERT INTO equity_txn(txn_date,txn_type,amount,payment_account,note)
-             VALUES(?,?,?,?,?)""", ("2025-04-01", "現金增資", 50000, "現金", "示範:開業資本額出資"))
+c.execute("""INSERT INTO equity_txn(txn_date,txn_type,amount,payment_account,equity_account,note)
+             VALUES(?,?,?,?,?,?)""", ("2025-04-01", "增資", 50000, "現金", "3110", "示範:開業資本額出資"))
 eq_id = c.lastrowid
-legs = ledger.compose_equity_entries("現金增資", 50000, "現金")
+legs = ledger.compose_equity_entries("增資", 50000, "現金", "3110")
 add_voucher("2025-04-01", legs, "equity", eq_id, "資本異動示範")
 
 bank_code, bank_name = chart.cash_account("合庫")   # 1103-01,依會計科目表
-c.execute("""INSERT INTO manual_entry(entry_date,debit_code,debit_name,credit_code,credit_name,amount,note)
-             VALUES(?,?,?,?,?,?,?)""",
-          ("2026-09-10", "1102", "現金", bank_code, bank_name, 500, "示範:提領零用金(帳戶間轉帳,套不進其他 8 類)"))
+c.execute("""INSERT INTO manual_entry(entry_date,amount,note) VALUES(?,?,?)""",
+          ("2026-09-10", 500, "示範:提領零用金(帳戶間轉帳,套不進其他 8 類)"))
 adj_id = c.lastrowid
-legs = ledger.compose_manual_entries("1102", "現金", bank_code, bank_name, 500)
+legs = ledger.compose_manual_entries([("1102", 500, 0), (bank_code, 0, 500)])
+for _i, _l in enumerate(legs, start=1):
+    c.execute("""INSERT INTO manual_entry_line(entry_id,line_no,account_code,account_name,debit,credit)
+                 VALUES(?,?,?,?,?,?)""", (adj_id, _i, _l["account_code"], _l["account_name"], _l["debit"], _l["credit"]))
 add_voucher("2026-09-10", legs, "manual_adjustment", adj_id, "帳務調整示範")
 
 # 全鏈路毛利分析示範(2026-10-02):四條產品線各示範一種情境,方便跟家易解說——

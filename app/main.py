@@ -175,6 +175,43 @@ def migrate_db():
                 if not q1("SELECT 1 FROM account WHERE code=?", (b["account_code"],)):
                     execute("INSERT INTO account(code,name,grp,sort) VALUES(?,?,'C',999)",
                             (b["account_code"], b["name"]))
+        # 2026-10-17:資本異動改「增資 / 減資 / 提列法定盈餘公積」,帳務調整改多行;
+        # SQLite 不能改 CHECK / NOT NULL,舊表改名、建新表、資料照搬。
+        esql = q1("SELECT sql FROM sqlite_master WHERE name='equity_txn'").get("sql") or ""
+        if "現金增資" in esql:
+            execute("ALTER TABLE equity_txn RENAME TO equity_txn_old")
+            execute("""CREATE TABLE equity_txn (txn_id INTEGER PRIMARY KEY, txn_date TEXT NOT NULL,
+                       txn_type TEXT NOT NULL CHECK (txn_type IN ('增資','減資','提列法定盈餘公積')),
+                       amount REAL NOT NULL DEFAULT 0, payment_account TEXT, equity_account TEXT,
+                       source_account TEXT, note TEXT,
+                       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')))""")
+            execute("""INSERT INTO equity_txn(txn_id,txn_date,txn_type,amount,payment_account,equity_account,
+                                              source_account,note,created_at)
+                       SELECT txn_id, txn_date,
+                              CASE txn_type WHEN '現金增資' THEN '增資' ELSE '提列法定盈餘公積' END, amount,
+                              CASE txn_type WHEN '現金增資' THEN payment_account END,
+                              CASE txn_type WHEN '現金增資' THEN '3110' ELSE '3310-03' END,
+                              CASE txn_type WHEN '現金增資' THEN NULL ELSE '3351-03' END, note, created_at
+                         FROM equity_txn_old""")
+            execute("DROP TABLE equity_txn_old")
+            print("[migrate] equity_txn 已換新結構")
+        mcols = [r["name"] for r in q("PRAGMA table_info(manual_entry)")]
+        if "debit_code" in mcols:
+            execute("""CREATE TABLE IF NOT EXISTS manual_entry_line (line_id INTEGER PRIMARY KEY,
+                       entry_id INTEGER NOT NULL, line_no INTEGER NOT NULL, account_code TEXT NOT NULL,
+                       account_name TEXT NOT NULL, debit REAL NOT NULL DEFAULT 0, credit REAL NOT NULL DEFAULT 0)""")
+            execute("""INSERT INTO manual_entry_line(entry_id,line_no,account_code,account_name,debit,credit)
+                       SELECT entry_id, 1, debit_code, debit_name, amount, 0 FROM manual_entry""")
+            execute("""INSERT INTO manual_entry_line(entry_id,line_no,account_code,account_name,debit,credit)
+                       SELECT entry_id, 2, credit_code, credit_name, 0, amount FROM manual_entry""")
+            execute("ALTER TABLE manual_entry RENAME TO manual_entry_old")
+            execute("""CREATE TABLE manual_entry (entry_id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL,
+                       amount REAL NOT NULL DEFAULT 0, note TEXT,
+                       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')))""")
+            execute("""INSERT INTO manual_entry(entry_id,entry_date,amount,note,created_at)
+                       SELECT entry_id, entry_date, amount, note, created_at FROM manual_entry_old""")
+            execute("DROP TABLE manual_entry_old")
+            print("[migrate] manual_entry 已換成多行")
         lsql = q1("SELECT sql FROM sqlite_master WHERE name='ledger_entry'").get("sql") or ""
         if lsql and "goods_purchase" not in lsql:
             print("[migrate] 警告:資料庫還是改版前的結構(有存貨/進貨那一版),"
@@ -1736,23 +1773,31 @@ async def other_income_save(request: Request):
 
 
 # ---------- 9 宮格 B 類:資本異動 ----------------------------
+#   2026-10-17 同仁修改意見:先選「增減資」(C 現金銀行 + T 權益,選增加或減少)或
+#   「提列法定盈餘公積」(T 從哪裡提 + T 轉入哪裡),都用下拉選科目。
 @app.get("/equity", response_class=HTMLResponse)
 def equity_list(request: Request):
     rows = q("SELECT * FROM equity_txn ORDER BY txn_date DESC, txn_id DESC")
-    return tpl.TemplateResponse("equity_list.html", dict(request=request, active="equity", rows=rows))
+    names = {r["code"]: r["name"] for r in chart.accounts(["T"], active_only=False)}
+    return tpl.TemplateResponse("equity_list.html", dict(request=request, active="equity", rows=rows, names=names))
+
+def _equity_ctx(request, r):
+    t = chart.accounts(["T"], postable_only=True)
+    return dict(request=request, active="equity", r=r, cash_accounts=chart.accounts(["C"]), t_accounts=t,
+                t_names={x["code"]: x["name"] for x in t},
+                bank_codes={x["name"]: x["code"] for x in chart.accounts(["C"])},
+                today=dt.date.today().isoformat())
 
 @app.get("/equity/new", response_class=HTMLResponse)
 def equity_new(request: Request):
-    return tpl.TemplateResponse("equity_form.html", dict(
-        request=request, active="equity", r=None, cash_accounts=chart.accounts(["C"])))
+    return tpl.TemplateResponse("equity_form.html", _equity_ctx(request, None))
 
 @app.get("/equity/{tid}/edit", response_class=HTMLResponse)
 def equity_edit(request: Request, tid: int):
     r = q("SELECT * FROM equity_txn WHERE txn_id=?", (tid,))
     if not r:
         return RedirectResponse("/equity", status_code=303)
-    return tpl.TemplateResponse("equity_form.html", dict(
-        request=request, active="equity", r=r[0], cash_accounts=chart.accounts(["C"])))
+    return tpl.TemplateResponse("equity_form.html", _equity_ctx(request, r[0]))
 
 def _equity_delete(tid):
     execute("DELETE FROM equity_txn WHERE txn_id=?", (int(tid),))
@@ -1762,17 +1807,27 @@ def _equity_delete(tid):
 async def equity_save(request: Request):
     f = await request.form()
     g = lambda k: (f.get(k) or "").strip() or None
-    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
     tid = f.get("txn_id")
     if f.get("_delete") and tid:
         _equity_delete(tid)
         return RedirectResponse("/equity", status_code=303)
-    date = (f.get("txn_date") or "").strip()
-    ttype = g("txn_type")
-    if not (date and ttype):
-        return RedirectResponse("/equity", status_code=303)
-    cols = dict(txn_date=date, txn_type=ttype, amount=fl("amount"), payment_account=g("payment_account"),
-                note=g("note"))
+    back = f"/equity/{tid}/edit" if tid else "/equity/new"
+    date = g("txn_date")
+    kind = g("kind")                              # 增減資 / 提列法定盈餘公積
+    amount = _num(f.get("amount"))
+    tcodes = {x["code"] for x in chart.accounts(["T"], postable_only=True)}
+    if kind == "增減資":
+        ttype = "減資" if f.get("direction") == "減少" else "增資"
+        eq, src, pay = g("equity_account"), None, g("payment_account") or "現金"
+        ok = eq in tcodes
+    else:
+        ttype = "提列法定盈餘公積"
+        eq, src, pay = g("reserve_to"), g("reserve_from"), None
+        ok = eq in tcodes and src in tcodes and eq != src
+    if not (date and ok) or amount <= 0:
+        return RedirectResponse(f"{back}?err=1", status_code=303)
+    cols = dict(txn_date=date, txn_type=ttype, amount=amount, payment_account=pay,
+                equity_account=eq, source_account=src, note=g("note"))
     if tid:
         sets = ",".join(f"{k}=:{k}" for k in cols)
         execute(f"UPDATE equity_txn SET {sets} WHERE txn_id=:id", {**cols, "id": int(tid)})
@@ -1780,60 +1835,90 @@ async def equity_save(request: Request):
     else:
         keys = ",".join(cols)
         new_id = execute(f"INSERT INTO equity_txn({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
-    legs = ledger.compose_equity_entries(ttype, cols["amount"], cols["payment_account"])
+    legs = ledger.compose_equity_entries(ttype, amount, pay, eq, src)
     ledger.save_voucher("equity", new_id, date, legs, note=f"資本異動:{ttype}")
-    return RedirectResponse("/equity", status_code=303)
+    return RedirectResponse("/equity?ok=1", status_code=303)
 
 
 # ---------- 9 宮格 B 類:帳務調整(手動指定借/貸科目)---------
+#   2026-10-17 同仁修改意見:一筆可以有好幾行(預設 3 行,至少填 2 行),每行先選模組(科目分組),
+#   再選科目、借或貸、金額;借方合計 = 貸方合計才能存。
+def _adjust_lines(mid):
+    return q("SELECT * FROM manual_entry_line WHERE entry_id=? ORDER BY line_no", (mid,))
+
 @app.get("/adjustments", response_class=HTMLResponse)
 def adjustment_list(request: Request):
     rows = q("SELECT * FROM manual_entry ORDER BY entry_date DESC, entry_id DESC")
+    for r in rows:
+        r["lines"] = _adjust_lines(r["entry_id"])
     return tpl.TemplateResponse("adjustment_list.html", dict(request=request, active="adjust", rows=rows))
+
+def _adjust_ctx(request, r):
+    accts = chart.accounts(postable_only=True)
+    used = [g for g, _ in chart.GROUPS if any(a["grp"] == g for a in accts)]
+    lines = []
+    if r:
+        for x in _adjust_lines(r["entry_id"]):
+            grp = next((a["grp"] for a in accts if a["code"] == x["account_code"]), "")
+            side, amt = ("借", x["debit"]) if x["debit"] else ("貸", x["credit"])
+            lines.append(dict(grp=grp, code=x["account_code"], side=side, amount=amt))
+    while len(lines) < 3:
+        lines.append(dict(grp="", code="", side="借" if not lines else "貸", amount=""))
+    return dict(request=request, active="adjust", r=r, lines=lines,
+                groups=[(g, chart.GROUP_LABEL[g]) for g in used],
+                accts=[dict(code=a["code"], name=a["name"], grp=a["grp"]) for a in accts],
+                today=dt.date.today().isoformat())
 
 @app.get("/adjustments/new", response_class=HTMLResponse)
 def adjustment_new(request: Request):
-    return tpl.TemplateResponse("adjustment_form.html", dict(
-        request=request, active="adjust", r=None, accounts=ledger.all_accounts()))
+    return tpl.TemplateResponse("adjustment_form.html", _adjust_ctx(request, None))
 
 @app.get("/adjustments/{mid}/edit", response_class=HTMLResponse)
 def adjustment_edit(request: Request, mid: int):
     r = q("SELECT * FROM manual_entry WHERE entry_id=?", (mid,))
     if not r:
         return RedirectResponse("/adjustments", status_code=303)
-    return tpl.TemplateResponse("adjustment_form.html", dict(
-        request=request, active="adjust", r=r[0], accounts=ledger.all_accounts()))
+    return tpl.TemplateResponse("adjustment_form.html", _adjust_ctx(request, r[0]))
 
 def _adjustment_delete(mid):
+    execute("DELETE FROM manual_entry_line WHERE entry_id=?", (int(mid),))
     execute("DELETE FROM manual_entry WHERE entry_id=?", (int(mid),))
     ledger.delete_voucher_for("manual_adjustment", int(mid))
 
 @app.post("/adjustments")
 async def adjustment_save(request: Request):
     f = await request.form()
-    g = lambda k: (f.get(k) or "").strip() or None
-    fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
     mid = f.get("entry_id")
     if f.get("_delete") and mid:
         _adjustment_delete(mid)
         return RedirectResponse("/adjustments", status_code=303)
+    back = f"/adjustments/{mid}/edit" if mid else "/adjustments/new"
     date = (f.get("entry_date") or "").strip()
-    debit_code, _, debit_name = (f.get("debit_account") or "").partition("|")
-    credit_code, _, credit_name = (f.get("credit_account") or "").partition("|")
-    if not (date and debit_code and credit_code):
-        return RedirectResponse("/adjustments", status_code=303)
-    cols = dict(entry_date=date, debit_code=debit_code, debit_name=debit_name,
-                credit_code=credit_code, credit_name=credit_name, amount=fl("amount"), note=g("note"))
+    valid = {a["code"] for a in chart.accounts(postable_only=True)}
+    lines = []
+    for code, side, amt in zip(f.getlist("line_code"), f.getlist("line_side"), f.getlist("line_amount")):
+        amt = _num(amt)
+        if not code and not amt:
+            continue
+        if code not in valid or amt <= 0:
+            return RedirectResponse(f"{back}?err=line", status_code=303)
+        lines.append((code, amt if side == "借" else 0, amt if side == "貸" else 0))
+    legs = ledger.compose_manual_entries(lines)
+    if not date or not legs:
+        return RedirectResponse(f"{back}?err=bal", status_code=303)
+    total = sum(l["debit"] for l in legs)
+    note = (f.get("note") or "").strip() or None
     if mid:
-        sets = ",".join(f"{k}=:{k}" for k in cols)
-        execute(f"UPDATE manual_entry SET {sets} WHERE entry_id=:id", {**cols, "id": int(mid)})
         new_id = int(mid)
+        execute("UPDATE manual_entry SET entry_date=?, amount=?, note=? WHERE entry_id=?", (date, total, note, new_id))
+        execute("DELETE FROM manual_entry_line WHERE entry_id=?", (new_id,))
     else:
-        keys = ",".join(cols)
-        new_id = execute(f"INSERT INTO manual_entry({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
-    legs = ledger.compose_manual_entries(debit_code, debit_name, credit_code, credit_name, cols["amount"])
-    ledger.save_voucher("manual_adjustment", new_id, date, legs, note=g("note"))
-    return RedirectResponse("/adjustments", status_code=303)
+        new_id = execute("INSERT INTO manual_entry(entry_date, amount, note) VALUES(?,?,?)", (date, total, note))
+    for i, l in enumerate(legs, start=1):
+        execute("""INSERT INTO manual_entry_line(entry_id,line_no,account_code,account_name,debit,credit)
+                   VALUES(?,?,?,?,?,?)""", (new_id, i, l["account_code"], l["account_name"], l["debit"], l["credit"]))
+    ledger.save_voucher("manual_adjustment", new_id, date, legs, note=note)
+    return RedirectResponse("/adjustments?ok=1", status_code=303)
 
 
 # ---------- 總帳(進貨/營運費用/訂單/9宮格B類 自動過帳)-------

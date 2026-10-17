@@ -359,28 +359,37 @@ CREATE INDEX ix_oinc_date ON other_income(income_date);
 CREATE TABLE equity_txn (
   txn_id          INTEGER PRIMARY KEY,
   txn_date        TEXT NOT NULL,
-  txn_type        TEXT NOT NULL CHECK (txn_type IN ('現金增資','盈餘轉列公積')),
+  txn_type        TEXT NOT NULL CHECK (txn_type IN ('增資','減資','提列法定盈餘公積')),
   amount          REAL NOT NULL DEFAULT 0,
-  payment_account TEXT,                    -- 現金增資才有意義
+  payment_account TEXT,                    -- C 現金 / 銀行(增資、減資才有)
+  equity_account  TEXT,                    -- T 權益科目:增資貸方 / 減資借方 / 提列的轉入科目
+  source_account  TEXT,                    -- T 權益科目:提列法定盈餘公積的「從哪裡提」(借方)
   note            TEXT,
   created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX ix_equity_date ON equity_txn(txn_date);
 
 -- 22. 帳務調整(9 宮格 B 類,2026-09) ---------------------------------
---     其他 8 類都涵蓋不到的例外狀況,直接指定一組借/貸科目手動記一筆。
+--     其他 8 類都涵蓋不到的例外狀況,手動指定好幾行借/貸科目記一筆(2026-10-17 起可多行)。
 CREATE TABLE manual_entry (
   entry_id     INTEGER PRIMARY KEY,
   entry_date   TEXT NOT NULL,
-  debit_code   TEXT NOT NULL,
-  debit_name   TEXT NOT NULL,
-  credit_code  TEXT NOT NULL,
-  credit_name  TEXT NOT NULL,
-  amount       REAL NOT NULL DEFAULT 0,
+  amount       REAL NOT NULL DEFAULT 0,   -- 借方合計(= 貸方合計)
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX ix_manual_date ON manual_entry(entry_date);
+-- 2026-10-17:一筆調整可以有好幾行(每行一個科目、借或貸),借貸合計要相等
+CREATE TABLE manual_entry_line (
+  line_id      INTEGER PRIMARY KEY,
+  entry_id     INTEGER NOT NULL REFERENCES manual_entry(entry_id) ON DELETE CASCADE,
+  line_no      INTEGER NOT NULL,
+  account_code TEXT NOT NULL,
+  account_name TEXT NOT NULL,
+  debit        REAL NOT NULL DEFAULT 0,
+  credit       REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX ix_manual_line ON manual_entry_line(entry_id);
 
 -- 23. 會計科目表(2026-10-16,取代原本的 bank_account)------------------------
 --     依同事「郡碩農創_記帳系統_1015.xlsx」帳務設定表建立,初值在 chart.DEFAULT_CHART。

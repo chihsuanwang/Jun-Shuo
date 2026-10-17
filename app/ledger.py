@@ -308,38 +308,41 @@ def compose_other_income_entries(category, amount, tax_amount=0, payment_account
     return legs
 
 
-def compose_equity_entries(txn_type, amount, payment_account=None):
-    """資本異動:現金增資(借現金/貸股本)、盈餘轉列公積(借累積盈虧/貸法定盈餘公積,
-    不涉及現金)。"""
+EQUITY_TYPES = ("增資", "減資", "提列法定盈餘公積")
+
+
+def compose_equity_entries(txn_type, amount, payment_account=None, equity_account=None, source_account=None):
+    """資本異動(2026-10-17 同仁修改意見):
+    增資 = 借 C 現金/銀行 / 貸 T 權益科目(預設股本);減資 = 反過來;
+    提列法定盈餘公積 = 借 T(從哪裡提,預設累積盈虧)/ 貸 T(轉入,預設法定盈餘公積),不動到現金。
+    舊資料的「現金增資」「盈餘轉列公積」分別當成增資、提列。"""
     amount = amount or 0
     if amount <= 0:
         return []
-    if txn_type == "現金增資":
+    txn_type = {"現金增資": "增資", "盈餘轉列公積": "提列法定盈餘公積"}.get(txn_type, txn_type)
+    if txn_type in ("增資", "減資"):
         cash_code, cash_name = _cash_account(payment_account)
-        return [
-            dict(account_code=cash_code, account_name=cash_name, debit=amount, credit=0),
-            dict(account_code=EQUITY_STOCK_ACCOUNT[0], account_name=EQUITY_STOCK_ACCOUNT[1],
-                 debit=0, credit=amount),
-        ]
-    if txn_type == "盈餘轉列公積":
-        return [
-            dict(account_code=EQUITY_RETAINED_ACCOUNT[0], account_name=EQUITY_RETAINED_ACCOUNT[1],
-                 debit=amount, credit=0),
-            dict(account_code=EQUITY_RESERVE_ACCOUNT[0], account_name=EQUITY_RESERVE_ACCOUNT[1],
-                 debit=0, credit=amount),
-        ]
-    return []
-
-
-def compose_manual_entries(debit_code, debit_name, credit_code, credit_name, amount):
-    """帳務調整:其他 8 類都涵蓋不到時,直接指定一組借/貸科目手動記一筆。"""
-    amount = amount or 0
-    if amount <= 0 or not (debit_code and credit_code):
+        eq = equity_account or EQUITY_STOCK_ACCOUNT[0]
+        dr, cr = ((cash_code, cash_name), (eq, chart.name_of(eq))) if txn_type == "增資" else \
+                 ((eq, chart.name_of(eq)), (cash_code, cash_name))
+    elif txn_type == "提列法定盈餘公積":
+        src = source_account or EQUITY_RETAINED_ACCOUNT[0]
+        eq = equity_account or EQUITY_RESERVE_ACCOUNT[0]
+        dr, cr = (src, chart.name_of(src)), (eq, chart.name_of(eq))
+    else:
         return []
-    return [
-        dict(account_code=debit_code, account_name=debit_name, debit=amount, credit=0),
-        dict(account_code=credit_code, account_name=credit_name, debit=0, credit=amount),
-    ]
+    return [dict(account_code=dr[0], account_name=dr[1], debit=amount, credit=0),
+            dict(account_code=cr[0], account_name=cr[1], debit=0, credit=amount)]
+
+
+def compose_manual_entries(lines):
+    """帳務調整(2026-10-17 起可多行):lines = [(科目代碼, 借方, 貸方), ...],
+    借貸合計不相等就不記(回傳空)。科目名稱從會計科目表帶。"""
+    legs = [dict(account_code=c, account_name=chart.name_of(c), debit=d or 0, credit=k or 0)
+            for c, d, k in lines if c and ((d or 0) or (k or 0))]
+    if len(legs) < 2 or round(sum(l["debit"] for l in legs) - sum(l["credit"] for l in legs), 2):
+        return []
+    return legs
 
 
 def compose_asset_acquire_entries(category, cost, tax_amount=0, payment_account=None):

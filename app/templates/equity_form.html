@@ -1,37 +1,108 @@
 {% extends "base.html" %}
 {% block title %}{{ '編輯資本異動' if r else '新增資本異動' }} · 桂圓帳房{% endblock %}
 {% block body %}
+<style>
+.mods[hidden] { display:none; }
+.mods { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; margin-bottom:16px; max-width:980px; }
+.mod h3 { display:flex; gap:8px; align-items:baseline; }
+.mod h3 .tag { font-family:monospace; font-size:12px; background:var(--paper-2); border:1px solid var(--rule); border-radius:4px; padding:1px 6px; }
+</style>
 <div class="head"><div>
   <div class="sup"><a href="/equity">資本異動</a> / {{ '編輯' if r else '新增' }}</div>
   <h1 class="serif">{{ '編輯資本異動' if r else '新增一筆資本異動' }}</h1>
 </div></div>
 <hr class="rule">
-
+{% if request.query_params.get('err') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">日期、科目、金額都要填;提列時「從哪裡提」跟「轉入」不能是同一個科目。</div>{% endif %}
+{% set kind = '提列法定盈餘公積' if r and r.txn_type in ('提列法定盈餘公積', '盈餘轉列公積') else '增減資' %}
 <form method="post" action="/equity">
 {% if r %}<input type="hidden" name="txn_id" value="{{ r.txn_id }}">{% endif %}
-<div class="card" style="max-width:680px">
-  <div class="grid" style="grid-template-columns:1fr 1fr">
-    <div><label>日期</label><input type="date" name="txn_date" value="{{ r.txn_date if r else '' }}" required></div>
-    <div><label>類型</label><select name="txn_type" required>
-      <option value="現金增資" {{ 'selected' if r and r.txn_type=='現金增資' }}>現金增資(借現金 / 貸股本)</option>
-      <option value="盈餘轉列公積" {{ 'selected' if r and r.txn_type=='盈餘轉列公積' }}>盈餘轉列公積(借累積盈虧 / 貸法定盈餘公積)</option>
-    </select></div>
-    <div><label>金額</label><input name="amount" type="number" step="1" value="{{ r.amount|round(0) if r else '' }}" required></div>
-    <div><label>付款帳戶(現金增資才有意義)</label>
-      <select name="payment_account">
-        {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if ((r.payment_account if r else None) or '現金') == a.name }}>{{ a.name }}</option>{% endfor %}
-      </select>
-    </div>
+<div class="card" style="max-width:980px;margin-bottom:14px">
+  <div class="grid" style="grid-template-columns:200px 1fr 200px">
+    <div><label>日期</label><input type="date" name="txn_date" value="{{ r.txn_date if r else today }}" required></div>
+    <div><label>要做什麼</label>
+      <div style="display:flex;gap:18px;padding-top:8px">
+        <label style="display:flex;gap:6px;align-items:center;margin:0"><input type="radio" name="kind" value="增減資" style="width:auto" {{ 'checked' if kind == '增減資' }}>增資 / 減資</label>
+        <label style="display:flex;gap:6px;align-items:center;margin:0"><input type="radio" name="kind" value="提列法定盈餘公積" style="width:auto" {{ 'checked' if kind != '增減資' }}>提列法定盈餘公積</label>
+      </div></div>
+    <div><label>金額</label><input name="amount" id="amt" type="number" step="1" min="1" value="{{ r.amount|round(0)|int if r else '' }}" required></div>
   </div>
-  <div style="margin-top:12px"><label>備註</label><input name="note" value="{{ (r.note or '') if r else '' }}"></div>
-  <div style="margin-top:16px">
-    <button type="submit">儲存</button>
-    <a href="/equity" style="margin-left:12px">取消</a>
-    {% if r %}
-    <button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
-            onclick="return confirm('刪除這筆資本異動?')">刪除</button>
-    {% endif %}
+  <div style="margin-top:10px"><label>備註</label><input name="note" value="{{ (r.note or '') if r else '' }}"></div>
+</div>
+
+<div class="mods" id="kCap">
+  <div class="card mod">
+    <h3 class="serif"><span class="tag">C</span>現金 / 銀行</h3>
+    <label>錢進 / 出哪個帳戶</label>
+    <select name="payment_account" id="pay">
+      {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if ((r.payment_account if r else None) or '現金') == a.name }}>{{ a.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="card mod">
+    <h3 class="serif"><span class="tag">T</span>權益</h3>
+    <label>增加還是減少</label>
+    <select name="direction" id="dir">
+      <option value="增加">增資(增加)</option>
+      <option value="減少" {{ 'selected' if r and r.txn_type == '減資' }}>減資(減少)</option>
+    </select>
+    <label style="margin-top:10px">科目</label>
+    <select name="equity_account" id="eqAcct">
+      {% for a in t_accounts %}<option value="{{ a.code }}" {{ 'selected' if (r.equity_account if r and kind == '增減資' else '3110') == a.code }}>{{ a.code }} {{ a.name }}</option>{% endfor %}
+    </select>
   </div>
 </div>
+
+<div class="mods" id="kRes">
+  <div class="card mod">
+    <h3 class="serif"><span class="tag">T</span>從哪裡提</h3>
+    <label>科目</label>
+    <select name="reserve_from" id="rFrom">
+      {% for a in t_accounts %}<option value="{{ a.code }}" {{ 'selected' if ((r.source_account if r else None) or '3351-03') == a.code }}>{{ a.code }} {{ a.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="card mod">
+    <h3 class="serif"><span class="tag">T</span>轉入</h3>
+    <label>科目</label>
+    <select name="reserve_to" id="rTo">
+      {% for a in t_accounts %}<option value="{{ a.code }}" {{ 'selected' if (r.equity_account if r and kind != '增減資' else '3310-03') == a.code }}>{{ a.code }} {{ a.name }}</option>{% endfor %}
+    </select>
+  </div>
+</div>
+<div class="card" style="max-width:980px;margin-bottom:16px">
+  <h3 class="serif">分錄預覽</h3>
+  <table class="vt"><thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>借方</th><th data-num>貸方</th></tr></thead>
+    <tbody id="pv"></tbody></table>
+  <div class="muted" id="pvNote" style="font-size:12px;margin-top:6px"></div>
+</div>
+<div style="max-width:980px">
+  <button type="submit">儲存</button>
+  <a href="/equity" style="margin-left:12px">取消</a>
+  {% if r %}
+  <button type="submit" name="_delete" value="1" class="ghost" style="margin-left:16px"
+          onclick="return confirm('刪除這筆資本異動?總帳的傳票也會一起刪掉。')">刪除</button>
+  {% endif %}
+</div>
 </form>
+<script>
+(function () {
+  var T = {{ t_names | tojson }}, BANKS = {{ bank_codes | tojson }};
+  var $ = function (id) { return document.getElementById(id); };
+  function m(v) { return Math.round(v).toLocaleString(); }
+  function row(c, nm, dr, cr) { return '<tr><td>' + c + '</td><td>' + nm + '</td><td class="r">' + (dr ? m(dr) : '—') + '</td><td class="r">' + (cr ? m(cr) : '—') + '</td></tr>'; }
+  function upd() {
+    var k = document.querySelector('input[name=kind]:checked').value, a = +$('amt').value || 0, h;
+    $('kCap').hidden = k !== '增減資'; $('kRes').hidden = k === '增減資';
+    if (k === '增減資') {
+      var c = [BANKS[$('pay').value] || '1102', $('pay').value], e = [$('eqAcct').value, T[$('eqAcct').value]];
+      h = $('dir').value === '增加' ? row(c[0], c[1], a, 0) + row(e[0], e[1], 0, a) : row(e[0], e[1], a, 0) + row(c[0], c[1], 0, a);
+      $('pvNote').textContent = $('dir').value === '增加' ? '股東把錢放進公司:現金增加、權益增加' : '退錢給股東:權益減少、現金減少';
+    } else {
+      h = row($('rFrom').value, T[$('rFrom').value], a, 0) + row($('rTo').value, T[$('rTo').value], 0, a);
+      $('pvNote').textContent = $('rFrom').value === $('rTo').value ? '「從哪裡提」跟「轉入」不能是同一個科目' : '權益科目之間移轉,不動到現金';
+    }
+    $('pv').innerHTML = h;
+  }
+  document.querySelectorAll('input, select').forEach(function (el) { el.addEventListener('input', upd); el.addEventListener('change', upd); });
+  upd();
+})();
+</script>
 {% endblock %}
