@@ -1872,9 +1872,11 @@ def _adjust_ctx(request, r):
             grp = next((a["grp"] for a in accts if a["code"] == x["account_code"]), "")
             side, amt = ("借", x["debit"]) if x["debit"] else ("貸", x["credit"])
             lines.append(dict(grp=grp, code=x["account_code"], side=side, amount=amt))
+    # 0921 修改意見第 14 條:最上方先選要調整幾項科目(預設 2、最多 3),下面顯示對應數量的區塊
+    n_lines = min(max(len(lines), 2), 3)
     while len(lines) < 3:
         lines.append(dict(grp="", code="", side="借" if not lines else "貸", amount=""))
-    return dict(request=request, active="adjust", r=r, lines=lines,
+    return dict(request=request, active="adjust", r=r, lines=lines, n_lines=n_lines,
                 groups=[(g, chart.GROUP_LABEL[g]) for g in used],
                 accts=[dict(code=a["code"], name=a["name"], grp=a["grp"]) for a in accts],
                 today=dt.date.today().isoformat())
@@ -1913,6 +1915,8 @@ async def adjustment_save(request: Request):
         if code not in valid or amt <= 0:
             return RedirectResponse(f"{back}?err=line", status_code=303)
         lines.append((code, amt if side == "借" else 0, amt if side == "貸" else 0))
+    if len(lines) > 3:
+        return RedirectResponse(f"{back}?err=line", status_code=303)
     legs = ledger.compose_manual_entries(lines)
     if not date or not legs:
         return RedirectResponse(f"{back}?err=bal", status_code=303)

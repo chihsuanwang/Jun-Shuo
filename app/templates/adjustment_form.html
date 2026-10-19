@@ -10,21 +10,24 @@
 {% if qp.get('err') == 'line' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">有一行選了科目但金額沒填(或填了金額沒選科目),請檢查。</div>{% endif %}
 {% if qp.get('err') == 'bal' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">至少要填兩行,而且借方合計要等於貸方合計。</div>{% endif %}
 <p class="muted" style="font-size:13px;margin:-4px 0 16px">
-  其他交易類型都套不上時才用。每一行先選模組(科目分組),再選科目、借或貸、金額;
-  至少填兩行,<b>借方合計要等於貸方合計</b>才能存。系統照你填的記,不會另外加稅額或現金。
+  其他交易類型都套不上時才用。先選要調整幾項科目(2 或 3 項),每一項先選模組(科目分組),
+  再選科目、借或貸、金額;<b>借方合計要等於貸方合計</b>才能存。系統照你填的記,不會另外加稅額或現金。
 </p>
 
 <form method="post" action="/adjustments" id="adjForm">
 {% if r %}<input type="hidden" name="entry_id" value="{{ r.entry_id }}">{% endif %}
 <div class="card" style="max-width:980px;margin-bottom:14px">
-  <div class="grid" style="grid-template-columns:200px 1fr">
+  <div class="grid" style="grid-template-columns:200px 200px 1fr">
     <div><label>日期</label><input type="date" name="entry_date" value="{{ r.entry_date if r else today }}" required></div>
+    <div><label>要調整幾項科目</label><select id="nLines">
+      {% for n in (2, 3) %}<option value="{{ n }}" {{ 'selected' if n == n_lines }}>{{ n }} 項</option>{% endfor %}
+    </select></div>
     <div><label>備註(建議寫清楚為什麼要調整)</label><input name="note" value="{{ (r.note or '') if r else '' }}"></div>
   </div>
 </div>
 <div class="card" style="max-width:980px;margin-bottom:14px;overflow-x:auto">
   <table class="vt" id="lines">
-    <thead><tr><th style="width:40px">#</th><th style="width:190px;text-align:left">模組</th><th style="text-align:left">科目</th><th style="width:90px;text-align:left">借 / 貸</th><th data-num style="width:150px">金額</th><th style="width:40px"></th></tr></thead>
+    <thead><tr><th style="width:40px">#</th><th style="width:190px;text-align:left">模組</th><th style="text-align:left">科目</th><th style="width:90px;text-align:left">借 / 貸</th><th data-num style="width:150px">金額</th></tr></thead>
     <tbody>
     {% for l in lines %}
       <tr>
@@ -36,12 +39,11 @@
         <td><select name="line_code" class="acct" data-cur="{{ l.code }}"><option value="">—</option></select></td>
         <td><select name="line_side" class="lside"><option {{ 'selected' if l.side == '借' }}>借</option><option {{ 'selected' if l.side == '貸' }}>貸</option></select></td>
         <td><input name="line_amount" class="amt" type="number" step="1" min="0" value="{{ (l.amount|round(0)|int) if l.amount else '' }}"></td>
-        <td><a href="#" class="del" title="拿掉這一行">✕</a></td>
       </tr>
     {% endfor %}
     </tbody>
-    <tfoot><tr class="sum"><td></td><td><a href="#" id="addLine">＋ 再加一行</a></td><td class="r">合計</td>
-      <td></td><td class="r" id="tot"></td><td></td></tr></tfoot>
+    <tfoot><tr class="sum"><td></td><td></td><td class="r">合計</td>
+      <td></td><td class="r" id="tot"></td></tr></tfoot>
   </table>
   <div id="balMsg" style="font-size:13px;margin-top:8px"></div>
 </div>
@@ -57,7 +59,7 @@
 <script>
 (function () {
   var ACCTS = {{ accts | tojson }};
-  var tb = document.querySelector('#lines tbody'), tpl = tb.rows[tb.rows.length - 1].cloneNode(true);
+  var tb = document.querySelector('#lines tbody'), rows = [].slice.call(tb.rows), nSel = document.getElementById('nLines');
   function m(v) { return Math.round(v).toLocaleString(); }
   function fill(tr) {
     var g = tr.querySelector('.grp').value, s = tr.querySelector('.acct'), cur = s.value || s.dataset.cur || '';
@@ -67,38 +69,41 @@
       }).join('');
     s.dataset.cur = '';
   }
+  function show() {
+    var n = +nSel.value;
+    rows.forEach(function (tr, i) {
+      var on = i < n;
+      tr.hidden = !on;
+      tr.querySelectorAll('select, input').forEach(function (x) {
+        x.disabled = !on;
+        if (!on && !x.classList.contains('lside')) { x.value = ''; }
+      });
+      if (!on) fill(tr);
+    });
+    calc();
+  }
   function calc() {
     var dr = 0, cr = 0, n = 0;
-    [].forEach.call(tb.rows, function (tr, i) {
+    rows.forEach(function (tr, i) {
       tr.querySelector('.n').textContent = i + 1;
+      if (tr.hidden) return;
       var a = +tr.querySelector('.amt').value || 0;
       if (tr.querySelector('.acct').value && a) n++;
       if (tr.querySelector('.lside').value === '借') dr += a; else cr += a;
     });
     document.getElementById('tot').textContent = '借 ' + m(dr) + ' / 貸 ' + m(cr);
-    var ok = n >= 2 && dr === cr && dr > 0, msg = document.getElementById('balMsg');
+    var need = +nSel.value, ok = n === need && dr === cr && dr > 0, msg = document.getElementById('balMsg');
     msg.style.color = ok ? 'var(--leaf, #2E6B3A)' : 'var(--seal, #A8321E)';
-    msg.textContent = ok ? '借貸平衡,可以儲存。' : (n < 2 ? '至少要填兩行(科目 + 金額)。' : '借方跟貸方差 ' + m(Math.abs(dr - cr)) + ',要相等才能存。');
+    msg.textContent = ok ? '借貸平衡,可以儲存。' : (n < need ? '每一項都要選模組、科目,填金額。' : '借方跟貸方差 ' + m(Math.abs(dr - cr)) + ',要相等才能存。');
     return ok;
   }
   tb.addEventListener('change', function (e) { if (e.target.classList.contains('grp')) fill(e.target.closest('tr')); calc(); });
   tb.addEventListener('input', calc);
-  tb.addEventListener('click', function (e) {
-    if (!e.target.classList.contains('del')) return;
-    e.preventDefault();
-    if (tb.rows.length > 2) e.target.closest('tr').remove(); else e.target.closest('tr').querySelectorAll('select.grp, input').forEach(function (x) { x.value = ''; });
-    [].forEach.call(tb.rows, function (tr) { fill(tr); }); calc();
-  });
-  document.getElementById('addLine').addEventListener('click', function (e) {
-    e.preventDefault();
-    var tr = tpl.cloneNode(true);
-    tr.querySelector('.grp').value = ''; tr.querySelector('.amt').value = ''; tr.querySelector('.acct').dataset.cur = '';
-    tb.appendChild(tr); fill(tr); calc();
-  });
+  nSel.addEventListener('change', show);
   document.getElementById('adjForm').addEventListener('submit', function (e) {
     if (!this.dataset.del && !calc()) { e.preventDefault(); alert(document.getElementById('balMsg').textContent); }
   });
-  [].forEach.call(tb.rows, fill); calc();
+  rows.forEach(fill); show();
 })();
 </script>
 {% endblock %}
