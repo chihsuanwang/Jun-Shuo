@@ -2013,9 +2013,7 @@ def _ledger_invoice_map():
 #   一行一筆分錄:勾選 / 傳票號碼 / 交易日期 / 科目代碼 / 會計項目 / 識別碼(發票號碼)/
 #   借方 / 貸方 / 異動金額(借 − 貸)/ 備註。預設依傳票號碼由小到大;點欄位標題排序、
 #   表頭下一排篩選(前端 JS)。勾選一行會把同一張傳票的所有行一起勾,刪除一次刪整張。
-@app.get("/ledger", response_class=HTMLResponse)
-def ledger_page(request: Request):
-    src = request.query_params.get("source") or ""
+def _ledger_rows(src):
     where, args = ["1=1"], []
     if src in LEDGER_SOURCES:
         where.append("source_type=?"); args.append(src)
@@ -2033,8 +2031,32 @@ def ledger_page(request: Request):
         r["edit_url"] = edit_cache[key]
         r["src_label"] = LEDGER_SOURCES.get(r["source_type"], r["source_type"])
         r["explain"] = _ledger_explain(r["account_code"], r["debit"] or 0, r["credit"] or 0)
+    return rows
+
+
+LEDGER_CSV_HEAD = ["傳票號碼", "交易日期", "科目代碼", "會計項目", "識別碼", "借方", "貸方", "異動金額", "解釋", "備註"]
+
+@app.get("/ledger.csv")
+def ledger_csv(request: Request):
+    """總帳下載(1019 同仁問題第 7 條):跟畫面同欄位,依傳票號碼排。"""
+    src = request.query_params.get("source") or ""
+    rows = [[r["voucher_no"], r["entry_date"], r["account_code"], r["account_name"], r["invoice_no"],
+             round(r["debit"] or 0), round(r["credit"] or 0), round(r["amount"]), r["explain"], r["note"] or ""]
+            for r in _ledger_rows(src)]
+    return csv_response(f"總帳_{dt.date.today().isoformat()}.csv", LEDGER_CSV_HEAD, rows)
+
+@app.get("/ledger", response_class=HTMLResponse)
+def ledger_page(request: Request):
+    if request.query_params.get("tab") == "trial":
+        year, years = _trial_year(request)
+        closed = bool(q("SELECT 1 FROM ledger_entry WHERE source_type='year_closing' AND source_id=? LIMIT 1", (year,)))
+        return tpl.TemplateResponse("statements.html", dict(
+            request=request, active="ledger", book_tab="trial", years=years, year=year, closed=closed,
+            tb=Q.trial_balance(year)))
+    src = request.query_params.get("source") or ""
+    rows = _ledger_rows(src)
     accts = sorted({(r["account_code"], r["account_name"]) for r in rows})
-    return tpl.TemplateResponse("ledger.html", dict(
+    return tpl.TemplateResponse("ledger.html", dict(book_tab="gl",
         request=request, active="ledger", rows=rows, src=src, sources=LEDGER_SOURCES, accts=accts,
         total_debit=sum(r["debit"] or 0 for r in rows), total_credit=sum(r["credit"] or 0 for r in rows)))
 
@@ -2054,7 +2076,7 @@ def _voucher_edit_url(source_type, source_id):
         "manual_adjustment": f"/adjustments/{source_id}/edit",
         "asset_acquire": f"/assets/{source_id}/edit",
         "asset_depreciation": f"/assets/{source_id}/edit",
-        "year_closing": "/statements",
+        "year_closing": "/ledger?tab=trial",
         "vat_settlement": "/vat", "vat_payment": "/vat",
     }.get(source_type)
 
@@ -2157,47 +2179,31 @@ async def bank_account_merge(request: Request):
 # ---------- 正式三表:試算表 / 資產負債表 / 綜合損益表(2026-09-23)------
 #   給同事做帳/報稅用,直接從總帳彙總,用西曆年切期間(跟系統其他地方的「產季」不是
 #   同一條時間軸)。詳見 ledger.compose_year_closing_entries / queries.trial_balance 等註解。
-STATEMENT_TABS = {"trial": "試算表", "bs": "資產負債表", "is": "綜合損益表"}
-
-@app.get("/statements", response_class=HTMLResponse)
-def statements_page(request: Request):
-    tab = request.query_params.get("tab", "trial")
-    if tab not in STATEMENT_TABS:
-        tab = "trial"
+# 2026-10-20(1019 同仁問題第 7 條):總帳跟試算表合併成一頁(總帳頁的兩個分頁),拿掉資產負債表 /
+# 綜合損益表;舊的 /statements 網址轉到試算表分頁。
+def _trial_year(request):
     years = Q.statement_years()
-    yv = request.query_params.get("year")
     this_year = dt.date.today().year          # 1019 同仁問題第 9 條:預設今年
-    if this_year not in years:
-        years = sorted(set(years) | {this_year})
-    year = int(yv) if yv and yv.isdigit() and int(yv) in years else this_year
-    as_of = f"{year}-12-31"
-    closed = bool(q("""SELECT 1 FROM ledger_entry WHERE source_type='year_closing'
-                        AND source_id=? LIMIT 1""", (year,)))
-    data = dict(request=request, active="statement", tab=tab, tabs=STATEMENT_TABS,
-                years=years, year=year, closed=closed)
-    if tab == "trial":
-        data["tb"] = Q.trial_balance(as_of, all_accounts=True)
-    elif tab == "bs":
-        data["bs"] = Q.balance_sheet(as_of)
-    elif tab == "is":
-        data["is_"] = Q.income_statement(year)
-    return tpl.TemplateResponse("statements.html", data)
+    years = sorted(set(years) | {this_year})
+    yv = request.query_params.get("year")
+    return (int(yv) if yv and yv.isdigit() and int(yv) in years else this_year), years
+
+@app.get("/statements")
+def statements_redirect(request: Request):
+    yv = request.query_params.get("year")
+    return RedirectResponse("/ledger?tab=trial" + (f"&year={yv}" if yv else ""), status_code=303)
 
 @app.get("/statements/trial.csv")
 def trial_balance_csv(request: Request):
-    """試算表下載(2026-10-08):跟畫面一樣列出所有科目,沒有金額的也列。"""
-    years = Q.statement_years()
-    yv = request.query_params.get("year")
-    year = int(yv) if yv and yv.isdigit() and int(yv) in years else years[-1]
-    tb = Q.trial_balance(f"{year}-12-31", all_accounts=True)
+    """試算表下載:跟畫面一樣(期初、本期借貸、期末,借正貸負)。"""
+    year, _ = _trial_year(request)
+    tb = Q.trial_balance(year)
     rows = [[r["account_code"], r["account_name"] + ("(算出來的,不計入檢核)" if r["synthetic"] else ""),
-             "" if r["synthetic"] else round(r["db"] or 0), "" if r["synthetic"] else round(r["cr"] or 0),
-             round(r["disp"] or 0)] for r in tb["rows"]]
-    rows += [[], ["", "借方正常餘額合計", "", "", round(tb["debit_side"])],
-             ["", "貸方正常餘額合計", "", "", round(tb["credit_side"])],
-             ["", "檢核(應該 = 0)", "", "", round(tb["check"])]]
-    return csv_response(f"試算表_{year}年_截至{tb['as_of']}.csv",
-                        ["科目代碼", "科目名稱", "借方合計", "貸方合計", "餘額"], rows)
+             "" if r["synthetic"] else round(r["open_bal"]), "" if r["synthetic"] else round(r["dr"]),
+             "" if r["synthetic"] else round(r["cr"]), round(r["close_bal"])] for r in tb["rows"]]
+    rows += [[], ["", "合計(不含本期損益)", round(tb["total_open"]), round(tb["total_dr"]), round(tb["total_cr"]),
+                  round(tb["check"])], ["", "檢核:期末餘額加總(應該 = 0)", "", "", "", round(tb["check"])]]
+    return csv_response(f"試算表_{year}年.csv", ["科目代碼", "科目名稱", "期初餘額", "本期借方", "本期貸方", "期末餘額"], rows)
 
 @app.post("/statements/close-year")
 async def statements_close_year(request: Request):
@@ -2206,14 +2212,14 @@ async def statements_close_year(request: Request):
     if not q("SELECT 1 FROM ledger_entry WHERE source_type='year_closing' AND source_id=?", (year,)):
         legs = ledger.compose_year_closing_entries(year)
         ledger.save_voucher("year_closing", year, f"{year}-12-31", legs, note=f"{year} 年度結轉")
-    return RedirectResponse(f"/statements?tab=trial&year={year}", status_code=303)
+    return RedirectResponse(f"/ledger?tab=trial&year={year}", status_code=303)
 
 @app.post("/statements/reopen-year")
 async def statements_reopen_year(request: Request):
     f = await request.form()
     year = int(f.get("year"))
     ledger.delete_voucher_for("year_closing", year)
-    return RedirectResponse(f"/statements?tab=trial&year={year}", status_code=303)
+    return RedirectResponse(f"/ledger?tab=trial&year={year}", status_code=303)
 
 
 # ---------- 營業稅結算(2026-10-20 同仁回覆待同仁確認第 6 題)------------------
@@ -2259,7 +2265,7 @@ def vat_page(request: Request):
                      blocked=bool(latest and (latest["year"], latest["period"]) > (year, p)))
         rows.append(r)
     return tpl.TemplateResponse("vat.html", dict(
-        request=request, active="statement", year=year, years=years, rows=rows,
+        request=request, active="ledger", year=year, years=years, rows=rows,
         cash_accounts=chart.accounts(["C"]), today=today))
 
 @app.post("/vat/settle")

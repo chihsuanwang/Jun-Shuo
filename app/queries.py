@@ -1073,93 +1073,47 @@ def _display_balance(account_code, balance):
 
 PNL_SUMMARY_ACCOUNT = ("3353", "本期損益")  # 同事截圖給的代碼;只有這個沒被 9/23 列為待確認,視為已確認
 
-def trial_balance(as_of, all_accounts=False):
-    """試算表:每個用過的科目,累計到 as_of(含)為止的借貸合計 = 期末餘額。含已經貼過的
-    年度結轉傳票——結轉會把已結束年度的 4~7 開頭科目沖平、餘額留到累積盈虧,試算表才會對。
-    順便算一個檢核值(比照同事的檢核規則,理論上永遠是 0,因為每張傳票本來就借貸相等,
-    顯示出來是給同事一個熟悉的核對數字)。
-
-    2026-10-01 改法(比照同事截圖的設計):加一列 `3353 本期損益`(= `_unclosed_pnl`,還沒
-    結轉的年度 4~7 開頭淨額)——**這一列是算出來的,底層沒有真的傳票**,所以先把 debit_side
-    / credit_side / check 用「真的有過帳的列」算完,才把這列加進 rows 顯示(同事說的「要填入
-    數字但加總[檢核]時不計算他」)。資產負債表 / 其他要看權益的地方,直接篩 `tb['rows']`
-    代碼開頭 3 就會自動含這列,不用再像以前那樣另外呼叫一次 `_unclosed_pnl` 重算。
-
-    all_accounts=True(2026-10-08 同仁回饋,試算表頁 / 下載用):沒有金額的科目也列出來,
-    借貸都是 0。科目清單 = 會計科目表(account 表,含停用的;不含 3353 / 5950 這種算出來的)。
-    資產負債表不傳這個參數,維持只列有餘額的科目。"""
-    rows = q("""SELECT account_code, account_name, SUM(debit) db, SUM(credit) cr
-                FROM ledger_entry WHERE entry_date<=?
-                GROUP BY account_code, account_name
-                HAVING SUM(debit)<>0 OR SUM(credit)<>0
-                ORDER BY account_code""", (as_of,))
+def trial_balance(year):
+    """試算表(2026-10-20 依 1019 同仁問題第 2、3、5 條改):選一個西曆年,每個科目一列——
+    期初餘額(前一年底為止累計)、本期借方 / 貸方(這一年的分錄,含年度結轉)、期末餘額 = 期初 + 借 − 貸。
+    **正負號:借方是正、貸方是負**(負債、權益、收入的餘額是負數),所以全部科目期末加總 = 0 就是檢核。
+    會計科目表上的科目都列(沒有金額也列,顯示 0;不含 3353 / 5950 這種算出來的)。
+    「3353 本期損益」這列 = 這一年 4~7 開頭科目的淨額(不含年度結轉傳票,所以結轉前後都看得到當年損益;
+    同樣借正貸負,有賺是負數),只顯示、不算進檢核(同事 Excel:要填入數字但加總時不計算他)。"""
+    import chart as _chart
+    lo, hi = f"{year}-01-01", f"{year}-12-31"
+    agg = {r["account_code"]: r for r in q("""
+        SELECT account_code, MAX(account_name) account_name,
+               SUM(CASE WHEN entry_date < ? THEN debit - credit ELSE 0 END) open_bal,
+               SUM(CASE WHEN entry_date BETWEEN ? AND ? THEN debit ELSE 0 END) dr,
+               SUM(CASE WHEN entry_date BETWEEN ? AND ? THEN credit ELSE 0 END) cr
+          FROM ledger_entry WHERE entry_date <= ?
+         GROUP BY account_code""", (lo, lo, hi, lo, hi, hi))}
+    rows = []
+    for a in _chart.accounts(active_only=False, postable_only=True):
+        g = agg.pop(a["code"], None) or {}
+        rows.append(dict(account_code=a["code"], account_name=a["name"],
+                         open_bal=round(g.get("open_bal") or 0, 2), dr=round(g.get("dr") or 0, 2),
+                         cr=round(g.get("cr") or 0, 2), synthetic=False))
+    for code, g in agg.items():          # 科目表裡已經刪掉、但總帳還有的(理論上不會有)
+        if code == PNL_SUMMARY_ACCOUNT[0]:
+            continue
+        rows.append(dict(account_code=code, account_name=g["account_name"], open_bal=round(g["open_bal"] or 0, 2),
+                         dr=round(g["dr"] or 0, 2), cr=round(g["cr"] or 0, 2), synthetic=False))
     for r in rows:
-        r["balance"] = (r["db"] or 0) - (r["cr"] or 0)
-        r["disp"] = _display_balance(r["account_code"], r["balance"])
-        r["synthetic"] = False
-    if all_accounts:
-        import ledger
-        have = {r["account_code"] for r in rows}
-        import chart as _chart
-        chart = [(r["code"], r["name"]) for r in _chart.accounts(active_only=False, postable_only=True)]
-        for code, name in chart:
-            if code in have or code == PNL_SUMMARY_ACCOUNT[0]:
-                continue
-            have.add(code)
-            rows.append(dict(account_code=code, account_name=name, db=0, cr=0, balance=0, disp=0,
-                             synthetic=False))
-    debit_side  = sum(r["disp"] for r in rows if _is_debit_normal(r["account_code"]))
-    credit_side = sum(r["disp"] for r in rows if not _is_debit_normal(r["account_code"]))
-
+        r["close_bal"] = round(r["open_bal"] + r["dr"] - r["cr"], 2)
+    pnl = q1("""SELECT COALESCE(SUM(debit - credit), 0) v FROM ledger_entry
+                WHERE entry_date BETWEEN ? AND ? AND source_type != 'year_closing'
+                  AND substr(account_code, 1, 1) IN ('4','5','6','7')""", (lo, hi))["v"]
     code, name = PNL_SUMMARY_ACCOUNT
-    rows.append(dict(account_code=code, account_name=name, db=None, cr=None, balance=None,
-                      disp=_unclosed_pnl(as_of), synthetic=True))
+    rows.append(dict(account_code=code, account_name=name, open_bal=None, dr=None, cr=None,
+                     close_bal=round(pnl or 0, 2), synthetic=True))
     rows.sort(key=lambda r: r["account_code"])
-
-    return dict(as_of=as_of, rows=rows, debit_side=debit_side, credit_side=credit_side,
-                check=round(debit_side - credit_side, 2))
-
-
-def income_statement(year):
-    """綜合損益表:只抓當年度(西曆年,進行中的年份只算到今天為止,比照 season_finance()
-    的做法)、代碼開頭 4/5/6/7,**排除年度結轉傳票本身**——結轉會把這些科目沖平,不排除的話
-    已經結轉過的年度會整批顯示 0。"""
-    lo, hi_full = f"{year}-01-01", f"{year}-12-31"
-    today = dt.date.today()
-    hi = min(hi_full, today.strftime("%Y-%m-%d")) if year == today.year else hi_full
-    rows = q("""SELECT account_code, account_name, SUM(debit) db, SUM(credit) cr
-                FROM ledger_entry
-                WHERE entry_date BETWEEN ? AND ?
-                  AND (account_code LIKE '4%' OR account_code LIKE '5%'
-                       OR account_code LIKE '6%' OR account_code LIKE '7%')
-                  AND source_type != 'year_closing'
-                GROUP BY account_code, account_name
-                HAVING SUM(debit)<>0 OR SUM(credit)<>0
-                ORDER BY account_code""", (lo, hi))
-    for r in rows:
-        r["balance"] = (r["db"] or 0) - (r["cr"] or 0)
-        r["disp"] = _display_balance(r["account_code"], r["balance"])
-    net_income = -sum(r["balance"] for r in rows)
-    closed = bool(q("""SELECT 1 FROM ledger_entry WHERE source_type='year_closing'
-                        AND source_id=? LIMIT 1""", (year,)))
-    # 2026-10-16:照同事 1015 版「財務報表」工作表分段小計
-    # 4000 營業收入 / 5000 營業成本 / 5950 營業毛利 / 6000 營業費用 / 7100 業外收入 / 7500 業外支出
-    def _sec(code, name, pick):
-        rs = [r for r in rows if pick(r["account_code"])]
-        return dict(code=code, name=name, rows=rs, total=sum(r["disp"] for r in rs))
-    def _num(c):
-        c = c.split("-")[0]
-        return int(c) if c.isdigit() else 0
-    rev = _sec("4000", "營業收入", lambda c: c.startswith("4"))
-    cost = _sec("5000", "營業成本", lambda c: c.startswith("5"))
-    opex = _sec("6000", "營業費用", lambda c: c.startswith("6"))
-    oin = _sec("7100", "業外收入", lambda c: c.startswith("7") and _num(c) < 7500)
-    oout = _sec("7500", "業外支出", lambda c: c.startswith("7") and _num(c) >= 7500)
-    gross = rev["total"] - cost["total"]
-    sections = [rev, cost, dict(code="5950", name="營業毛利", rows=[], total=gross, computed=True),
-                opex, oin, oout]
-    return dict(year=year, window=f"{lo} ~ {hi_full}", rows=rows, net_income=net_income, closed=closed,
-                sections=sections, gross_profit=gross)
+    real = [r for r in rows if not r["synthetic"]]
+    return dict(year=year, lo=lo, hi=hi, rows=rows,
+                total_open=round(sum(r["open_bal"] for r in real), 2),
+                total_dr=round(sum(r["dr"] for r in real), 2), total_cr=round(sum(r["cr"] for r in real), 2),
+                check=round(sum(r["close_bal"] for r in real), 2), pnl=round(pnl or 0, 2))
 
 
 def account_ledger(code, lo=None, hi=None):
@@ -1184,42 +1138,3 @@ def account_ledger(code, lo=None, hi=None):
         bal += r["amount"]
         r["balance"] = bal
     return dict(rows=rows, opening=opening, closing=bal)
-
-
-def _unclosed_pnl(as_of):
-    """資產負債表用的「本期損益」顯示行:把**所有還沒結轉過的年度**(不是只算 as_of
-    當年——如果前面有年度漏結轉,原始的收入/費用分錄還在總帳裡,不能只看 as_of 那一年,
-    不然資產負債表會對不起來)的收入/費用類餘額全部加總。已經結轉過的年度不會重複算,
-    因為那年的原始分錄雖然還在,但淨額已經真的轉進累積盈虧,這裡用
-    `年份 NOT IN (已結轉年度)` 排除掉。"""
-    r = q1("""SELECT COALESCE(SUM(debit),0) db, COALESCE(SUM(credit),0) cr
-              FROM ledger_entry
-              WHERE entry_date<=? AND source_type != 'year_closing'
-                AND (account_code LIKE '4%' OR account_code LIKE '5%'
-                     OR account_code LIKE '6%' OR account_code LIKE '7%')
-                AND CAST(substr(entry_date,1,4) AS INTEGER) NOT IN (
-                    SELECT source_id FROM ledger_entry WHERE source_type='year_closing')
-           """, (as_of,))
-    return -(r["db"] - r["cr"])
-
-
-def balance_sheet(as_of):
-    """資產負債表:試算表篩代碼開頭 1/2/3 的列。2026-10-01 起「本期損益」是試算表自己的
-    一列(代碼開頭 3,見 `trial_balance`),權益篩選會自動含進來,不用再像以前那樣另外呼叫
-    `_unclosed_pnl` 疊加——年度結轉之前靠這列讓資產負債表配平,結轉之後會自然趨近 0
-    (因為淨額已經真的轉進累積盈虧了)。"""
-    tb = trial_balance(as_of)
-    year = int(as_of[:4])
-    assets      = [r for r in tb["rows"] if r["account_code"][0] == "1"]
-    liabilities = [r for r in tb["rows"] if r["account_code"][0] == "2"]
-    equity      = [r for r in tb["rows"] if r["account_code"][0] == "3"]
-    total_assets = sum(r["disp"] for r in assets)
-    total_liab   = sum(r["disp"] for r in liabilities)
-    total_equity = sum(r["disp"] for r in equity)
-    current_pnl  = next((r["disp"] for r in equity if r["synthetic"]), 0.0)
-    total_equity_posted = total_equity - current_pnl
-    return dict(as_of=as_of, year=year, assets=assets, liabilities=liabilities, equity=equity,
-                total_assets=total_assets, total_liab=total_liab,
-                total_equity_posted=total_equity_posted, current_pnl=current_pnl,
-                total_equity=total_equity,
-                check=round(total_assets - (total_liab + total_equity), 2))

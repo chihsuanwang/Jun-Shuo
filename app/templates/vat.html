@@ -2,7 +2,7 @@
 {% block title %}營業稅結算 · 桂圓帳房{% endblock %}
 {% block body %}
 <div class="head">
-  <div><div class="sup"><a href="/statements">財務報表</a> / 營業稅結算</div><h1 class="serif">營業稅結算</h1></div>
+  <div><div class="sup"><a href="/ledger?tab=trial">試算表</a> / 營業稅結算</div><h1 class="serif">營業稅結算</h1></div>
   <form method="get" action="/vat"><select name="year" onchange="this.form.submit()" style="width:auto">
     {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }} 年</option>{% endfor %}
   </select></form>

@@ -4,8 +4,11 @@
 <div class="head"><div>
   <div class="sup">桂圓帳房 / 總帳</div>
   <h1 class="serif">總帳</h1>
-</div></div>
+</div>
+  <a href="/ledger.csv{{ ('?source=' ~ src) if src else '' }}"><button type="button" class="ghost">下載總帳(Excel 可開)</button></a>
+</div>
 <hr class="rule">
+{% include "_book_tabs.html" %}
 {% set qp = request.query_params %}
 {% if qp.get('deleted') %}<div class="ok">已刪除傳票 {{ qp.get('deleted') }}(來源那筆資料也一起刪了)。</div>{% endif %}
 {% if qp.get('skipped') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">{{ qp.get('skipped') }} 是設備取得 / 折舊 / 年度結轉,不能從這裡刪,沒有動。</div>{% endif %}
@@ -13,7 +16,7 @@
   各記帳畫面存檔時,系統自動組出的分錄,一行一筆。<b>點欄位標題可以排序</b>(再點一次反過來),
   標題下面那一排可以篩選(傳票號碼可以用 * 跟 ?,例如 GL202609* 是九月全部的傳票;科目用下拉選)。要改內容請點傳票號碼,回到原始資料修改;
   <b>勾選任何一行,同一張傳票會整張一起勾,刪除會連同來源那筆資料(那張訂單 / 那筆費用…)一起刪掉</b>。
-  「設備取得」「折舊」要到<a href="/assets">固定資產</a>處理,「年度結轉」要到<a href="/statements">財務報表</a>撤銷,不能勾選。
+  「設備取得」「折舊」要到<a href="/assets">固定資產</a>處理,「年度結轉」要到<a href="/ledger?tab=trial">試算表</a>撤銷、「營業稅結算 / 繳納」要到<a href="/vat">營業稅結算</a>撤銷,不能勾選。
 </p>
 
 <form method="get" action="/ledger" style="display:flex;gap:10px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
@@ -65,7 +68,7 @@
       <tr data-v="{{ r.voucher_no }}" data-d="{{ r.entry_date }}" data-c="{{ r.account_code }}" data-n="{{ r.account_name }}"
           data-i="{{ r.invoice_no }}" data-dr="{{ r.debit or 0 }}" data-cr="{{ r.credit or 0 }}" data-a="{{ r.amount }}" data-x="{{ r.explain }}"
           data-m="{{ r.note or '' }} {{ r.src_label }}" data-o="{{ loop.index }}">
-        <td>{% if r.deletable %}<input type="checkbox" class="vchk" name="voucher_no" value="{{ r.voucher_no }}" style="width:auto">{% else %}<span class="muted" title="要到固定資產 / 財務報表處理">—</span>{% endif %}</td>
+        <td>{% if r.deletable %}<input type="checkbox" class="vchk" name="voucher_no" value="{{ r.voucher_no }}" style="width:auto">{% else %}<span class="muted" title="要到固定資產 / 試算表 / 營業稅結算處理">—</span>{% endif %}</td>
         <td>{% if r.edit_url %}<a href="{{ r.edit_url }}" title="到原始資料修改({{ r.src_label }})">{{ r.voucher_no }}</a>{% else %}{{ r.voucher_no }}{% endif %}</td>
         <td>{{ r.entry_date }}</td>
         <td>{{ r.account_code }}</td>

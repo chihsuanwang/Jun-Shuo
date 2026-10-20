@@ -1,0 +1,5 @@
+{# 總帳頁的兩個分頁(2026-10-20 總帳 + 試算表合併一頁) #}
+<div class="chips" style="margin:6px 0 18px;font-size:13px">
+  <a class="chip" href="/ledger" style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if book_tab == 'gl' }}">總帳(每一筆分錄)</a>
+  <a class="chip" href="/ledger?tab=trial" style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if book_tab == 'trial' }}">試算表(每個科目的餘額)</a>
+</div>
