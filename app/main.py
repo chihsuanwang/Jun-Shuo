@@ -1732,7 +1732,9 @@ async def finance_expense_save(request: Request):
         new_id = execute(f"INSERT INTO op_expense({keys}, updated_at) "
                          f"VALUES({','.join(':' + k for k in cols)}, datetime('now','localtime'))", cols)
     legs = ledger.compose_expense_entries(code, cols["amount"], tax, cols["payment_account"])
-    ledger.save_voucher("op_expense", new_id, date, legs, note=f"{EXP_KINDS[grp]['label']}:{acct['name']}")
+    # 2026-10-20(1019 同仁問題第 4 條):總帳備註要帶使用者填的備註,改備註總帳跟著改
+    ledger.save_voucher("op_expense", new_id, date, legs,
+                        note=f"{EXP_KINDS[grp]['label']}:{acct['name']}" + (f" {cols['note']}" if cols["note"] else ""))
     return RedirectResponse(f"{list_url}?ok=1", status_code=303)
 
 
@@ -1819,7 +1821,8 @@ async def other_income_save(request: Request):
         keys = ",".join(cols)
         new_id = execute(f"INSERT INTO other_income({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
     legs = ledger.compose_other_income_entries(code, cols["amount"], cols["tax_amount"], cols["payment_account"])
-    ledger.save_voucher("other_income", new_id, date, legs, note=f"其他收益:{cat}")
+    ledger.save_voucher("other_income", new_id, date, legs,
+                        note=f"其他收益:{cat}" + (f" {cols['note']}" if cols["note"] else ""))
     return RedirectResponse("/other-income", status_code=303)
 
 
@@ -1887,7 +1890,8 @@ async def equity_save(request: Request):
         keys = ",".join(cols)
         new_id = execute(f"INSERT INTO equity_txn({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
     legs = ledger.compose_equity_entries(ttype, amount, pay, eq, src)
-    ledger.save_voucher("equity", new_id, date, legs, note=f"資本異動:{ttype}")
+    ledger.save_voucher("equity", new_id, date, legs,
+                        note=f"資本異動:{ttype}" + (f" {cols['note']}" if cols["note"] else ""))
     return RedirectResponse("/equity?ok=1", status_code=303)
 
 
@@ -1913,11 +1917,10 @@ def _adjust_ctx(request, r):
             grp = next((a["grp"] for a in accts if a["code"] == x["account_code"]), "")
             side, amt = ("借", x["debit"]) if x["debit"] else ("貸", x["credit"])
             lines.append(dict(grp=grp, code=x["account_code"], side=side, amount=amt))
-    # 0921 修改意見第 14 條:最上方先選要調整幾項科目(預設 2、最多 3),下面顯示對應數量的區塊
-    n_lines = min(max(len(lines), 2), 3)
+    # 2026-10-20(1019 同仁問題第 8 條):不限 2 或 3 項,預設 3 列,每列可刪、下面可再加
     while len(lines) < 3:
         lines.append(dict(grp="", code="", side="借" if not lines else "貸", amount=""))
-    return dict(request=request, active="adjust", r=r, lines=lines, n_lines=n_lines,
+    return dict(request=request, active="adjust", r=r, lines=lines,
                 groups=[(g, chart.GROUP_LABEL[g]) for g in used],
                 accts=[dict(code=a["code"], name=a["name"], grp=a["grp"]) for a in accts],
                 today=dt.date.today().isoformat())
@@ -1956,8 +1959,6 @@ async def adjustment_save(request: Request):
         if code not in valid or amt <= 0:
             return RedirectResponse(f"{back}?err=line", status_code=303)
         lines.append((code, amt if side == "借" else 0, amt if side == "貸" else 0))
-    if len(lines) > 3:
-        return RedirectResponse(f"{back}?err=line", status_code=303)
     legs = ledger.compose_manual_entries(lines)
     if not date or not legs:
         return RedirectResponse(f"{back}?err=bal", status_code=303)
@@ -2165,7 +2166,10 @@ def statements_page(request: Request):
         tab = "trial"
     years = Q.statement_years()
     yv = request.query_params.get("year")
-    year = int(yv) if yv and yv.isdigit() and int(yv) in years else years[-1]
+    this_year = dt.date.today().year          # 1019 同仁問題第 9 條:預設今年
+    if this_year not in years:
+        years = sorted(set(years) | {this_year})
+    year = int(yv) if yv and yv.isdigit() and int(yv) in years else this_year
     as_of = f"{year}-12-31"
     closed = bool(q("""SELECT 1 FROM ledger_entry WHERE source_type='year_closing'
                         AND source_id=? LIMIT 1""", (year,)))
@@ -2414,32 +2418,6 @@ async def pricing_save(request: Request):
         execute("INSERT INTO pricing_param(key,value) VALUES(?,?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, val))
     return RedirectResponse("/pricing", status_code=303)
-
-
-# ---------- 全鏈路毛利分析(管理視角估算,不進帳本) --------------
-#   只有「產季」這個時間軸,沒有西曆年版本(供應端估算本來就是跟著產季抓的),
-#   所以不借用 _season_ctx(那個會連帶帶出依產季/依西曆年切換,這頁用不到)。
-@app.get("/chain-margin", response_class=HTMLResponse)
-def chain_margin_page(request: Request):
-    seasons = Q.seasons()
-    sv = request.query_params.get("season", "")
-    season = int(sv) if sv.isdigit() and int(sv) in seasons else (seasons[-1] if seasons else None)
-    data = Q.chain_margin(season) if season else []
-    return tpl.TemplateResponse("chain_margin.html", dict(
-        request=request, active="chainmargin", season=season, seasons=seasons, data=data))
-
-@app.post("/chain-margin")
-async def chain_margin_save(request: Request):
-    f = await request.form()
-    season = int(f.get("season"))
-    for pg in Q.CHAIN_PRODUCT_LINES:
-        sc = float((f.get(f"supply_cost_{pg}") or "0").strip() or 0)
-        execute("""INSERT INTO chain_cost_param(season,pg_name,supply_cost)
-                   VALUES(?,?,?)
-                   ON CONFLICT(season,pg_name) DO UPDATE SET
-                     supply_cost=excluded.supply_cost, updated_at=datetime('now','localtime')""",
-                (season, pg, sc))
-    return RedirectResponse(f"/chain-margin?season={season}", status_code=303)
 
 
 # ---------- 產季目標 ------------------------------------------
