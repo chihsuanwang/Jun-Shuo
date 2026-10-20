@@ -186,7 +186,7 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
                  invoiced,tax_doc_no,ship_method,carrier,shipping_fee_charged,ship_status)
                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (ono, d.isoformat(), season, cid, ch[chan], kind,
-               None, 0, total, sales_tax, "合庫",
+               None, 0, total, sales_tax, None,
                pm, "合庫" if pm == "銀行匯款" else None, pay_status,
                d.isoformat() if pay_status == "已收款" else None, paid_amount,
                invoiced, tax_doc_no, ship_method, carrier, ship_fee, ship_status))
@@ -205,7 +205,7 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
     # 記帳:訂單成立分錄 + 收款分錄(邏輯跟 main.py 的 _post_order_ledger 一致)
     sale_lines = [(prod[sku]["pg_name"], 0 if gift else round(qty * price_of(sku, seg)),
                    qty * prod[sku]["unit_cost"]) for sku, qty, gift in lines]
-    sale_legs = ledger.compose_order_sale_entries(sale_lines, kind, ship_fee, sales_tax, "合庫")   # 接單當天付小農
+    sale_legs = ledger.compose_order_sale_entries(sale_lines, kind, ship_fee, sales_tax)   # 成本記應付帳款(2026-10-20)
     add_voucher(d.isoformat(), sale_legs, "order_sale", oid, f"訂單 {ono}")
     pay_legs = ledger.compose_order_payment_entries(paid_amount, "合庫" if pm == "銀行匯款" else None)
     add_voucher(d.isoformat(), pay_legs, "order_payment", oid, f"訂單 {ono} 收款")
@@ -275,7 +275,11 @@ def opx(ym, cat, amt, pgname=None, amort=None):
     code = _OPX_CODE[cat]
     c.execute("""INSERT INTO op_expense(expense_date,ym,category,account_code,amount,product_group_id,amortize_months,payment_account)
                  VALUES(?,?,?,?,?,?,?,?)""", (ym + "-01", ym, chart.name_of(code), code, amt, pg.get(pgname), amort, "現金"))
-    return c.lastrowid
+    eid = c.lastrowid
+    # 2026-10-20:每筆營運支出都記傳票(以前示範資料只有研發、檢驗費兩筆有,財務健康改從總帳抓後會少算)
+    add_voucher(ym + "-01", ledger.compose_expense_entries(code, amt, 0, "現金"), "op_expense", eid,
+                f"營運支出:{chart.name_of(code)}")
+    return eid
 
 for ym in opex_months:
     mm = int(ym[5:7])
@@ -289,11 +293,7 @@ for ym in opex_months:
         opx(ym, "直接人工", 8000, "龍眼肉")
         opx(ym, "直接人工", 3000, "蜂蜜")
 rnd_id = opx("2025-07", "研發", 120000)     # 研發費 12 萬(2026-10-17 起不再攤提)
-add_voucher("2025-07-01", ledger.compose_expense_entries("612901", 120000, 0, "現金"),
-            "op_expense", rnd_id, "營運費用:研究發展費")
 cert_id = opx("2026-06", "驗證費", 15000, "龍眼乾")     # 年度產銷履歷驗證費
-add_voucher("2026-06-01", ledger.compose_expense_entries("6188-02", 15000, 0, "現金"),
-            "op_expense", cert_id, "營運費用:其他費用-檢驗費")
 
 # ---- 固定資產卡(2:柴焙灶 / 搖蜜機)----
 # 2026-10-16:使用年限用「月」(最少 120)、沒有政府補助、殘值 0、可以記進項稅額
@@ -336,6 +336,18 @@ for _i, _l in enumerate(legs, start=1):
     c.execute("""INSERT INTO manual_entry_line(entry_id,line_no,account_code,account_name,debit,credit)
                  VALUES(?,?,?,?,?,?)""", (adj_id, _i, _l["account_code"], _l["account_name"], _l["debit"], _l["credit"]))
 add_voucher("2026-09-10", legs, "manual_adjustment", adj_id, "帳務調整示範")
+
+# 付小農(2026-10-20 應付帳款):2026-09 以前的訂單已經付清(每張在訂單日後 7 天從合庫付),之後的還欠著
+for _o in c.execute("""SELECT o.order_id, o.order_no, o.order_date,
+                              (SELECT SUM(line_cost) FROM order_line ol WHERE ol.order_id=o.order_id) cost
+                         FROM "order" o WHERE o.order_kind='銷售' AND o.order_date < '2026-09-01'""").fetchall():
+    if not _o[3]:
+        continue
+    _pd = (dt.date.fromisoformat(_o[2]) + dt.timedelta(days=7)).isoformat()
+    c.execute("""INSERT INTO goods_purchase(purchase_date, amount, payment_account, order_id, note)
+                 VALUES(?,?,?,?,?)""", (_pd, _o[3], "合庫", _o[0], f"付小農:訂單 {_o[1]}"))
+    add_voucher(_pd, ledger.compose_goods_purchase_entries(_o[3], "合庫"), "goods_purchase", c.lastrowid,
+                f"付小農貨款:訂單 {_o[1]}")
 
 cx.commit()
 n_ord = c.execute('SELECT COUNT(*) FROM "order"').fetchone()[0]

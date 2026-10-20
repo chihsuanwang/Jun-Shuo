@@ -300,7 +300,7 @@ CREATE INDEX ix_sret_season ON sales_return(season);
 
 -- 18b. 進口商品(2026-10-16;同一天稍晚改成 dormant)--------------------------
 --     使用者決定「接單當天就付錢給小農」(Toyota 無存貨的概念),付款直接在訂單成立的傳票裡一起記,
---     這張表跟 /goods-purchases 頁面都不用了,表留著不刪。
+--     2026-10-20 起又用回來:應付帳款頁(/payables)付小農的紀錄,一筆對一張訂單(order_id)。
 --     同事「會計場景對應分錄表_1015」場景 2「進口商品:實際付款」= 付錢給小農:
 --     借 2171 應付帳款 / 貸 現金或銀行。成本在開訂單時記(借 採購成本 / 貸 應付帳款)。
 CREATE TABLE goods_purchase (
@@ -312,6 +312,7 @@ CREATE TABLE goods_purchase (
   amount          REAL NOT NULL DEFAULT 0,   -- 整數
   payment_account TEXT,               -- C 組帳戶名稱(現金 / 合庫 …)
   note            TEXT,
+  order_id        INTEGER,            -- 2026-10-20 起:付的是哪張訂單的成本(應付帳款頁)
   created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 

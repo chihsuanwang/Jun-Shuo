@@ -88,13 +88,8 @@
     <tfoot><tr><td colspan="3" class="r"><b>應收合計(含稅,不含贈品)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="3" class="muted" style="font-size:11px">成本:跟小農買這些貨的錢,自己填</td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
-  <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-    <label style="margin:0">成本付給小農的帳戶</label>
-    <select name="cost_payment_account" style="width:auto">
-      {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if (o.cost_payment_account or '現金') == a.name }}>{{ a.name }}</option>{% endfor %}
-    </select>
-    <span class="muted" style="font-size:11px">接單當天就付錢給小農:存檔時會記「借 採購成本 / 貸 應付帳款」再「借 應付帳款 / 貸 這個帳戶」</span>
-  </div>
+  <p class="muted" style="font-size:11px;margin-top:10px">成本記成「應付帳款」(欠小農);真的付錢給小農時,到左邊「應付帳款(付小農)」勾選付款。</p>
+  <p style="font-size:12px;margin-top:4px">付小農:{% if order_cost > 0 %}{% if farmer_paid >= order_cost %}<span class="pos">已付清 {{ farmer_paid|money }} 元</span>{% elif farmer_paid > 0 %}已付 {{ farmer_paid|money }} / {{ order_cost|money }} 元{% else %}<span class="neg">還沒付</span>({{ order_cost|money }} 元){% endif %} · <a href="/payables">應付帳款</a>{% else %}<span class="muted">這張單沒有成本</span>{% endif %}</p>
   <p class="muted" style="font-size:11px;margin-top:6px">改完按上方「儲存」,應收合計會重算。</p>
 </div>
 
@@ -175,7 +170,7 @@
   <p class="muted" style="font-size:12px;margin-top:10px;line-height:1.7">
     <b>退貨又退款</b>:不用在這裡登記,直接按最上面的「刪除訂單」,總帳會一起刪掉。<br>
     <b>退款</b>(只退錢、貨不用退回):金額填退給客人多少,不管多少都算「其他支出」。<br>
-    <b>退回小農</b>(客人退貨但不退錢):貨退給小農,小農把錢退回來,金額填退回多少、退回哪個帳戶,
+    <b>退回小農</b>(客人退貨但不退錢):貨退給小農。{% if farmer_paid %}這張單已經付過小農,小農把錢退回來,金額填退回多少、退回哪個帳戶,{% else %}這張單還沒付小農,直接少欠小農(沖應付帳款),不用選帳戶;{% endif %}
     會從選的那項採購成本扣掉。這張訂單填的成本合計是 {{ order_cost|money }} 元,全部退回就填這個數字。
   </p>
 </div>
@@ -185,7 +180,9 @@
   var k = document.getElementById('retKind'), cf = document.getElementById('retCostField'),
       af = document.getElementById('retAcctField');
   var al = af.querySelector('label');
-  function t() { var f = k.value === '退回小農'; cf.hidden = !f; al.textContent = f ? '小農退回哪個帳戶' : '錢從哪個帳戶退'; }
+  var FARMER_PAID = {{ 1 if farmer_paid else 0 }}, af = document.getElementById('retAcctField');
+  function t() { var f = k.value === '退回小農'; cf.hidden = !f; al.textContent = f ? '小農退回哪個帳戶' : '錢從哪個帳戶退';
+    af.hidden = f && !FARMER_PAID; }
   if (k) { k.addEventListener('change', t); t(); }
 })();
 (function () {

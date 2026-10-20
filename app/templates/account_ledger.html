@@ -16,8 +16,8 @@
       {% for a in g.accts %}<option value="{{ a.code }}" {{ 'selected' if a.code == acct.code }}>{{ a.code }} {{ a.name }}{{ '' if a.code in used else '(沒有交易)' }}</option>{% endfor %}
     </optgroup>{% endfor %}
   </select></div>
-  <div><label>從</label><input type="date" name="from" value="{{ lo }}" style="width:auto"></div>
-  <div><label>到</label><input type="date" name="to" value="{{ hi }}" style="width:auto"></div>
+  <div><label>從</label><input type="date" data-nolock name="from" value="{{ lo }}" style="width:auto"></div>
+  <div><label>到</label><input type="date" data-nolock name="to" value="{{ hi }}" style="width:auto"></div>
   <button type="submit" class="ghost">查詢</button>
 </form>
 

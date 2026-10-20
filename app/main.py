@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import os, io, csv, json, glob, shutil, sys, runpy, base64, datetime as dt
+import os, io, re, csv, json, glob, shutil, sys, runpy, base64, datetime as dt
 
 import paths
 import queries as Q
@@ -20,6 +20,56 @@ HERE = paths.RES_DIR
 app = FastAPI(title="桂圓帳房")
 app.mount("/static", StaticFiles(directory=paths.STATIC), name="static")
 tpl = Jinja2Templates(directory=paths.TEMPLATES)
+
+# ---------- 已結轉的年度鎖住(2026-10-20,1019 同仁問題第 6 條)----------------------
+#   某年做過年度結轉,任何畫面都不能再新增 / 修改 / 刪除那一年的交易:
+#   ① 畫面上的日期選不到那一年(base.html 依 lock_min() 設 min);
+#   ② 送出時這個 middleware 檢查表單裡的日期欄位,落在已結轉年度就擋下、回上一頁顯示提示;
+#   ③ 修改 / 刪除既有資料時,各路由再用 _source_locked() 看那筆資料原本的傳票日期。
+#   要改已結轉年度的資料,先到試算表「撤銷結轉」。
+LOCK_DATE_FIELDS = ("order_date", "expense_date", "income_date", "txn_date", "entry_date", "paid_date",
+                    "return_date", "acquire_date", "purchase_date")
+
+def _closed_years():
+    return {int(r["source_id"]) for r in q("SELECT DISTINCT source_id FROM ledger_entry WHERE source_type='year_closing'")}
+
+def _locked(*dates, closed=None):
+    closed = _closed_years() if closed is None else closed
+    return any(d and str(d)[:4].isdigit() and int(str(d)[:4]) in closed for d in dates)
+
+def _source_locked(source_type, source_id):
+    closed = _closed_years()
+    if not closed:
+        return False
+    return any(int(r["y"]) in closed for r in q(
+        "SELECT DISTINCT substr(entry_date,1,4) y FROM ledger_entry WHERE source_type=? AND source_id=?",
+        (source_type, int(source_id))))
+
+def lock_min():
+    closed = _closed_years()
+    return f"{max(closed) + 1}-01-01" if closed else ""
+tpl.env.globals["lock_min"] = lock_min
+
+def _locked_redirect(request, fallback="/"):
+    from urllib.parse import urlsplit
+    ref = request.headers.get("referer") or ""
+    u = urlsplit(ref)
+    back = (u.path or fallback) + (("?" + u.query) if u.query else "")
+    back = re.sub(r"[?&]locked=1", "", back)
+    return RedirectResponse(back + ("&" if "?" in back else "?") + "locked=1", status_code=303)
+
+@app.middleware("http")
+async def _year_lock(request: Request, call_next):
+    if request.method == "POST" and request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded") \
+            and not request.url.path.startswith("/statements/"):
+        from urllib.parse import parse_qs
+        body = await request.body()
+        form = parse_qs(body.decode("utf-8", "ignore"))
+        dates = [v for k in LOCK_DATE_FIELDS for v in form.get(k, [])]
+        if dates and _locked(*dates):
+            return _locked_redirect(request)
+    return await call_next(request)
+
 
 # ---------- 選用:整站共用密碼(設 GY_PASSWORD 環境變數才啟用)----------
 # 本機 / exe 不設 → 無登入,行為不變。雲端主機設一組 → 全站 Basic Auth(帳號隨便打)。
@@ -252,6 +302,9 @@ def migrate_db():
                    credit_after REAL NOT NULL DEFAULT 0, paid_date TEXT, paid_account TEXT,
                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')), UNIQUE (year, period))""")
         chart.apply_chart_additions()
+        gcols = [r["name"] for r in q("PRAGMA table_info(goods_purchase)")]
+        if gcols and "order_id" not in gcols:
+            execute("ALTER TABLE goods_purchase ADD COLUMN order_id INTEGER")
         lsql = q1("SELECT sql FROM sqlite_master WHERE name='ledger_entry'").get("sql") or ""
         if lsql and "goods_purchase" not in lsql:
             print("[migrate] 警告:資料庫還是改版前的結構(有存貨/進貨那一版),"
@@ -646,6 +699,8 @@ async def asset_save(request: Request):
     g = lambda k: (f.get(k) or "").strip() or None
     fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
     aid = f.get("asset_id")
+    if aid and _source_locked("asset_acquire", aid):
+        return _locked_redirect(request, "/assets")
     if f.get("_delete") and aid:
         execute("DELETE FROM fixed_asset WHERE asset_id=?", (int(aid),))
         ledger.delete_voucher_for("asset_acquire", int(aid))
@@ -1164,7 +1219,7 @@ async def order_create(request: Request):
                      shipping_fee_charged,ship_method,ship_status,invoiced,tax_doc_no)
                      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
                   (next_order_no(order_date), order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
-                   discount_total, total, sales_tax, one("cost_payment_account") or "現金",
+                   discount_total, total, sales_tax, None,   # 1019 同仁問題第 1 條:成本記應付帳款,不直接付
                    None, pay_status,
                    shipping_fee, one("ship_method") or None,
                    invoiced, one("tax_doc_no") or None))
@@ -1344,15 +1399,26 @@ def order_detail(request: Request, oid: int):
         va_accounts=[a for a in chart.accounts(["VA"]) if a["code"] != ledger.REFUND_LOSS_ACCOUNT[0]],
         returns=Q.returns_list(oid), return_kinds=ledger.RETURN_KINDS,
         order_cost=sum(l["line_cost"] or 0 for l in lines),
+        farmer_paid=_farmer_paid(oid),
         today=dt.date.today().isoformat()))
 
 
 # ---------- 訂單退款 / 退回小農(2026-10-08 貿易公司模式) -----------
 #   退貨又退款 → 直接刪訂單(order_delete 會連總帳一起刪),不走這裡。
 #   退款 = 只退款不退貨(其他損失);退回小農 = 退貨不退款(小農退成本,沖應付帳款)。
+def _farmer_paid(oid):
+    """這張訂單已經付給小農多少(應付帳款頁的付款紀錄)。"""
+    return q1("SELECT COALESCE(SUM(amount),0) v FROM goods_purchase WHERE order_id=?", (oid,))["v"] or 0
+
 def _post_return_ledger(rid, oid, date, kind, amount, payment_account=None, cost_account=None):
     o = q1('SELECT payment_status, payment_account FROM "order" WHERE order_id=?', (oid,))
     already_paid = o.get("payment_status") == "已收款"
+    if kind == "退回小農":
+        # 2026-10-20:payment_account 空的 = 還沒付小農,直接沖應付帳款(少欠小農)
+        legs = ledger.compose_sales_return_entries(kind, amount, already_paid, payment_account, cost_account,
+                                                    to_payable=not payment_account)
+        ledger.save_voucher("sales_return", rid, date, legs, note=f"{kind}:訂單#{oid}")
+        return
     legs = ledger.compose_sales_return_entries(kind, amount, already_paid,
                                                 payment_account or o.get("payment_account"), cost_account)
     ledger.save_voucher("sales_return", rid, date, legs, note=f"{kind}:訂單#{oid}")
@@ -1384,6 +1450,8 @@ async def order_return_create(request: Request, oid: int):
     reason = (f.get("reason") or "").strip() or None
     acct = (f.get("payment_account") or "").strip() or None
     cost = ((f.get("cost_account") or "").strip() or None) if kind == "退回小農" else None
+    if kind == "退回小農" and not _farmer_paid(oid):
+        acct = None          # 還沒付小農:沖應付帳款,不經過帳戶
 
     rid = execute("""INSERT INTO sales_return(order_id,return_date,season,kind,amount,payment_account,cost_account,reason)
                      VALUES(?,?,?,?,?,?,?,?)""", (oid, date, Q.season_of(date), kind, amount, acct, cost, reason))
@@ -1400,6 +1468,8 @@ def _return_delete(rid):
 
 @app.post("/returns/{rid}/delete")
 async def order_return_delete(request: Request, rid: int):
+    if _source_locked("sales_return", rid):
+        return _locked_redirect(request, "/returns")
     oid = _return_delete(rid)
     back = f"/orders/{oid}" if oid else "/returns"
     f = await request.form()
@@ -1408,6 +1478,8 @@ async def order_return_delete(request: Request, rid: int):
 @app.post("/orders/{oid}")
 async def order_update(request: Request, oid: int):
     f = await request.form()
+    if _source_locked("order_sale", oid) or _source_locked("order_payment", oid):
+        return _locked_redirect(request, f"/orders/{oid}")
     g = lambda k: (f.get(k) or "").strip() or None
     def flt(k):
         try: return float(f.get(k) or 0)
@@ -1468,7 +1540,7 @@ async def order_update(request: Request, oid: int):
                 paid_date=(g("paid_date") if paid else None), paid_amount=(total if paid else None),
                 payment_account=(g("payment_account") if paid else None),
                 order_total=total, sales_tax=sales_tax,
-                cost_payment_account=(g("cost_payment_account") or "現金"),
+                cost_payment_account=None,
                 ship_method=g("ship_method"), carrier=g("carrier"), tracking_no=g("tracking_no"),
                 shipped_date=g("shipped_date"), delivered_date=g("delivered_date"),
                 ship_status=g("ship_status") or "待出貨",
@@ -1503,12 +1575,17 @@ def order_copy(oid: int):
                  l["list_price"], 0 if l["is_gift"] else l["qty"] * l["unit_price"], l["is_gift"],
                  l["line_cost"] or 0))
     ship = o["shipping_fee_charged"] or 0
-    execute('UPDATE "order" SET order_total=?, sales_tax=?, shipping_fee_charged=?, cost_payment_account=? WHERE order_id=?',
-            (subtotal + ship, o["sales_tax"] or 0, ship, o["cost_payment_account"], noid))
+    execute('UPDATE "order" SET order_total=?, sales_tax=?, shipping_fee_charged=?, cost_payment_account=NULL WHERE order_id=?',
+            (subtotal + ship, o["sales_tax"] or 0, ship, noid))
     _post_order_ledger(noid)
     return RedirectResponse(f"/orders/{noid}?ok=1", status_code=303)
 
 @app.post("/orders/{oid}/delete")
+def order_delete_route(request: Request, oid: int):
+    if _source_locked("order_sale", oid) or _source_locked("order_payment", oid):
+        return _locked_redirect(request, f"/orders/{oid}")
+    return order_delete(oid)
+
 def order_delete(oid: int):
     o = q('SELECT order_id FROM "order" WHERE order_id=?', (oid,))
     if not o:
@@ -1522,6 +1599,8 @@ def order_delete(oid: int):
     # return_id 把對應的傳票也清掉
     for r in q("SELECT return_id FROM sales_return WHERE order_id=?", (oid,)):
         ledger.delete_voucher_for("sales_return", r["return_id"])
+    for r in q("SELECT purchase_id FROM goods_purchase WHERE order_id=?", (oid,)):   # 付小農的紀錄
+        _goods_purchase_delete(r["purchase_id"])
     execute('DELETE FROM "order" WHERE order_id=?', (oid,))  # order_line / sales_return 靠 ON DELETE CASCADE 一起清掉
     return RedirectResponse("/orders?deleted=1", status_code=303)
 
@@ -1625,14 +1704,16 @@ def finance_page(request: Request):
     for ym in Q.finance_months(season_arg, **mode_kw):
         d = Q.finance_month(ym)
         fin.append(dict(ym=ym, revenue=d["revenue"], returns=d["returns"], cogs=d["cogs"],
-                        gross_profit=d["gross_profit"], ship_cost=d["ship_cost"],
+                        gross_profit=d["gross_profit"], nonop=d["nonop"],
                         opex_total=d["opex_total"], pretax=d["pretax"],
                         opex={r["category"]: r["amt"] for r in d["opex"]}))
     fin_totals = ([Q.calendar_year_finance(y) for y in Q.calendar_years()] if view == "calendar"
                   else [Q.season_finance(s) for s in Q.seasons()])
     return tpl.TemplateResponse("finance.html", dict(
         request=request, active="finance",
-        fin_json=json.dumps(fin), cats=Q.opex_cats(),
+        # 2026-10-20 財務健康改從總帳抓:營運費用的項目 = 6 開頭科目(含折舊),沒在 VD 清單的也要列
+        fin_json=json.dumps(fin),
+        cats=Q.opex_cats() + sorted({c for t in fin for c in t["opex"]} - set(Q.opex_cats())),
         seasons_fin=fin_totals, **ctx))
 
 DOC_TYPES = ['發票', '收據']   # 憑證類型(1015 版 Excel:發票、收據;發票要填號碼)
@@ -1699,6 +1780,8 @@ async def finance_expense_save(request: Request):
     g = lambda k: (f.get(k) or "").strip() or None
     fl = lambda k: _num(f.get(k))
     eid = f.get("expense_id")
+    if eid and _source_locked("op_expense", eid):
+        return _locked_redirect(request, "/finance/expenses")
     code = g("account_code")
     acct = q1("SELECT code, name, grp FROM account WHERE code=? AND grp IN ('VD','VE')", (code,))
     grp = acct.get("grp") or (f.get("grp") if f.get("grp") in EXP_KINDS else "VD")
@@ -1792,6 +1875,8 @@ async def other_income_save(request: Request):
     g = lambda k: (f.get(k) or "").strip() or None
     fl = lambda k: float(f.get(k)) if (f.get(k) or "").strip() else 0.0
     iid = f.get("income_id")
+    if iid and _source_locked("other_income", iid):
+        return _locked_redirect(request, "/other-income")
     if f.get("_delete") and iid:
         _other_income_delete(iid)
         return RedirectResponse("/other-income", status_code=303)
@@ -1862,6 +1947,8 @@ async def equity_save(request: Request):
     f = await request.form()
     g = lambda k: (f.get(k) or "").strip() or None
     tid = f.get("txn_id")
+    if tid and _source_locked("equity", tid):
+        return _locked_redirect(request, "/equity")
     if f.get("_delete") and tid:
         _equity_delete(tid)
         return RedirectResponse("/equity", status_code=303)
@@ -1945,6 +2032,8 @@ def _adjustment_delete(mid):
 async def adjustment_save(request: Request):
     f = await request.form()
     mid = f.get("entry_id")
+    if mid and _source_locked("manual_adjustment", mid):
+        return _locked_redirect(request, "/adjustments")
     if f.get("_delete") and mid:
         _adjustment_delete(mid)
         return RedirectResponse("/adjustments", status_code=303)
@@ -1982,7 +2071,8 @@ LEDGER_SOURCES = {"order_sale": "訂單成立(含付小農)", "order_payment": "
                   "op_expense": "營運支出 / 其他支出", "other_income": "其他收益", "equity": "資本異動",
                   "manual_adjustment": "帳務調整", "asset_acquire": "設備取得", "asset_depreciation": "折舊",
                   "sales_return": "退款 / 退回小農", "year_closing": "年度結轉",
-                  "vat_settlement": "營業稅結算", "vat_payment": "營業稅繳納"}
+                  "vat_settlement": "營業稅結算", "vat_payment": "營業稅繳納",
+                  "goods_purchase": "付小農貨款"}
 
 
 def _ledger_explain(code, debit, credit):
@@ -2070,7 +2160,7 @@ def _voucher_edit_url(source_type, source_id):
         "op_expense": f"/finance/expenses/{source_id}/edit",
         "order_sale": f"/orders/{source_id}",
         "order_payment": f"/orders/{source_id}",
-        "goods_purchase": None,
+        "goods_purchase": "/payables",
         "other_income": f"/other-income/{source_id}/edit",
         "equity": f"/equity/{source_id}/edit",
         "manual_adjustment": f"/adjustments/{source_id}/edit",
@@ -2276,6 +2366,8 @@ async def vat_settle(request: Request):
     if latest and (latest["year"], latest["period"]) >= (year, p):
         return RedirectResponse(f"/vat?year={year}&err=order", status_code=303)
     lo, hi = _vat_range(year, p)
+    if _locked(hi):
+        return _locked_redirect(request, f"/vat?year={year}")
     b = _vat_balances(hi)
     legs, payable, credit_after = ledger.compose_vat_settlement_entries(**b)
     pid = execute("""INSERT INTO vat_period(year,period,settle_date,output_tax,input_tax,credit_before,payable,credit_after)
@@ -2285,8 +2377,10 @@ async def vat_settle(request: Request):
     return RedirectResponse(f"/vat?year={year}&ok=settled", status_code=303)
 
 @app.post("/vat/{pid}/reopen")
-async def vat_reopen(pid: int):
+async def vat_reopen(request: Request, pid: int):
     r = q1("SELECT * FROM vat_period WHERE period_id=?", (pid,))
+    if _source_locked("vat_settlement", pid):
+        return _locked_redirect(request, "/vat")
     latest = _vat_latest()
     if r and latest and latest["period_id"] == pid and not r["paid_date"]:
         ledger.delete_voucher_for("vat_settlement", pid)
@@ -2307,8 +2401,10 @@ async def vat_pay(request: Request, pid: int):
     return RedirectResponse(f"/vat?year={r['year']}&ok=paid", status_code=303)
 
 @app.post("/vat/{pid}/unpay")
-async def vat_unpay(pid: int):
+async def vat_unpay(request: Request, pid: int):
     r = q1("SELECT * FROM vat_period WHERE period_id=?", (pid,))
+    if _source_locked("vat_payment", pid):
+        return _locked_redirect(request, "/vat")
     if r:
         ledger.delete_voucher_for("vat_payment", pid)
         execute("UPDATE vat_period SET paid_date=NULL, paid_account=NULL WHERE period_id=?", (pid,))
@@ -2390,6 +2486,79 @@ async def receivables_collect(request: Request):
         _post_order_ledger(oid)
         n += 1
     return RedirectResponse(f"/receivables?collected={n}", status_code=303)
+
+
+# ---------- 應付帳款(付小農)(2026-10-20,1019 同仁問題第 1 條)-----------------------
+#   開單時成本記「借 採購成本 / 貸 應付帳款」;真的付錢給小農時在這頁勾選、按付款,
+#   記「借 應付帳款 / 貸 現金或銀行」(存在 goods_purchase,一筆對一張訂單)。
+#   未付金額 = 這張單的成本 − 已付 − 還沒付時就退回小農沖掉的。
+def _payables():
+    rows = q("""SELECT o.order_id, o.order_no, o.order_date, o.note, cu.cust_no, cu.display_name cust,
+                       (SELECT COALESCE(SUM(line_cost),0) FROM order_line ol WHERE ol.order_id=o.order_id) cost,
+                       (SELECT COALESCE(SUM(amount),0) FROM goods_purchase gp WHERE gp.order_id=o.order_id) paid,
+                       (SELECT COALESCE(SUM(amount),0) FROM sales_return sr WHERE sr.order_id=o.order_id
+                          AND sr.kind='退回小農' AND sr.payment_account IS NULL) returned
+                  FROM "order" o LEFT JOIN customer cu ON cu.customer_id=o.customer_id
+                 WHERE o.order_kind='銷售'
+                 ORDER BY o.order_date, o.order_id""")
+    for r in rows:
+        r["due"] = round((r["cost"] or 0) - (r["paid"] or 0) - (r["returned"] or 0), 2)
+    unpaid = [r for r in rows if r["due"] > 0]
+    paid = q("""SELECT gp.*, o.order_no, o.order_date, cu.display_name cust
+                  FROM goods_purchase gp LEFT JOIN "order" o ON o.order_id=gp.order_id
+                  LEFT JOIN customer cu ON cu.customer_id=o.customer_id
+                 ORDER BY gp.purchase_date DESC, gp.purchase_id DESC""")
+    return unpaid, paid
+
+@app.get("/payables", response_class=HTMLResponse)
+def payables_page(request: Request):
+    unpaid, paid = _payables()
+    return tpl.TemplateResponse("payables.html", dict(
+        request=request, active="payables", unpaid=unpaid, paid=paid,
+        unpaid_total=sum(r["due"] for r in unpaid),
+        cash_accounts=chart.accounts(["C"]), today=dt.date.today().isoformat()))
+
+@app.post("/payables/pay")
+async def payables_pay(request: Request):
+    f = await request.form()
+    pdate = (f.get("purchase_date") or "").strip() or dt.date.today().isoformat()
+    acct = (f.get("payment_account") or "").strip() or "現金"
+    due = {r["order_id"]: r for r in _payables()[0]}
+    n = 0
+    for v in dict.fromkeys(f.getlist("order_id")):
+        if not str(v).isdigit() or int(v) not in due:
+            continue
+        r = due[int(v)]
+        pid = execute("""INSERT INTO goods_purchase(purchase_date, amount, payment_account, order_id, note)
+                         VALUES(?,?,?,?,?)""", (pdate, r["due"], acct, r["order_id"], f"付小農:訂單 {r['order_no']}"))
+        ledger.save_voucher("goods_purchase", pid, pdate, ledger.compose_goods_purchase_entries(r["due"], acct),
+                            note=f"付小農貨款:訂單 {r['order_no']}")
+        n += 1
+    return RedirectResponse(f"/payables?paid={n}", status_code=303)
+
+
+def _convert_same_day_farmer_payments():
+    """2026-10-20:舊訂單是「開單當天就付小農」(訂單傳票裡一起記了付款)。改成應付帳款之後,
+    把這些付款拆成一筆付小農紀錄(日期 = 訂單日、帳戶照舊),訂單傳票只留「借 採購成本 / 貸 應付帳款」。
+    金額、日期都不變,每個科目的餘額完全一樣。做過的(cost_payment_account 已清空)不會再做。"""
+    for o in q("""SELECT o.order_id, o.order_no, o.order_date, o.cost_payment_account,
+                         (SELECT COALESCE(SUM(line_cost),0) FROM order_line ol WHERE ol.order_id=o.order_id) cost
+                    FROM "order" o
+                   WHERE o.cost_payment_account IS NOT NULL AND o.order_kind='銷售'"""):
+        if (o["cost"] or 0) > 0 and not q1("SELECT 1 FROM goods_purchase WHERE order_id=?", (o["order_id"],)):
+            pid = execute("""INSERT INTO goods_purchase(purchase_date, amount, payment_account, order_id, note)
+                             VALUES(?,?,?,?,?)""", (o["order_date"], o["cost"], o["cost_payment_account"],
+                                                    o["order_id"], f"付小農:訂單 {o['order_no']}(原本開單當天付)"))
+            ledger.save_voucher("goods_purchase", pid, o["order_date"],
+                                ledger.compose_goods_purchase_entries(o["cost"], o["cost_payment_account"]),
+                                note=f"付小農貨款:訂單 {o['order_no']}")
+        execute('UPDATE "order" SET cost_payment_account=NULL WHERE order_id=?', (o["order_id"],))
+        _post_order_ledger(o["order_id"])
+
+try:
+    _convert_same_day_farmer_payments()
+except Exception as _e:
+    print("[migrate] 付小農轉換略過:", _e)
 
 
 # ---------- 定價試算(管理估算,不進帳本) --------------------
@@ -2482,9 +2651,14 @@ _LEDGER_DELETERS = {
 # 清單勾選刪除(2026-10-17,0921 修改意見第 17 條「跟總帳一樣用勾選的方式刪」):
 # 訂單 / 營運支出 / 其他支出 / 其他收益 / 資本異動 / 帳務調整 / 退款清單都可以勾好幾筆一次刪,
 # 一樣連總帳的傳票一起刪(重用各自的刪除邏輯)。
+_BULK_SRC = {"order": ("order_sale", "order_payment"), "op_expense": ("op_expense",),
+             "other_income": ("other_income",), "equity": ("equity",), "manual_adjustment": ("manual_adjustment",),
+             "sales_return": ("sales_return",), "goods_purchase": ("goods_purchase",)}
+
 _BULK_DELETERS = {
     "order": order_delete, "op_expense": _expense_delete, "other_income": _other_income_delete,
     "equity": _equity_delete, "manual_adjustment": _adjustment_delete, "sales_return": _return_delete,
+    "goods_purchase": _goods_purchase_delete,
 }
 
 @app.post("/bulk-delete")
@@ -2493,13 +2667,16 @@ async def bulk_delete(request: Request):
     kind, back = f.get("kind"), f.get("back") or "/"
     if not back.startswith("/") or back.startswith("//"):
         back = "/"
-    n = 0
+    n = locked = 0
     if kind in _BULK_DELETERS:
         for i in dict.fromkeys(x for x in f.getlist("id") if str(x).isdigit()):
+            if any(_source_locked(st, i) for st in _BULK_SRC.get(kind, ())):
+                locked += 1
+                continue
             _BULK_DELETERS[kind](int(i))
             n += 1
     sep = "&" if "?" in back else "?"
-    return RedirectResponse(f"{back}{sep}bulkdel={n}", status_code=303)
+    return RedirectResponse(f"{back}{sep}bulkdel={n}" + ("&locked=1" if locked else ""), status_code=303)
 
 
 @app.post("/ledger/delete")
@@ -2514,7 +2691,7 @@ async def ledger_delete(request: Request):
         if not r:
             continue
         key = (r["source_type"], r["source_id"])
-        if r["source_type"] not in _LEDGER_DELETERS:
+        if r["source_type"] not in _LEDGER_DELETERS or _source_locked(*key):
             skipped.append(vno); continue
         if key not in done:
             _LEDGER_DELETERS[r["source_type"]](int(r["source_id"]))

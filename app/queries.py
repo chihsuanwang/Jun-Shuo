@@ -539,30 +539,61 @@ def finance_months(season=None, mode="season", year=None):
     ss = set(_season_list(season))
     return [m for m in mw if season_of(m + "-01") in ss]
 
-def finance_month(ym):
-    rev = q1(f"""SELECT COALESCE(SUM({REV_PAID}),0) v FROM "order" o
-                WHERE order_kind='銷售' AND {PAID_O} AND strftime('%Y-%m',order_date)=?""", (ym,))["v"]
-    cogs = q1(f"""SELECT COALESCE(SUM(COALESCE(ol.line_cost,0)),0) v
-                 FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-                 JOIN product p ON p.product_id=ol.product_id
-                 WHERE o.order_kind='銷售' AND {PAID_O} AND strftime('%Y-%m',o.order_date)=?""", (ym,))["v"]
-    ship_cost = q1("""SELECT COALESCE(SUM(shipping_cost_actual),0) v
-                       FROM "order" WHERE strftime('%Y-%m',order_date)=? AND ship_payer='店家吸收'""", (ym,))["v"]
-    by_cat = {}
-    for r in opex_rows(ym, ym):
-        by_cat[r["category"]] = by_cat.get(r["category"], 0) + r["amt"]
-    opex = [{"category": k, "amt": v} for k, v in sorted(by_cat.items(), key=lambda x: -x[1])]
-    opex_total = sum(by_cat.values())
-    ret_gross, ret_cogs = _returns_month(ym)
-    cogs_net = cogs - ret_cogs
-    net_rev = rev - ret_gross
-    gp = net_rev - cogs_net
+# ---------- 財務健康的數字從總帳抓(2026-10-20,1019 同仁問題第 13 條) ----------
+#   營收 = 4 開頭(不含稅、含跟客人收的運費);退款 = 5111-2150-03 原料報廢損失;成本 = 其他 5 開頭;
+#   營運費用 = 6 開頭(依科目,含折舊);業外收支 = 7 開頭(不含 7950 所得稅,所以是「稅前」)。
+#   都排除年度結轉傳票(不然結轉過的年度會整批變 0)。營收改成「開單就算」(總帳的認列時點),
+#   不再是「收到錢才算」。
+def _ledger_pnl(lo, hi):
+    import ledger as _ledger
+    refund_code = _ledger.REFUND_LOSS_ACCOUNT[0]
+    rows = q("""SELECT account_code, MAX(account_name) name, SUM(debit - credit) v,
+                       COUNT(DISTINCT substr(entry_date,1,7)) n_months
+                  FROM ledger_entry
+                 WHERE entry_date BETWEEN ? AND ? AND source_type != 'year_closing'
+                   AND substr(account_code,1,1) IN ('4','5','6','7')
+                 GROUP BY account_code""", (lo, hi))
+    rev = refund = cogs = nonop = 0.0
+    opex = {}
+    for r in rows:
+        c, v = r["account_code"], r["v"] or 0
+        if c[0] == "4":
+            rev -= v
+        elif c == refund_code:
+            refund += v
+        elif c[0] == "5":
+            cogs += v
+        elif c[0] == "6":
+            opex[r["name"]] = opex.get(r["name"], 0) + v
+        elif c[0] == "7" and c != "7950":
+            nonop -= v
+    months = q1("""SELECT COUNT(DISTINCT substr(entry_date,1,7)) n FROM ledger_entry
+                    WHERE entry_date BETWEEN ? AND ? AND source_type != 'year_closing'
+                      AND substr(account_code,1,1)='6'""", (lo, hi))["n"]
+    return dict(revenue=rev, returns=refund, cogs=cogs, opex=opex, nonop=nonop, opex_months=months)
+
+def _pnl_result(d, **extra):
+    net_rev = d["revenue"] - d["returns"]
+    gp = net_rev - d["cogs"]
+    opex_total = sum(d["opex"].values())
+    pretax = gp - opex_total + d["nonop"]
     margin = gp / net_rev if net_rev else 0
-    pretax = gp - ship_cost - opex_total
-    breakeven = (opex_total / margin) if margin else None
-    return dict(ym=ym, revenue=rev, returns=ret_gross, cogs=cogs_net, gross_profit=gp, margin=margin,
-                ship_cost=ship_cost, opex=opex, opex_total=opex_total,
-                pretax=pretax, breakeven=breakeven)
+    out = dict(revenue=d["revenue"], returns=d["returns"], cogs=d["cogs"], gross_profit=gp, margin=margin,
+               ship_cost=0.0, nonop=d["nonop"], opex_total=opex_total, opex_months=d["opex_months"], pretax=pretax)
+    out.update(extra)
+    return out
+
+def _month_end(ym):
+    import calendar as _cal
+    y, m = int(ym[:4]), int(ym[5:7])
+    return f"{ym}-{_cal.monthrange(y, m)[1]:02d}"
+
+def finance_month(ym):
+    d = _ledger_pnl(f"{ym}-01", _month_end(ym))
+    opex = [{"category": k, "amt": v} for k, v in sorted(d["opex"].items(), key=lambda x: -x[1]) if round(v, 2)]
+    r = _pnl_result(d, ym=ym, opex=opex)
+    r["breakeven"] = (r["opex_total"] / r["margin"]) if r["margin"] else None
+    return r
 
 def finance_trend():
     out = []
@@ -615,8 +646,11 @@ def sync_depreciation_vouchers():
         if a["disposed_date"] and a["disposed_date"][:7] < end:
             end = a["disposed_date"][:7]
         n = min(months, max(0, _months_between(start, end) + 1))
+        closed = {r["source_id"] for r in q("SELECT DISTINCT source_id FROM ledger_entry WHERE source_type='year_closing'")}
         for i in range(n):
             ym = _add_months(start, i)
+            if int(ym[:4]) in closed:      # 已結轉的年度不能再動(1019 同仁問題第 6 條)
+                continue
             legs = ledger.compose_depreciation_entries(asset_monthly_dep(a, i))
             ledger.save_voucher_if_new("asset_depreciation", a["asset_id"], f"{ym}-01", legs,
                                         note=f"折舊:{a['name']}")
@@ -648,63 +682,23 @@ def returns_list(order_id=None):
 
 
 def season_finance(season):
-    """整個產季合計:銷售月的營收 − 已經過去月份的營運費用。
-    產季全長是 4 月初~隔年 3 月底共 12 個月,但還沒發生的月份不預先算進費用裡
-    (進行中的產季只算「已經過去的月份」,不會因為費用先算滿 12 個月而顯得稅前利潤一大包負的)。
-    銷貨退回 / 折讓依「發生產季」沖減(cogs 為回沖後淨額)。"""
-    rev = q1(f"""SELECT COALESCE(SUM({REV_PAID}),0) v FROM "order" o
-                WHERE season=? AND order_kind='銷售' AND {PAID_O}""", (season,))["v"]
-    cogs = q1(f"""SELECT COALESCE(SUM(COALESCE(ol.line_cost,0)),0) v
-                 FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-                 JOIN product p ON p.product_id=ol.product_id
-                 WHERE o.season=? AND o.order_kind='銷售' AND {PAID_O}""", (season,))["v"]
-    ship_cost = q1("""SELECT COALESCE(SUM(shipping_cost_actual),0) v
-                       FROM "order" WHERE season=? AND ship_payer='店家吸收'""", (season,))["v"]
-    ret_gross, ret_cogs = _returns_agg(season)
-    cogs_net = cogs - ret_cogs
-    net_rev = rev - ret_gross
+    """整個產季合計(從總帳抓,2026-10-20):4 月初~隔年 3 月底;進行中的產季只算到今天。"""
     lo, hi_full = f"{season}-04", f"{season + 1}-03"
-    hi = min(hi_full, dt.date.today().strftime("%Y-%m"))  # 進行中的產季只算到這個月,不預先算未發生的費用
-    ox_rows = opex_rows(lo, hi)
-    opex_v = sum(r["amt"] for r in ox_rows)
-    opex_n = len(set(r["ym"] for r in ox_rows))
-    gp = net_rev - cogs_net
-    return dict(season=season, window=f"{lo} ~ {hi_full}",
-                revenue=rev, returns=ret_gross, cogs=cogs_net,
-                gross_profit=gp, ship_cost=ship_cost,
-                opex=opex_v, opex_months=opex_n,
-                pretax=gp - ship_cost - opex_v,
-                margin=(gp / net_rev if net_rev else 0))
+    hi = min(_month_end(hi_full), dt.date.today().isoformat())
+    d = _ledger_pnl(f"{lo}-01", hi)
+    r = _pnl_result(d, season=season, window=f"{lo} ~ {hi_full}")
+    r["opex"] = r["opex_total"]
+    return r
 
 
 def calendar_year_finance(year):
-    """整個西曆年合計(2026-10 新增)——結構完全比照 season_finance(),只是窗口改成
-    1~12 月,給經營報表「依西曆年」檢視用。回傳 dict 用 year= 取代 season= 當 key
-    (模板沒有地方直接讀 fin.season,已確認安全)。"""
-    yr = str(int(year))
-    rev = q1(f"""SELECT COALESCE(SUM({REV_PAID}),0) v FROM "order" o
-                WHERE strftime('%Y',order_date)=? AND order_kind='銷售' AND {PAID_O}""", (yr,))["v"]
-    cogs = q1(f"""SELECT COALESCE(SUM(COALESCE(ol.line_cost,0)),0) v
-                 FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-                 JOIN product p ON p.product_id=ol.product_id
-                 WHERE strftime('%Y',o.order_date)=? AND o.order_kind='銷售' AND {PAID_O}""", (yr,))["v"]
-    ship_cost = q1("""SELECT COALESCE(SUM(shipping_cost_actual),0) v
-                       FROM "order" WHERE strftime('%Y',order_date)=? AND ship_payer='店家吸收'""", (yr,))["v"]
-    ret_gross, ret_cogs = _returns_agg(None, mode="calendar", year=int(year))
-    cogs_net = cogs - ret_cogs
-    net_rev = rev - ret_gross
-    lo, hi_full = f"{yr}-01", f"{yr}-12"
-    hi = min(hi_full, dt.date.today().strftime("%Y-%m"))  # 進行中的年度只算到這個月
-    ox_rows = opex_rows(lo, hi)
-    opex_v = sum(r["amt"] for r in ox_rows)
-    opex_n = len(set(r["ym"] for r in ox_rows))
-    gp = net_rev - cogs_net
-    return dict(year=int(year), window=f"{lo} ~ {hi_full}",
-                revenue=rev, returns=ret_gross, cogs=cogs_net,
-                gross_profit=gp, ship_cost=ship_cost,
-                opex=opex_v, opex_months=opex_n,
-                pretax=gp - ship_cost - opex_v,
-                margin=(gp / net_rev if net_rev else 0))
+    """整個西曆年合計(從總帳抓,2026-10-20):1~12 月;進行中的年度只算到今天。"""
+    yr = int(year)
+    hi = min(f"{yr}-12-31", dt.date.today().isoformat())
+    d = _ledger_pnl(f"{yr}-01-01", hi)
+    r = _pnl_result(d, year=yr, window=f"{yr}-01 ~ {yr}-12")
+    r["opex"] = r["opex_total"]
+    return r
 
 
 # ---------- 各產品線損益(v2 回合 6) -------------------------
@@ -837,13 +831,13 @@ def finance_summary(season=None, mode="season", year=None):
         ys = _year_list(year)
         if not ys:
             return dict(year=None, window="全部年度", revenue=0, returns=0, cogs=0, gross_profit=0,
-                        ship_cost=0, opex=0, opex_months=0, pretax=0, margin=0)
+                        ship_cost=0, nonop=0, opex=0, opex_months=0, pretax=0, margin=0)
         if len(ys) == 1:
             return calendar_year_finance(ys[0])
         parts = [calendar_year_finance(y) for y in ys]
         window = "全部年度" if ys == calendar_years() else "、".join(str(y) for y in ys) + " 年"
         agg = dict(year=None, window=window)
-        for f in ("revenue", "returns", "cogs", "gross_profit", "ship_cost", "opex", "opex_months", "pretax"):
+        for f in ("revenue", "returns", "cogs", "gross_profit", "ship_cost", "nonop", "opex", "opex_months", "pretax"):
             agg[f] = sum(p[f] for p in parts)
         net = agg["revenue"] - agg["returns"]
         agg["margin"] = agg["gross_profit"] / net if net else 0
@@ -851,13 +845,13 @@ def finance_summary(season=None, mode="season", year=None):
     ss = _season_list(season)
     if not ss:
         return dict(season=None, window="全部產季", revenue=0, returns=0, cogs=0, gross_profit=0,
-                    ship_cost=0, opex=0, opex_months=0, pretax=0, margin=0)
+                    ship_cost=0, nonop=0, opex=0, opex_months=0, pretax=0, margin=0)
     if len(ss) == 1:
         return season_finance(ss[0])
     parts = [season_finance(s) for s in ss]
     window = "全部產季" if ss == seasons() else "、".join(str(s) for s in ss) + " 產季"
     agg = dict(season=None, window=window)
-    for f in ("revenue", "returns", "cogs", "gross_profit", "ship_cost", "opex", "opex_months", "pretax"):
+    for f in ("revenue", "returns", "cogs", "gross_profit", "ship_cost", "nonop", "opex", "opex_months", "pretax"):
         agg[f] = sum(p[f] for p in parts)
     net = agg["revenue"] - agg["returns"]
     agg["margin"] = agg["gross_profit"] / net if net else 0

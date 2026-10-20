@@ -53,13 +53,7 @@
     <tfoot><tr><td colspan="3" class="r"><b>應收合計(含稅)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="2" class="muted" style="font-size:11px">成本:跟小農買這些貨的錢,自己填</td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
-  <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-    <label style="margin:0">成本付給小農的帳戶</label>
-    <select name="cost_payment_account" style="width:auto">
-      {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if (None or '現金') == a.name }}>{{ a.name }}</option>{% endfor %}
-    </select>
-    <span class="muted" style="font-size:11px">接單當天就付錢給小農:存檔時會記「借 採購成本 / 貸 應付帳款」再「借 應付帳款 / 貸 這個帳戶」</span>
-  </div>
+  <p class="muted" style="font-size:11px;margin-top:10px">成本記成「應付帳款」(欠小農);真的付錢給小農時,到左邊「應付帳款(付小農)」勾選付款。</p>
 </div>
 
 <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">

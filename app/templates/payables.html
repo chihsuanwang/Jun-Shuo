@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}應付帳款 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div>
+  <div class="sup">桂圓帳房 / 每天做的</div>
+  <h1 class="serif">應付帳款(付小農)</h1>
+</div></div>
+<hr class="rule">
+{% if request.query_params.get('paid') %}<div class="ok">已付款 {{ request.query_params.get('paid') }} 筆,總帳也已經記好。</div>{% endif %}
+<p class="muted" style="font-size:13px;margin:-4px 0 14px;line-height:1.7">
+  開訂單時,成本記成「借 採購成本 / 貸 應付帳款」(欠小農)。真的付錢給小農時,勾選那幾張訂單、按「付款」,
+  選從哪個帳戶付,系統記「借 應付帳款 / 貸 現金或銀行」。未付金額 = 成本 − 已付 − 還沒付時就退回小農的。
+</p>
+
+<form method="post" action="/payables/pay" id="payForm">
+<div class="card" style="overflow-x:auto;margin-bottom:16px">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+    <h3 class="serif">還沒付給小農的</h3>
+    <span class="muted" style="font-size:13px">共 {{ unpaid|length }} 筆 · {{ unpaid_total|money }} 元</span>
+  </div>
+  <table class="gl">
+    <thead><tr><th style="width:34px"><input type="checkbox" id="chkAll" style="width:auto"></th><th>交易紀錄號碼</th><th>交易日期</th><th>客戶</th><th data-num>成本</th><th data-num>已付</th><th data-num>退回小農</th><th data-num>未付</th></tr></thead>
+    <tbody>{% for r in unpaid %}
+      <tr>
+        <td><input type="checkbox" class="rchk" name="order_id" value="{{ r.order_id }}" data-amt="{{ r.due }}" style="width:auto"></td>
+        <td><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td><td>{{ r.order_date }}</td><td>{{ r.cust or '' }}</td>
+        <td class="r">{{ r.cost|money }}</td><td class="r">{{ r.paid|money }}</td><td class="r">{{ r.returned|money }}</td>
+        <td class="r neg"><b>{{ r.due|money }}</b></td>
+      </tr>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">沒有還沒付的。</td></tr>{% endfor %}</tbody>
+  </table>
+  {% if unpaid %}<button type="button" id="openPay" style="margin-top:12px">付款(勾選的)</button>
+  <span id="selSum" class="muted" style="font-size:12px;margin-left:8px"></span>{% endif %}
+</div>
+
+<style>#payBox[hidden]{display:none!important}</style>
+<div id="payBox" hidden style="position:fixed;inset:0;background:rgba(40,30,20,.35);z-index:50;display:flex;align-items:center;justify-content:center">
+  <div class="card" style="width:min(420px,92vw)">
+    <h3 class="serif">付款給小農</h3>
+    <p id="payInfo" style="font-size:13px"></p>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div><label>從哪個帳戶付</label><select name="payment_account">
+        {% for a in cash_accounts %}<option value="{{ a.name }}">{{ a.name }}</option>{% endfor %}</select></div>
+      <div><label>付款日</label><input type="date" name="purchase_date" value="{{ today }}"></div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px">
+      <button type="submit">確定付款</button>
+      <button type="button" class="ghost" id="closePay">取消</button>
+    </div>
+  </div>
+</div>
+</form>
+
+<form method="post" action="/bulk-delete" class="bulkdel" data-msg="">
+<input type="hidden" name="kind" value="goods_purchase"><input type="hidden" name="back" value="/payables">
+<div class="card" style="overflow-x:auto">
+  <h3 class="serif">已經付給小農的</h3>
+  {% include "_bulk_delete.html" %}
+  <table class="gl">
+    <thead><tr><th style="width:34px"><input type="checkbox" class="chkall" style="width:auto" title="全選"></th><th>付款日</th><th>交易紀錄號碼</th><th>客戶</th><th data-num>金額</th><th>付款帳戶</th><th>備註</th></tr></thead>
+    <tbody>{% for r in paid %}
+      <tr>
+        <td><input type="checkbox" name="id" value="{{ r.purchase_id }}" style="width:auto"></td>
+        <td>{{ r.purchase_date }}</td>
+        <td>{% if r.order_id %}<a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a>{% else %}—{% endif %}</td>
+        <td>{{ r.cust or '' }}</td><td class="r">{{ r.amount|money }}</td><td>{{ r.payment_account or '現金' }}</td>
+        <td class="muted">{{ r.note or '' }}</td>
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">還沒有付款紀錄。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+</form>
+
+<script>
+(function () {
+  var all = document.getElementById('chkAll'), box = document.getElementById('payBox'), open = document.getElementById('openPay');
+  var chks = function () { return [].slice.call(document.querySelectorAll('.rchk')); };
+  function sum() { var n = 0, s = 0; chks().forEach(function (c) { if (c.checked) { n++; s += +c.dataset.amt; } }); return [n, s]; }
+  function info() { var r = sum(); var el = document.getElementById('selSum'); if (el) el.textContent = r[0] ? '已勾選 ' + r[0] + ' 筆 · ' + Math.round(r[1]).toLocaleString() + ' 元' : ''; }
+  if (all) all.addEventListener('change', function () { chks().forEach(function (c) { c.checked = all.checked; }); info(); });
+  document.addEventListener('change', function (e) { if (e.target.classList.contains('rchk')) info(); });
+  if (open) open.addEventListener('click', function () {
+    var r = sum();
+    if (!r[0]) { alert('請先勾選要付款的訂單。'); return; }
+    document.getElementById('payInfo').textContent = '這 ' + r[0] + ' 筆一起付給小農,共 ' + Math.round(r[1]).toLocaleString() + ' 元。';
+    box.hidden = false;
+  });
+  document.getElementById('closePay') && document.getElementById('closePay').addEventListener('click', function () { box.hidden = true; });
+})();
+</script>
+{% endblock %}

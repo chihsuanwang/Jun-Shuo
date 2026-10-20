@@ -225,9 +225,12 @@ def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, c
                 code, name = COST_ACCOUNTS.get(pg, COST_DEFAULT)
                 legs.append(dict(account_code=code, account_name=name, debit=c, credit=0))
         legs.append(dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1], debit=0, credit=total_cost))
-        cash_code, cash_name = _cash_account(cost_payment_account)
-        legs.append(dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1], debit=total_cost, credit=0))
-        legs.append(dict(account_code=cash_code, account_name=cash_name, debit=0, credit=total_cost))
+        # 2026-10-20(1019 同仁問題第 1 條):成本的對方科目一律是應付帳款,不直接付現金;
+        # 付小農改到「應付帳款」頁(goods_purchase)。cost_payment_account 只剩舊資料轉換前會有值。
+        if cost_payment_account:
+            cash_code, cash_name = _cash_account(cost_payment_account)
+            legs.append(dict(account_code=AP_ACCOUNT[0], account_name=AP_ACCOUNT[1], debit=total_cost, credit=0))
+            legs.append(dict(account_code=cash_code, account_name=cash_name, debit=0, credit=total_cost))
     return legs
 
 
@@ -380,7 +383,8 @@ def compose_depreciation_entries(monthly_amount):
 RETURN_KINDS = ("退款", "退回小農")
 
 
-def compose_sales_return_entries(kind, amount, already_paid, payment_account=None, cost_account=None):
+def compose_sales_return_entries(kind, amount, already_paid, payment_account=None, cost_account=None,
+                                 to_payable=False):
     """訂單的退款 / 退貨(2026-10-16 起照 1015 版的成本做法):
     - 「退款」= 只退款不退貨,不管退多少一律算其他支出(暫記 6188-99,待同仁確認):
       借 其他支出 / 貸 現金或銀行(已收款,真的退錢)或應收帳款(還沒收款,少收這筆)。
@@ -393,8 +397,10 @@ def compose_sales_return_entries(kind, amount, already_paid, payment_account=Non
     cash_code, cash_name = _cash_account(payment_account)
     if kind == "退回小農":
         cost_account = cost_account or COST_DEFAULT[0]
+        # 2026-10-20:還沒付小農 → 直接少欠小農(借 應付帳款);已經付過 → 小農把錢退回帳戶(借 現金或銀行)
+        dr = AP_ACCOUNT if to_payable else (cash_code, cash_name)
         return [
-            dict(account_code=cash_code, account_name=cash_name, debit=amount, credit=0),
+            dict(account_code=dr[0], account_name=dr[1], debit=amount, credit=0),
             dict(account_code=cost_account, account_name=chart.name_of(cost_account), debit=0, credit=amount),
         ]
     legs = [dict(account_code=REFUND_LOSS_ACCOUNT[0], account_name=REFUND_LOSS_ACCOUNT[1],

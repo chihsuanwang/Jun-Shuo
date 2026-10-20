@@ -28,6 +28,7 @@
         <summary>每天做的</summary>
         <a href="/orders"    class="{{ 'on' if active=='order' }}">訂單</a>
         <a href="/receivables" class="{{ 'on' if active=='receivables' }}">應收帳款(收款)</a>
+        <a href="/payables" class="{{ 'on' if active=='payables' }}">應付帳款(付小農)</a>
         <a href="/finance/expenses" class="{{ 'on' if active=='expenses' }}">營運支出</a>
         <a href="/other-expenses" class="{{ 'on' if active=='otherexp' }}">其他支出</a>
       </details>
@@ -65,6 +66,7 @@
     </nav>
   </aside>
   <main class="main">
+    {% if request and request.query_params.get('locked') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這一年已經做過年度結轉,不能再新增、修改或刪除那一年的交易。要改請先到<a href="/ledger?tab=trial">試算表</a>撤銷結轉。</div>{% endif %}
     {% block body %}{% endblock %}
     <div class="stamp">桂圓帳房 · 測試版 · 畫面數字目前為示範假資料</div>
   </main>
@@ -80,6 +82,16 @@
     d.addEventListener('toggle', function () {
       try { localStorage.setItem(key, d.open ? '1' : '0'); } catch (e) {}
     });
+  });
+})();
+</script>
+<script>
+/* 已結轉的年度:日期選不到(2026-10-20,1019 同仁問題第 6 條);查詢用的日期欄位加 data-nolock 不限制 */
+(function () {
+  var m = "{{ lock_min() }}";
+  if (!m) return;
+  document.querySelectorAll('input[type=date]:not([data-nolock])').forEach(function (i) {
+    if (!i.min || i.min < m) i.min = m;
   });
 })();
 </script>
