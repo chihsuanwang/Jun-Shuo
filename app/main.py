@@ -212,6 +212,46 @@ def migrate_db():
                        SELECT entry_id, entry_date, amount, note, created_at FROM manual_entry_old""")
             execute("DROP TABLE manual_entry_old")
             print("[migrate] manual_entry 已換成多行")
+        # 2026-10-20:營業稅結算 / 繳納兩種傳票來源。SQLite 不能改 CHECK,總帳整張表在同一個交易裡
+        # 重建、資料照搬(不用清空網站資料庫)。
+        lsql = q1("SELECT sql FROM sqlite_master WHERE name='ledger_entry'").get("sql") or ""
+        if lsql and "goods_purchase" in lsql and "vat_settlement" not in lsql:
+            import sqlite3
+            cx = sqlite3.connect(_db.DB)
+            try:
+                cx.executescript("""BEGIN;
+                  CREATE TABLE ledger_entry_new (
+                    entry_id INTEGER PRIMARY KEY, voucher_no TEXT NOT NULL, entry_date TEXT NOT NULL,
+                    account_code TEXT NOT NULL, account_name TEXT NOT NULL,
+                    debit REAL NOT NULL DEFAULT 0, credit REAL NOT NULL DEFAULT 0,
+                    source_type TEXT NOT NULL CHECK (source_type IN ('op_expense','order_sale','order_payment',
+                      'goods_purchase','other_income','equity','manual_adjustment',
+                      'asset_acquire','asset_depreciation','sales_return','year_closing',
+                      'vat_settlement','vat_payment')),
+                    source_id INTEGER NOT NULL, note TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
+                  INSERT INTO ledger_entry_new(entry_id,voucher_no,entry_date,account_code,account_name,debit,credit,
+                                               source_type,source_id,note,created_at)
+                    SELECT entry_id,voucher_no,entry_date,account_code,account_name,debit,credit,
+                           source_type,source_id,note,created_at FROM ledger_entry;
+                  DROP TABLE ledger_entry;
+                  ALTER TABLE ledger_entry_new RENAME TO ledger_entry;
+                  CREATE INDEX ix_ledger_voucher ON ledger_entry(voucher_no);
+                  CREATE INDEX ix_ledger_source  ON ledger_entry(source_type, source_id);
+                  COMMIT;""")
+                print("[migrate] ledger_entry 加上營業稅結算 / 繳納來源")
+            except Exception:
+                cx.rollback()
+                raise
+            finally:
+                cx.close()
+        execute("""CREATE TABLE IF NOT EXISTS vat_period (period_id INTEGER PRIMARY KEY, year INTEGER NOT NULL,
+                   period INTEGER NOT NULL CHECK (period BETWEEN 1 AND 6), settle_date TEXT NOT NULL,
+                   output_tax REAL NOT NULL DEFAULT 0, input_tax REAL NOT NULL DEFAULT 0,
+                   credit_before REAL NOT NULL DEFAULT 0, payable REAL NOT NULL DEFAULT 0,
+                   credit_after REAL NOT NULL DEFAULT 0, paid_date TEXT, paid_account TEXT,
+                   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')), UNIQUE (year, period))""")
+        chart.apply_chart_additions()
         lsql = q1("SELECT sql FROM sqlite_master WHERE name='ledger_entry'").get("sql") or ""
         if lsql and "goods_purchase" not in lsql:
             print("[migrate] 警告:資料庫還是改版前的結構(有存貨/進貨那一版),"
@@ -1300,7 +1340,8 @@ def order_detail(request: Request, oid: int):
         pay_methods=PAY_METHODS, pay_status=PAY_STATUS,
         ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, kinds=ORDER_KINDS,
         cash_accounts=chart.accounts(["C"]),
-        va_accounts=chart.accounts(["VA"]),
+        # 退回小農沖的是各產品線的採購成本;「原料報廢損失」是退款用的,不列
+        va_accounts=[a for a in chart.accounts(["VA"]) if a["code"] != ledger.REFUND_LOSS_ACCOUNT[0]],
         returns=Q.returns_list(oid), return_kinds=ledger.RETURN_KINDS,
         order_cost=sum(l["line_cost"] or 0 for l in lines),
         today=dt.date.today().isoformat()))
@@ -1939,7 +1980,8 @@ async def adjustment_save(request: Request):
 LEDGER_SOURCES = {"order_sale": "訂單成立(含付小農)", "order_payment": "訂單收款",
                   "op_expense": "營運支出 / 其他支出", "other_income": "其他收益", "equity": "資本異動",
                   "manual_adjustment": "帳務調整", "asset_acquire": "設備取得", "asset_depreciation": "折舊",
-                  "sales_return": "退款 / 退回小農", "year_closing": "年度結轉"}
+                  "sales_return": "退款 / 退回小農", "year_closing": "年度結轉",
+                  "vat_settlement": "營業稅結算", "vat_payment": "營業稅繳納"}
 
 
 def _ledger_explain(code, debit, credit):
@@ -2012,6 +2054,7 @@ def _voucher_edit_url(source_type, source_id):
         "asset_acquire": f"/assets/{source_id}/edit",
         "asset_depreciation": f"/assets/{source_id}/edit",
         "year_closing": "/statements",
+        "vat_settlement": "/vat", "vat_payment": "/vat",
     }.get(source_type)
 
 
@@ -2167,6 +2210,99 @@ async def statements_reopen_year(request: Request):
     year = int(f.get("year"))
     ledger.delete_voucher_for("year_closing", year)
     return RedirectResponse(f"/statements?tab=trial&year={year}", status_code=303)
+
+
+# ---------- 營業稅結算(2026-10-20 同仁回覆待同仁確認第 6 題)------------------
+#   每兩個月一期。結算看「期末那天為止」的 2214 / 1423 / 1424 餘額(之前每期結算都會把 2214、1423
+#   歸零,所以餘額就是這期還沒結的部分)。只能照順序結:比最後一期已結算的還早的期別不能再結;
+#   撤銷只能撤最後一期、而且還沒繳納的。
+import calendar as _cal
+
+def _vat_range(year, p):
+    m1, m2 = 2 * p - 1, 2 * p
+    return f"{year}-{m1:02d}-01", f"{year}-{m2:02d}-{_cal.monthrange(year, m2)[1]:02d}"
+
+def _vat_balances(as_of):
+    def bal(code):
+        r = q1("SELECT COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0) b FROM ledger_entry WHERE account_code=? AND entry_date<=?",
+               (code, as_of))
+        return round(r.get("b") or 0, 2)
+    return dict(output_tax=-bal("2214"), input_tax=bal("1423"), credit_before=bal("1424"))
+
+def _vat_latest():
+    return q1("SELECT * FROM vat_period ORDER BY year DESC, period DESC LIMIT 1") or None
+
+@app.get("/vat", response_class=HTMLResponse)
+def vat_page(request: Request):
+    today = dt.date.today().isoformat()
+    years = sorted(set(Q.statement_years()) | {dt.date.today().year})
+    yv = request.query_params.get("year")
+    year = int(yv) if yv and yv.isdigit() else dt.date.today().year
+    done = {r["period"]: r for r in q("SELECT * FROM vat_period WHERE year=?", (year,))}
+    latest = _vat_latest()
+    rows = []
+    for p in range(1, 7):
+        lo, hi = _vat_range(year, p)
+        r = dict(period=p, label=f"{2 * p - 1}–{2 * p} 月", lo=lo, hi=hi)
+        if p in done:
+            r.update(done[p], settled=True)
+            r["can_reopen"] = latest and latest["period_id"] == done[p]["period_id"] and not done[p]["paid_date"]
+        else:
+            b = _vat_balances(hi)
+            _, payable, credit_after = ledger.compose_vat_settlement_entries(**b)
+            r.update(b, payable=payable, credit_after=credit_after, settled=False,
+                     future=lo > today,
+                     blocked=bool(latest and (latest["year"], latest["period"]) > (year, p)))
+        rows.append(r)
+    return tpl.TemplateResponse("vat.html", dict(
+        request=request, active="statement", year=year, years=years, rows=rows,
+        cash_accounts=chart.accounts(["C"]), today=today))
+
+@app.post("/vat/settle")
+async def vat_settle(request: Request):
+    f = await request.form()
+    year, p = int(f.get("year")), int(f.get("period"))
+    latest = _vat_latest()
+    if latest and (latest["year"], latest["period"]) >= (year, p):
+        return RedirectResponse(f"/vat?year={year}&err=order", status_code=303)
+    lo, hi = _vat_range(year, p)
+    b = _vat_balances(hi)
+    legs, payable, credit_after = ledger.compose_vat_settlement_entries(**b)
+    pid = execute("""INSERT INTO vat_period(year,period,settle_date,output_tax,input_tax,credit_before,payable,credit_after)
+                     VALUES(?,?,?,?,?,?,?,?)""",
+                  (year, p, hi, b["output_tax"], b["input_tax"], b["credit_before"], payable, credit_after))
+    ledger.save_voucher("vat_settlement", pid, hi, legs, note=f"營業稅結算 {year} 年 {2 * p - 1}–{2 * p} 月")
+    return RedirectResponse(f"/vat?year={year}&ok=settled", status_code=303)
+
+@app.post("/vat/{pid}/reopen")
+async def vat_reopen(pid: int):
+    r = q1("SELECT * FROM vat_period WHERE period_id=?", (pid,))
+    latest = _vat_latest()
+    if r and latest and latest["period_id"] == pid and not r["paid_date"]:
+        ledger.delete_voucher_for("vat_settlement", pid)
+        execute("DELETE FROM vat_period WHERE period_id=?", (pid,))
+    return RedirectResponse(f"/vat?year={r['year'] if r else ''}", status_code=303)
+
+@app.post("/vat/{pid}/pay")
+async def vat_pay(request: Request, pid: int):
+    f = await request.form()
+    r = q1("SELECT * FROM vat_period WHERE period_id=?", (pid,))
+    if not r or r["payable"] <= 0:
+        return RedirectResponse("/vat", status_code=303)
+    date = (f.get("paid_date") or "").strip() or dt.date.today().isoformat()
+    acct = (f.get("paid_account") or "").strip() or "現金"
+    execute("UPDATE vat_period SET paid_date=?, paid_account=? WHERE period_id=?", (date, acct, pid))
+    ledger.save_voucher("vat_payment", pid, date, ledger.compose_vat_payment_entries(r["payable"], acct),
+                        note=f"繳納營業稅 {r['year']} 年 {2 * r['period'] - 1}–{2 * r['period']} 月")
+    return RedirectResponse(f"/vat?year={r['year']}&ok=paid", status_code=303)
+
+@app.post("/vat/{pid}/unpay")
+async def vat_unpay(pid: int):
+    r = q1("SELECT * FROM vat_period WHERE period_id=?", (pid,))
+    if r:
+        ledger.delete_voucher_for("vat_payment", pid)
+        execute("UPDATE vat_period SET paid_date=NULL, paid_account=NULL WHERE period_id=?", (pid,))
+    return RedirectResponse(f"/vat?year={r['year'] if r else ''}", status_code=303)
 
 
 # ---------- 銀行帳戶明細(現金 / 各銀行帳戶,依科目篩選總帳)---

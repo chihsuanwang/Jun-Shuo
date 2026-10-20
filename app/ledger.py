@@ -136,7 +136,9 @@ COST_DEFAULT = ("5111-02", "採購成本-龍眼乾")
 
 # 只退款不退貨(2026-10-08):不管退多少一律算其他支出。同事會計科目表沒有「其他支出」,
 # 先用最接近的 6499 其他損失;之後拿到完整科目表再改這裡就好。
-REFUND_LOSS_ACCOUNT = ("6188-99", "其他費用-其他")   # 2026-10-16:暫定,待同仁確認
+REFUND_LOSS_ACCOUNT = ("5111-2150-03", "原料報廢損失")   # 2026-10-20 同仁回覆(原本暫記 6188-99)
+VAT_PAYABLE_ACCOUNT = ("2215", "應付營業稅")
+TAX_CREDIT_ACCOUNT = ("1424", "留抵稅額")
 
 # 產品線 -> 銷貨收入科目(貸方)。沒歸屬產品線的商品用 REVENUE_DEFAULT。
 REVENUE_ACCOUNTS = {
@@ -402,6 +404,42 @@ def compose_sales_return_entries(kind, amount, already_paid, payment_account=Non
     else:
         legs.append(dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=0, credit=amount))
     return legs
+
+
+def compose_vat_settlement_entries(output_tax, input_tax, credit_before):
+    """營業稅結算(每兩個月一期,2026-10-20):本期應納 = 銷項 − 進項 − 上期留抵。
+    借 2214 銷項稅額(歸零)/ 貸 1423 進項稅額(歸零);
+    應納 > 0:貸 1424 用掉全部留抵 + 貸 2215 應付營業稅;應納 ≤ 0:1424 留抵調成「進項 + 留抵 − 銷項」。
+    回傳 (legs, payable, credit_after)。"""
+    out_tax, in_tax, credit = round(output_tax or 0, 2), round(input_tax or 0, 2), round(credit_before or 0, 2)
+    net = round(out_tax - in_tax - credit, 2)
+    payable = net if net > 0 else 0.0
+    credit_after = 0.0 if net > 0 else round(-net, 2)
+    legs = []
+    if out_tax:
+        legs.append(dict(account_code=SALES_TAX_OUTPUT_ACCOUNT[0], account_name=SALES_TAX_OUTPUT_ACCOUNT[1],
+                         debit=out_tax, credit=0))
+    if in_tax:
+        legs.append(dict(account_code=TAX_INPUT_ACCOUNT[0], account_name=TAX_INPUT_ACCOUNT[1],
+                         debit=0, credit=in_tax))
+    delta = round(credit_after - credit, 2)       # 1424 要變動多少
+    if delta:
+        legs.append(dict(account_code=TAX_CREDIT_ACCOUNT[0], account_name=TAX_CREDIT_ACCOUNT[1],
+                         debit=delta if delta > 0 else 0, credit=-delta if delta < 0 else 0))
+    if payable:
+        legs.append(dict(account_code=VAT_PAYABLE_ACCOUNT[0], account_name=VAT_PAYABLE_ACCOUNT[1],
+                         debit=0, credit=payable))
+    return legs, payable, credit_after
+
+
+def compose_vat_payment_entries(amount, payment_account=None):
+    """繳納營業稅:借 2215 應付營業稅 / 貸 現金或銀行。"""
+    amount = amount or 0
+    if amount <= 0:
+        return []
+    cash_code, cash_name = _cash_account(payment_account)
+    return [dict(account_code=VAT_PAYABLE_ACCOUNT[0], account_name=VAT_PAYABLE_ACCOUNT[1], debit=amount, credit=0),
+            dict(account_code=cash_code, account_name=cash_name, debit=0, credit=amount)]
 
 
 def compose_year_closing_entries(year):

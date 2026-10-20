@@ -330,13 +330,33 @@ CREATE TABLE ledger_entry (
   credit       REAL NOT NULL DEFAULT 0,
   source_type  TEXT NOT NULL CHECK (source_type IN ('op_expense','order_sale','order_payment',
                  'goods_purchase','other_income','equity','manual_adjustment',
-                 'asset_acquire','asset_depreciation','sales_return','year_closing')),
+                 'asset_acquire','asset_depreciation','sales_return','year_closing',
+                 'vat_settlement','vat_payment')),
   source_id    INTEGER NOT NULL,       -- 對應來源資料表的主鍵(例:op_expense.expense_id)
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX ix_ledger_voucher ON ledger_entry(voucher_no);
 CREATE INDEX ix_ledger_source  ON ledger_entry(source_type, source_id);
+
+-- 營業稅結算(2026-10-20 同仁回覆待同仁確認第 6 題):每兩個月一期(1=1~2 月 … 6=11~12 月)。
+--   結算:借 2214 銷項稅額 / 貸 1423 進項稅額,差額用掉 1424 留抵,還不夠就貸 2215 應付營業稅;
+--   進項比較多就借 1424 留到下期。繳納:借 2215 / 貸 現金或銀行。
+CREATE TABLE vat_period (
+  period_id     INTEGER PRIMARY KEY,
+  year          INTEGER NOT NULL,
+  period        INTEGER NOT NULL CHECK (period BETWEEN 1 AND 6),
+  settle_date   TEXT NOT NULL,          -- 期末那天(傳票日期)
+  output_tax    REAL NOT NULL DEFAULT 0, -- 結算時 2214 銷項稅額餘額
+  input_tax     REAL NOT NULL DEFAULT 0, -- 結算時 1423 進項稅額餘額
+  credit_before REAL NOT NULL DEFAULT 0, -- 結算前 1424 留抵稅額餘額
+  payable       REAL NOT NULL DEFAULT 0, -- 這期要繳的營業稅(記 2215)
+  credit_after  REAL NOT NULL DEFAULT 0, -- 結算後留到下期的留抵稅額
+  paid_date     TEXT,
+  paid_account  TEXT,                    -- C 組帳戶名稱
+  created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  UNIQUE (year, period)
+);
 
 -- 20. 其他收益(9 宮格 B 類,2026-09) ---------------------------------
 --     不屬於訂單銷售的現金收入,例:利息收入、政府補助收入。

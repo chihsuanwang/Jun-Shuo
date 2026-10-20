@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}營業稅結算 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/statements">財務報表</a> / 營業稅結算</div><h1 class="serif">營業稅結算</h1></div>
+  <form method="get" action="/vat"><select name="year" onchange="this.form.submit()" style="width:auto">
+    {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }} 年</option>{% endfor %}
+  </select></form>
+</div>
+<hr class="rule">
+{% set qp = request.query_params %}
+{% if qp.get('ok') == 'settled' %}<div class="ok">已結算,總帳也已經記好。</div>{% endif %}
+{% if qp.get('ok') == 'paid' %}<div class="ok">已記繳納。</div>{% endif %}
+{% if qp.get('err') == 'order' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">要照順序結算:比最後一期已結算的還早的期別不能再結。</div>{% endif %}
+<p class="muted" style="font-size:13px;margin:-4px 0 16px;line-height:1.7">
+  每兩個月一期。按「結算」時,系統看到期末那天為止的 <b>銷項稅額(2214)</b>、<b>進項稅額(1423)</b>、
+  <b>上期留抵(1424)</b>:本期應納 = 銷項 − 進項 − 上期留抵。<br>
+  大於 0 → 記「應付營業稅(2215)」,繳稅之後按「繳納」選從哪個帳戶付;小於 0 → 差額留抵到下一期。
+  結算後這期的銷項、進項歸零。要照順序結;撤銷只能撤最後一期、還沒繳納的。
+</p>
+<div class="card" style="overflow-x:auto">
+  <table class="vt">
+    <thead><tr><th>期別</th><th>期間</th><th data-num>銷項稅額</th><th data-num>進項稅額</th><th data-num>上期留抵</th>
+      <th data-num>應納營業稅</th><th data-num>留到下期</th><th style="text-align:left">狀態</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ year }} {{ r.label }}</td>
+        <td class="muted" style="font-size:12px">{{ r.lo }} ~ {{ r.hi }}</td>
+        {% if r.blocked %}
+        <td class="r muted">—</td><td class="r muted">—</td><td class="r muted">—</td><td class="r muted">—</td><td class="r muted">—</td>
+        {% else %}
+        <td class="r">{{ r.output_tax|money }}</td>
+        <td class="r">{{ r.input_tax|money }}</td>
+        <td class="r">{{ r.credit_before|money }}</td>
+        <td class="r" style="font-weight:700">{{ r.payable|money }}</td>
+        <td class="r">{{ r.credit_after|money }}</td>
+        {% endif %}
+        <td style="text-align:left">
+          {% if r.settled %}
+            已結算{% if r.payable > 0 %} · {% if r.paid_date %}已繳 {{ r.paid_date }}({{ r.paid_account }}){% else %}<span class="neg">未繳</span>{% endif %}{% endif %}
+          {% elif r.blocked %}<span class="muted">已併入後面那期結算</span>
+          {% elif r.future %}<span class="muted">還沒到</span>
+          {% else %}<span class="muted">未結算(預估)</span>{% endif %}
+        </td>
+        <td style="white-space:nowrap">
+          {% if r.settled %}
+            {% if r.payable > 0 and not r.paid_date %}
+            <form method="post" action="/vat/{{ r.period_id }}/pay" style="display:inline-flex;gap:6px;align-items:center">
+              <input type="date" name="paid_date" value="{{ today }}" style="width:auto;padding:4px 6px">
+              <select name="paid_account" style="width:auto;padding:4px 6px">
+                {% for a in cash_accounts %}<option value="{{ a.name }}">{{ a.name }}</option>{% endfor %}
+              </select>
+              <button type="submit">繳納</button>
+            </form>
+            {% elif r.paid_date %}
+            <form method="post" action="/vat/{{ r.period_id }}/unpay" style="display:inline" onsubmit="return confirm('撤銷這期的繳納紀錄?')">
+              <button type="submit" class="ghost">撤銷繳納</button></form>
+            {% endif %}
+            {% if r.can_reopen %}
+            <form method="post" action="/vat/{{ r.period_id }}/reopen" style="display:inline" onsubmit="return confirm('撤銷這期的結算?總帳的結算傳票會一起刪掉。')">
+              <button type="submit" class="ghost">撤銷結算</button></form>
+            {% endif %}
+          {% elif not r.future and not r.blocked %}
+            <form method="post" action="/vat/settle" style="display:inline"
+                  onsubmit="return confirm('結算 {{ year }} 年 {{ r.label }}?應納 {{ r.payable|money }} 元,留到下期 {{ r.credit_after|money }} 元。')">
+              <input type="hidden" name="year" value="{{ year }}"><input type="hidden" name="period" value="{{ r.period }}">
+              <button type="submit">結算</button></form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="muted" style="font-size:11px;margin-top:8px">「未結算(預估)」的數字是現在按結算會記的金額;還沒結算前,總帳不會有這筆。</p>
+{% endblock %}

@@ -11,6 +11,7 @@
       </select>
     </form>
     <div style="margin-top:8px">
+      <a href="/vat?year={{ year }}" style="margin-right:8px"><button type="button" class="ghost">營業稅結算</button></a>
       {% if closed %}
       <form method="post" action="/statements/reopen-year"
             onsubmit="return confirm('確定撤銷 {{ year }} 年度結轉?')" style="display:inline">
