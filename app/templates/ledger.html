@@ -40,15 +40,15 @@
       <tr>
         <th style="width:34px"></th>
         <th data-k="v" data-t="s" class="sortable">傳票號碼</th>
-        <th data-k="d" data-t="s" class="sortable">交易日期</th>
+        <th data-k="d" data-t="s" class="sortable">帳務日期</th>
         <th data-k="c" data-t="s" class="sortable">科目代碼</th>
-        <th data-k="n" data-t="s" class="sortable">會計項目</th>
-        <th data-k="i" data-t="s" class="sortable">識別碼</th>
-        <th data-k="dr" data-t="n" class="sortable" data-num>借方</th>
-        <th data-k="cr" data-t="n" class="sortable" data-num>貸方</th>
-        <th data-k="a" data-t="n" class="sortable" data-num>異動金額</th>
-        <th data-k="x" data-t="s" class="sortable">解釋</th>
+        <th data-k="n" data-t="s" class="sortable">科目名稱</th>
         <th data-k="m" data-t="s" class="sortable">備註</th>
+        <th data-k="dr" data-t="n" class="sortable" data-num>借方金額</th>
+        <th data-k="cr" data-t="n" class="sortable" data-num>貸方金額</th>
+        <th data-k="a" data-t="n" class="sortable" data-num>異動金額(借減貸)</th>
+        <th data-k="i" data-t="s" class="sortable">識別碼</th>
+        <th data-k="x" data-t="s" class="sortable">解釋</th>
       </tr>
       <tr class="filters">
         <th></th>
@@ -58,9 +58,10 @@
           <option value="">全部科目</option>
           {% for code, name in accts %}<option value="{{ code }}">{{ code }} {{ name }}</option>{% endfor %}
         </select></th>
-        <th><input data-f="i" placeholder="篩選"></th>
-        <th></th><th></th><th></th><th></th>
         <th><input data-f="m" placeholder="篩選"></th>
+        <th></th><th></th><th></th>
+        <th><input data-f="i" placeholder="篩選"></th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -73,12 +74,12 @@
         <td>{{ r.entry_date }}</td>
         <td>{{ r.account_code }}</td>
         <td>{{ r.account_name }}</td>
-        <td>{{ r.invoice_no }}</td>
+        <td class="muted">{{ r.note or '' }}</td>
         <td class="r">{{ r.debit|money if r.debit else '' }}</td>
         <td class="r">{{ r.credit|money if r.credit else '' }}</td>
         <td class="r {{ 'neg' if r.amount < 0 }}">{% if r.amount < 0 %}({{ (-r.amount)|money }}){% else %}{{ r.amount|money }}{% endif %}</td>
+        <td>{{ r.invoice_no }}</td>
         <td>{{ r.explain }}</td>
-        <td class="muted">{{ r.note or '' }}</td>
       </tr>
     {% else %}
       <tr><td colspan="11" class="muted" style="text-align:left">還沒有分錄。開一張訂單或記一筆營運支出,存檔後就會出現在這裡。</td></tr>

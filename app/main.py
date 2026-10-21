@@ -2124,14 +2124,15 @@ def _ledger_rows(src):
     return rows
 
 
-LEDGER_CSV_HEAD = ["傳票號碼", "交易日期", "科目代碼", "會計項目", "識別碼", "借方", "貸方", "異動金額", "解釋", "備註"]
+# 欄位照同仁給的「總帳明細」格式(2026-10-21);「解釋」是 1001 第 3 條要的,放最後
+LEDGER_CSV_HEAD = ["傳票號碼", "帳務日期", "科目代碼", "科目名稱", "備註", "借方金額", "貸方金額", "異動金額(借減貸)", "識別碼", "解釋"]
 
 @app.get("/ledger.csv")
 def ledger_csv(request: Request):
     """總帳下載(1019 同仁問題第 7 條):跟畫面同欄位,依傳票號碼排。"""
     src = request.query_params.get("source") or ""
-    rows = [[r["voucher_no"], r["entry_date"], r["account_code"], r["account_name"], r["invoice_no"],
-             round(r["debit"] or 0), round(r["credit"] or 0), round(r["amount"]), r["explain"], r["note"] or ""]
+    rows = [[r["voucher_no"], r["entry_date"], r["account_code"], r["account_name"], r["note"] or "",
+             round(r["debit"] or 0), round(r["credit"] or 0), round(r["amount"]), r["invoice_no"], r["explain"]]
             for r in _ledger_rows(src)]
     return csv_response(f"總帳_{dt.date.today().isoformat()}.csv", LEDGER_CSV_HEAD, rows)
 
@@ -2288,12 +2289,13 @@ def trial_balance_csv(request: Request):
     """試算表下載:跟畫面一樣(期初、本期借貸、期末,借正貸負)。"""
     year, _ = _trial_year(request)
     tb = Q.trial_balance(year)
-    rows = [[r["account_code"], r["account_name"] + ("(算出來的,不計入檢核)" if r["synthetic"] else ""),
+    rows = [[year, r["account_code"], r["account_name"] + ("(算出來的,不計入檢核)" if r["synthetic"] else ""),
              "" if r["synthetic"] else round(r["open_bal"]), "" if r["synthetic"] else round(r["dr"]),
              "" if r["synthetic"] else round(r["cr"]), round(r["close_bal"])] for r in tb["rows"]]
-    rows += [[], ["", "合計(不含本期損益)", round(tb["total_open"]), round(tb["total_dr"]), round(tb["total_cr"]),
-                  round(tb["check"])], ["", "檢核:期末餘額加總(應該 = 0)", "", "", "", round(tb["check"])]]
-    return csv_response(f"試算表_{year}年.csv", ["科目代碼", "科目名稱", "期初餘額", "本期借方", "本期貸方", "期末餘額"], rows)
+    rows += [[], ["", "", "合計(不含本期損益)", round(tb["total_open"]), round(tb["total_dr"]), round(tb["total_cr"]),
+                  round(tb["check"])], ["", "", "檢核:期末餘額加總(應該 = 0)", "", "", "", round(tb["check"])]]
+    # 欄位照同仁給的「試算表」格式(2026-10-21)
+    return csv_response(f"試算表_{year}年.csv", ["期別", "科目代碼", "科目名稱", "期初餘額", "借方金額", "貸方金額", "期末餘額"], rows)
 
 @app.post("/statements/close-year")
 async def statements_close_year(request: Request):

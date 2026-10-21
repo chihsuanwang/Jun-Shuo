@@ -274,10 +274,10 @@ def opx(ym, cat, amt, pgname=None, amort=None):
     """2026-10-16:營運費用的項目就是 VD 科目;示範資料沿用原本的類別,這裡換成對應科目。"""
     code = _OPX_CODE[cat]
     c.execute("""INSERT INTO op_expense(expense_date,ym,category,account_code,amount,product_group_id,amortize_months,payment_account)
-                 VALUES(?,?,?,?,?,?,?,?)""", (ym + "-01", ym, chart.name_of(code), code, amt, pg.get(pgname), amort, "現金"))
+                 VALUES(?,?,?,?,?,?,?,?)""", (ym + "-01", ym, chart.name_of(code), code, amt, pg.get(pgname), amort, "合庫"))   # 示範:營運支出從合庫付(2026-10-21)
     eid = c.lastrowid
     # 2026-10-20:每筆營運支出都記傳票(以前示範資料只有研發、檢驗費兩筆有,財務健康改從總帳抓後會少算)
-    add_voucher(ym + "-01", ledger.compose_expense_entries(code, amt, 0, "現金"), "op_expense", eid,
+    add_voucher(ym + "-01", ledger.compose_expense_entries(code, amt, 0, "合庫"), "op_expense", eid,
                 f"營運支出:{chart.name_of(code)}")
     return eid
 
@@ -307,9 +307,9 @@ for name, cat, pgname, adate, cost, tax, months in assets:
                  grant_amount,salvage,tax_amount,life_years,life_months,method,payment_account,note)
                  VALUES(?,?,?,?,?,0,0,?,?,?,?,?,?)""",
               (name, cat, pg.get(pgname), adate, cost, tax, months // 12, months, "平均法",
-               "現金", None))
+               "合庫", None))
     asset_id = c.lastrowid
-    legs = ledger.compose_asset_acquire_entries(cat, cost, tax, "現金")
+    legs = ledger.compose_asset_acquire_entries(cat, cost, tax, "合庫")
     add_voucher(adate, legs, "asset_acquire", asset_id, f"設備取得:{name}")
     # 折舊分錄留給 /assets 頁第一次打開時自動補上(sync_depreciation_vouchers),
     # 這裡不預先寫,才是走跟真實使用一樣的路徑
@@ -322,9 +322,9 @@ legs = ledger.compose_other_income_entries("7101", 85, 0, "合庫")
 add_voucher("2026-08-31", legs, "other_income", inc_id, "其他收益示範")
 
 c.execute("""INSERT INTO equity_txn(txn_date,txn_type,amount,payment_account,equity_account,note)
-             VALUES(?,?,?,?,?,?)""", ("2025-04-01", "增資", 50000, "現金", "3110", "示範:開業資本額出資"))
+             VALUES(?,?,?,?,?,?)""", ("2025-04-01", "增資", 1000000, "合庫", "3110", "示範:開業資本額出資(存進合庫)"))
 eq_id = c.lastrowid
-legs = ledger.compose_equity_entries("增資", 50000, "現金", "3110")
+legs = ledger.compose_equity_entries("增資", 1000000, "合庫", "3110")
 add_voucher("2025-04-01", legs, "equity", eq_id, "資本異動示範")
 
 bank_code, bank_name = chart.cash_account("合庫")   # 1103-01,依會計科目表

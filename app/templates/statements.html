@@ -34,24 +34,24 @@
 <hr class="rule">
 {% include "_book_tabs.html" %}
 <p class="muted" style="font-size:13px;margin:-4px 0 16px;line-height:1.7">
-  {{ tb.lo }} ~ {{ tb.hi }}。<b>期初餘額</b> = 前一年底為止的累計;<b>期末餘額</b> = 期初 + 本期借方 − 本期貸方。
+  {{ tb.lo }} ~ {{ tb.hi }}。<b>期初餘額</b> = 前一年底為止的累計;<b>期末餘額</b> = 期初 + 借方金額 − 貸方金額。
   <b>金額借方是正、貸方是負</b>(負債、權益、收入的餘額是負數),所以全部科目的期末餘額加總應該 = 0。<br>
   「3353 本期損益」= 這一年 4~7 開頭科目的淨額(一樣借正貸負,有賺是負數),是算出來的,不算進合計跟檢核。
 </p>
 <div class="card stmt-card" style="margin-bottom:16px">
   <table class="stmt">
-    <colgroup><col class="c-code"><col class="c-name"><col class="c-amt"><col class="c-amt"><col class="c-amt"><col class="c-amt"></colgroup>
-    <thead><tr><th>科目代碼</th><th>科目名稱</th><th data-num>期初餘額</th><th data-num>本期借方</th><th data-num>本期貸方</th><th data-num>期末餘額</th></tr></thead>
+    <colgroup><col style="width:64px"><col class="c-code"><col class="c-name"><col class="c-amt"><col class="c-amt"><col class="c-amt"><col class="c-amt"></colgroup>
+    <thead><tr><th>期別</th><th style="text-align:left">科目代碼</th><th style="text-align:left">科目名稱</th><th data-num>期初餘額</th><th data-num>借方金額</th><th data-num>貸方金額</th><th data-num>期末餘額</th></tr></thead>
     <tbody>{% for r in tb.rows %}
       <tr style="{{ 'background:var(--paper-2)' if r.synthetic }}">
-        <td>{{ r.account_code }}</td><td>{{ r.account_name }}{{ '(算出來的)' if r.synthetic }}</td>
+        <td>{{ tb.year }}</td><td style="text-align:left">{{ r.account_code }}</td><td style="text-align:left">{{ r.account_name }}{{ '(算出來的)' if r.synthetic }}</td>
         <td class="r {{ 'neg' if r.open_bal and r.open_bal < 0 }}">{{ '—' if r.synthetic else r.open_bal|money }}</td>
         <td class="r">{{ '—' if r.synthetic else r.dr|money }}</td>
         <td class="r">{{ '—' if r.synthetic else r.cr|money }}</td>
         <td class="r {{ 'neg' if r.close_bal < 0 }}">{{ r.close_bal|money }}</td>
       </tr>
     {% endfor %}</tbody>
-    <tfoot><tr class="sum"><td></td><td>合計(不含本期損益)</td>
+    <tfoot><tr class="sum"><td></td><td></td><td>合計(不含本期損益)</td>
       <td class="r">{{ tb.total_open|money }}</td><td class="r">{{ tb.total_dr|money }}</td>
       <td class="r">{{ tb.total_cr|money }}</td><td class="r">{{ tb.check|money }}</td></tr></tfoot>
   </table>
