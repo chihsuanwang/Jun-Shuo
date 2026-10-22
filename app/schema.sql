@@ -184,10 +184,10 @@ CREATE TABLE order_line (
   list_price      REAL,                           -- 當下標準價(帶入自 price_list)
   line_discount   REAL    NOT NULL DEFAULT 0,
   line_subtotal   REAL    NOT NULL DEFAULT 0,     -- qty*unit_price - line_discount
-  line_cost       REAL NOT NULL DEFAULT 0,        -- 這一列的成本(2026-10-16:家易每張訂單自己填,系統不算;
-                                                  -- 記「借 採購成本(依產品線)/ 貸 應付帳款」,也是毛利的成本)
-  unit_cost       REAL,                           -- 舊欄位:開單當下的商品單位成本(2026-10-08),2026-10-16 起不用;
-                                                  -- 舊訂單照當初的成本算,欠小農的金額不會跟著變;NULL 才退回用商品目錄的
+  line_cost       REAL NOT NULL DEFAULT 0,        -- 這一列的成本總額 = 數量 × 成本移轉價(每單位),到小數 2 位;
+                                                  -- 記「借 採購成本(依產品線)/ 貸 應付帳款」,也是毛利的成本(總帳 / 報表都讀這欄)
+  unit_cost       REAL,                           -- 成本移轉價(每單位):2026-10-22 起存家易輸入的原值,編輯畫面帶回用;
+                                                  -- 舊資料可能是 NULL 或舊 migration 從商品目錄帶的值,跟 line_cost 對不上時以 line_cost 為準
   is_gift         INTEGER NOT NULL DEFAULT 0 CHECK (is_gift IN (0,1)),
   expiry_stated   TEXT                            -- 歷史「保存期限」原值,保留欄
 );

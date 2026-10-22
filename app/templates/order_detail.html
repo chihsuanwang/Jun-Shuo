@@ -39,7 +39,7 @@
 {% if request.query_params.get('shiperr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">出貨狀態選了「已出貨」,但出貨方式 / 出貨日沒填——請在下面「出貨」卡補上,或改用上面「標記已出貨」按鈕。</div>{% endif %}
 {% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
-{% if request.query_params.get('err') == 'cost' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">每一列都要填「成本移轉價」(跟小農買一個單位多少錢),不能是 0 或留空,請補上再存檔。</div>{% endif %}
+{% if request.query_params.get('err') == 'cost' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單每一列都要填「成本移轉價」(跟小農買一個單位多少錢),不能是 0 或留空,請補上再存檔。</div>{% endif %}
 
 <form method="post" action="/orders/{{ o.order_id }}" id="orderForm">
 
@@ -59,19 +59,19 @@
 <div class="card" style="margin-bottom:16px">
   <h3 class="serif">品項</h3>
   <table>
-    <thead><tr><th>品項</th><th>數量</th><th>單價</th><th>小計</th><th>成本移轉價<span class="muted">(每單位,必填)</span></th><th>成本移轉價小計</th><th>贈品</th><th></th></tr></thead>
+    <thead><tr><th>品項</th><th>數量</th><th>單價</th><th style="white-space:nowrap">小計</th><th style="white-space:nowrap">成本移轉價<div class="muted" style="font-size:11px;font-weight:normal">每單位,必填</div></th><th style="white-space:nowrap">移轉價小計</th><th>贈品</th><th></th></tr></thead>
     <tbody id="lines">
     {% for l in lines %}
       <tr class="line">
         <td><select name="product_id">
           {% for p in products %}<option value="{{ p.product_id }}" {{ 'selected' if p.product_id==l.product_id }}>{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
         </select></td>
-        <td><input name="qty" type="number" step="1" min="0" value="{{ l.qty|round(0)|int }}"></td>
-        <td><input name="unit_price" type="number" step="1" min="0" value="{{ l.unit_price|round(0) }}"></td>
+        <td><input name="qty" type="number" step="any" min="0" value="{{ l.qty|plain_num }}"></td>
+        <td><input name="unit_price" type="number" step="any" min="0" value="{{ l.unit_price|plain_num }}"></td>
         <td class="linesub r">{{ (l.qty * l.unit_price)|round(0)|int }}</td>
-        <td><input name="unit_cost" type="number" step="1" min="0" value="{{ ((l.line_cost or 0) / l.qty)|round(0)|int if l.qty else 0 }}" style="width:100px"></td>
+        <td><input name="unit_cost" type="number" step="any" min="0" value="{{ l|unit_cost_value }}" style="width:100px"></td>
         <td class="linecost r">{{ (l.line_cost or 0)|round(0)|int }}</td>
-        <td><select name="is_gift"><option>否</option><option {{ 'selected' if l.is_gift }}>是</option></select></td>
+        <td><select name="is_gift" style="min-width:72px"><option>否</option><option {{ 'selected' if l.is_gift }}>是</option></select></td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
       </tr>
     {% endfor %}
@@ -81,9 +81,9 @@
         <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
         <td class="linesub r">0</td>
-        <td><input name="unit_cost" type="number" step="1" min="0" placeholder="每單位" style="width:100px"></td>
+        <td><input name="unit_cost" type="number" step="any" min="0" placeholder="每單位" style="width:100px"></td>
         <td class="linecost r">0</td>
-        <td><select name="is_gift"><option>否</option><option>是</option></select></td>
+        <td><select name="is_gift" style="min-width:72px"><option>否</option><option>是</option></select></td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
       </tr>
     {% endif %}
@@ -238,6 +238,22 @@
     if (e.target.name === 'is_gift') recalc();
   });
   if (shipCostInput) shipCostInput.addEventListener('input', recalc);
+
+  // 送出前先檢查成本移轉價(銷售訂單每列必填):被後端擋回來的話整張表單要重填
+  body.closest('form').addEventListener('submit', function (e) {
+    var kind = this.querySelector('select[name="order_kind"]');
+    if (kind && kind.value !== '銷售') return;
+    var bad = null;
+    body.querySelectorAll('tr.line').forEach(function (row) {
+      var p = row.querySelector('select[name="product_id"]').value;
+      var q = parseFloat(row.querySelector('input[name="qty"]').value) || 0;
+      var c = row.querySelector('input[name="unit_cost"]');
+      var miss = p && q > 0 && !(Math.round(q * (parseFloat(c.value) || 0) * 100) > 0);
+      c.style.borderColor = miss ? 'var(--seal)' : '';
+      if (miss && !bad) bad = c;
+    });
+    if (bad) { e.preventDefault(); alert('有品項還沒填「成本移轉價」(每單位),請補上再存檔。'); bad.focus(); }
+  });
 
   // 改客戶
   var search = document.getElementById('custSearch'),

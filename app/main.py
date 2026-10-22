@@ -1172,8 +1172,8 @@ async def order_create(request: Request):
 
     prods = f.getlist("product_id"); qtys = f.getlist("qty")
     ups   = f.getlist("unit_price")
-    ucosts = f.getlist("unit_cost")   # 每列單位成本,家易自己填(2026-10-22 起改成單位成本,不再是這列總額)
-    lines, line_costs = [], []
+    ucosts = f.getlist("unit_cost")   # 每列成本移轉價(每單位),家易自己填(2026-10-22 起不再是這列總額)
+    lines, line_costs, unit_costs = [], [], []
     for i, p in enumerate(prods):
         if not p:
             continue
@@ -1193,10 +1193,9 @@ async def order_create(request: Request):
             up = lp if (lp is not None and order_kind == "銷售") else 0
         uc = _num(ucosts[i]) if i < len(ucosts) else 0
         lines.append((pid, qv, up, None, lp))
-        line_costs.append(qv * uc)
-    # 單位成本必填(2026-10-22):每一列只要有品項+數量,成本就不能是 0 或沒填——
-    # 這是「借採購成本/貸應付帳款」唯一的依據,漏填會讓應付小農的帳少記。
-    if lines and any(lc <= 0 for lc in line_costs):
+        unit_costs.append(uc)
+        line_costs.append(_line_cost(qv, uc))
+    if _cost_missing(order_kind, line_costs):
         return RedirectResponse("/orders/new?err=cost", status_code=303)
 
     discount_total = flt("discount_total")
@@ -1231,9 +1230,9 @@ async def order_create(request: Request):
     if recv:
         execute('UPDATE "order" SET paid_date=order_date, paid_amount=order_total, payment_account=? WHERE order_id=?',
                 (recv, oid))
-    for (p, qv, up, b, lp), lc in zip(lines, line_costs):
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,line_cost)
-                   VALUES(?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up, lc))
+    for (p, qv, up, b, lp), lc, uc in zip(lines, line_costs, unit_costs):
+        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,line_cost,unit_cost)
+                   VALUES(?,?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up, lc, uc))
     _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
 
@@ -1244,6 +1243,35 @@ def _num(v):
         return max(0.0, float(v or 0))
     except (TypeError, ValueError):
         return 0.0
+
+
+# ---------- 成本移轉價(每單位)(2026-10-22) ----------------------------
+#   家易每列填「成本移轉價(每單位)」,這列總額 line_cost = 數量 × 每單位(到小數 2 位),總帳 / 報表都讀 line_cost。
+#   輸入的每單位原值存在 order_line.unit_cost(這個欄位 2026-10-16 起閒置,只剩舊 migration 讀),
+#   編輯畫面才帶得回原值,不用 line_cost ÷ 數量 再四捨五入(會讓舊資料存一次就差幾塊)。
+def _line_cost(qty, unit_cost):
+    return round((qty or 0) * (unit_cost or 0), 2)
+
+def _cost_missing(order_kind, line_costs):
+    """銷售訂單每一列都要有成本移轉價(借採購成本 / 貸應付帳款的唯一依據,漏填會少記欠小農的錢)。
+    贈送、樣品、理賠重寄等非銷售訂單總帳本來就不記成本,可以是 0。"""
+    return order_kind == "銷售" and any(c <= 0 for c in line_costs)
+
+def _unit_cost_value(l):
+    """編輯畫面「成本移轉價(每單位)」欄位要帶的值。存的原值跟這列總額對得上就用原值;
+    對不上(舊資料、舊 migration 從商品目錄帶的)就用總額 ÷ 數量,留 6 位小數,存回去不會飄。"""
+    qty, lc, uc = l["qty"] or 0, l["line_cost"] or 0, l.get("unit_cost")
+    if uc is not None and abs(_line_cost(qty, uc) - lc) < 0.005:
+        v = uc
+    elif qty:
+        v = round(lc / qty, 6)
+    else:
+        return ""
+    return f"{v:.6f}".rstrip("0").rstrip(".")
+
+tpl.env.filters["unit_cost_value"] = _unit_cost_value
+# 編輯畫面的數量 / 單價照存的值帶回、不四捨五入(原本 round 成整數,2.5 台斤這種存一次就變 3)
+tpl.env.filters["plain_num"] = lambda v: "" if v is None else f"{float(v):.6f}".rstrip("0").rstrip(".")
 
 
 def _post_order_ledger(oid):
@@ -1271,7 +1299,8 @@ SHIP_METHODS = ['自行配送', '客戶自取', '宅配', '超商店到店', '�
 SHIP_STATUS  = ['待出貨', '已出貨', '已送達', '退回', '遺失', '破損']
 SHIP_PAYERS  = ['店家吸收', '客戶付']
 ORDER_KINDS  = ['銷售', '贈送-公關', '贈送-捐贈', '樣品', '理賠重寄', '換貨補出', '內部領用']
-FILTERS = {"all": "全部", "overdue": "貨款逾期", "unpaid": "未收款", "unshipped": "超過 3 天未出貨"}
+FILTERS = {"all": "全部", "overdue": "貨款逾期", "unpaid": "未收款", "unshipped": "超過 3 天未出貨",
+           "nocost": "還沒填成本移轉價"}
 
 # ---------- 訂單匯入(Google 表單 / Excel,回合 13)-----------------
 @app.get("/orders/import", response_class=HTMLResponse)
@@ -1497,7 +1526,7 @@ async def order_update(request: Request, oid: int):
     prods, qtys = f.getlist("product_id"), f.getlist("qty")
     ups, gl = f.getlist("unit_price"), f.getlist("is_gift")
     ucosts = f.getlist("unit_cost")
-    new_lines, new_costs = [], []
+    new_lines, new_costs, new_ucosts = [], [], []
     for i, p in enumerate(prods):
         if not p:
             continue
@@ -1515,37 +1544,39 @@ async def order_update(request: Request, oid: int):
         is_gift = 1 if (i < len(gl) and gl[i] == "是") else 0
         uc = _num(ucosts[i]) if i < len(ucosts) else 0
         new_lines.append((pid, qv, up if not is_gift else 0, None, is_gift))
-        new_costs.append(qv * uc)
-    # 單位成本必填(2026-10-22),理由同新增訂單——驗證要放在刪舊列之前,
-    # 不然成本沒填寫被擋下來時,舊的訂單明細已經被刪光了。
-    if new_lines and any(lc <= 0 for lc in new_costs):
-        return RedirectResponse(f"/orders/{oid}?err=cost", status_code=303)
-    execute("DELETE FROM order_line WHERE order_id=?", (oid,))
-    for (p, qv, up, b, gf), lc in zip(new_lines, new_costs):
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,line_cost)
-                   VALUES(?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, qv * up, gf, lc))
+        new_ucosts.append(uc)
+        new_costs.append(_line_cost(qv, uc))
 
     subtotal = sum(qv * up for _, qv, up, _, gf in new_lines if not gf)
     disc = o["discount_total"] or 0  # 折扣欄位已不開放編輯,沿用原值(通常是 0)
     shipping_fee = flt("shipping_fee_charged")   # 跟客人收的運費,算進應收(2026-10-16)
     total = subtotal - disc + shipping_fee
+    kind = g("order_kind") or o["order_kind"]
 
+    # 所有檢查都要在刪掉舊明細之前做完(2026-10-22):原本稅額 / 發票 / 收款日 / 出貨的檢查排在
+    # 改寫明細之後,被擋下來時明細已經換成新的,訂單金額跟總帳卻還是舊的,兩邊對不起來。
+    if _cost_missing(kind, new_costs):
+        return RedirectResponse(f"/orders/{oid}?err=cost", status_code=303)
     if f.get("invoiced") and not g("tax_doc_no"):
         return RedirectResponse(f"/orders/{oid}?err=invoice", status_code=303)
-    sales_tax = flt("sales_tax") if (g("order_kind") or o["order_kind"]) == "銷售" else 0.0
+    sales_tax = flt("sales_tax") if kind == "銷售" else 0.0
     if sales_tax < 0 or (sales_tax and sales_tax >= total):
         return RedirectResponse(f"/orders/{oid}?err=tax", status_code=303)
     # 收款要一次收齊(2026-10-16):收款帳戶選了現金 / 銀行(C)就要有收款日,實收金額 = 應收合計;
     # 選 E 應收帳款 = 還沒收。2026-10-17 起不再有「收款狀態」欄位,狀態由這裡推出來。
-    kind = g("order_kind") or o["order_kind"]
     paid = bool(g("payment_account")) and kind == "銷售"
     pay_status = "免收款" if kind != "銷售" else ("已收款" if paid else "待收款")
     if paid and not g("paid_date"):
         return RedirectResponse(f"/orders/{oid}?payerr=1", status_code=303)
     if g("ship_status") == "已出貨" and not (g("ship_method") and g("shipped_date")):
         return RedirectResponse(f"/orders/{oid}?shiperr=1", status_code=303)
+
+    execute("DELETE FROM order_line WHERE order_id=?", (oid,))
+    for (p, qv, up, b, gf), lc, uc in zip(new_lines, new_costs, new_ucosts):
+        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,line_cost,unit_cost)
+                   VALUES(?,?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, qv * up, gf, lc, uc))
     cust_id = f.get("customer_id")
-    cols = dict(order_date=g("order_date"), order_kind=g("order_kind"),
+    cols = dict(order_date=g("order_date"), order_kind=kind,
                 payment_status=pay_status,
                 paid_date=(g("paid_date") if paid else None), paid_amount=(total if paid else None),
                 payment_account=(g("payment_account") if paid else None),
@@ -1579,11 +1610,11 @@ def order_copy(oid: int):
     subtotal = 0
     for l in lines:
         subtotal += 0 if l["is_gift"] else (l["qty"] * l["unit_price"])
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,is_gift,line_cost)
-                   VALUES(?,?,?,?,?,?,?,?,?)""",
+        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,is_gift,line_cost,unit_cost)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (noid, l["product_id"], l["batch_id"], l["qty"], l["unit_price"],
                  l["list_price"], 0 if l["is_gift"] else l["qty"] * l["unit_price"], l["is_gift"],
-                 l["line_cost"] or 0))
+                 l["line_cost"] or 0, l["unit_cost"]))
     ship = o["shipping_fee_charged"] or 0
     execute('UPDATE "order" SET order_total=?, sales_tax=?, shipping_fee_charged=?, cost_payment_account=NULL WHERE order_id=?',
             (subtotal + ship, o["sales_tax"] or 0, ship, noid))
@@ -1748,7 +1779,8 @@ def _expense_form_ctx(request, e, grp="VD"):
     if e and e.get("account_code"):
         grp = q1("SELECT grp FROM account WHERE code=?", (e["account_code"],)).get("grp") or grp
     grp = grp if grp in EXP_KINDS else "VD"
-    return dict(request=request, active=EXP_KINDS[grp]["active"], e=e, grp=grp, kind=EXP_KINDS[grp],
+    # 新增從「＋ 記一筆」進、編輯從總帳傳票號碼進(2026-10-22 清單頁拿掉),左側亮對應的那一項
+    return dict(request=request, active=("ledger" if e else EXP_KINDS[grp]["active"]), e=e, grp=grp, kind=EXP_KINDS[grp],
                 accts=chart.accounts([grp]), cash_accounts=chart.accounts(["C"]), docs=DOC_TYPES,
                 bank_codes={r["name"]: r["code"] for r in chart.accounts(["C"])},
                 acct_names={r["code"]: r["name"] for r in chart.accounts([grp])},
@@ -2148,7 +2180,12 @@ def ledger_page(request: Request):
     src = request.query_params.get("source") or ""
     rows = _ledger_rows(src)
     accts = sorted({(r["account_code"], r["account_name"]) for r in rows})
-    return tpl.TemplateResponse("ledger.html", dict(book_tab="gl",
+    # 支出清單頁拿掉後(2026-10-22),這裡是唯一找得到支出的地方:萬一有支出沒有傳票(舊資料),也列出來給人改
+    orphan_exp = q("""SELECT expense_id, COALESCE(expense_date, ym) d, category, amount FROM op_expense e
+                      WHERE NOT EXISTS (SELECT 1 FROM ledger_entry l
+                                        WHERE l.source_type='op_expense' AND l.source_id=e.expense_id)
+                      ORDER BY d DESC""") if src in ("", "op_expense") else []
+    return tpl.TemplateResponse("ledger.html", dict(book_tab="gl", orphan_exp=orphan_exp,
         request=request, active="ledger", rows=rows, src=src, sources=LEDGER_SOURCES, accts=accts,
         total_debit=sum(r["debit"] or 0 for r in rows), total_credit=sum(r["credit"] or 0 for r in rows)))
 

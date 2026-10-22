@@ -25,7 +25,7 @@
 <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:20px">
   <div class="card kpi"><div class="lab">本{{ '年度' if view == 'calendar' else '產季' }}營收(開單就算,跟損益簡表一致)</div><div class="val">{{ fin.revenue|money }}</div><div class="sub">其中已收到 NT$ {{ k.revenue|money }} · 還沒收(含稅)NT$ {{ k.ar_amount|money }}</div></div>
   <div class="card kpi" style="border-top-color:var(--seal)"><div class="lab">本{{ '年度' if view == 'calendar' else '產季' }}稅前利潤</div><div class="val {{ 'neg' if fin.pretax < 0 }}">{{ fin.pretax|money }}</div><div class="sub">毛利再扣全{{ '年度' if view == 'calendar' else '產季' }}營運費用</div></div>
-  <div class="card kpi" style="border-top-color:var(--s-mgn)"><div class="lab">毛利率</div><div class="val">{{ k.margin|pct }}</div><div class="sub">毛利 {{ k.gross_profit|money }}(營收扣商品成本)</div></div>
+  <div class="card kpi" style="border-top-color:var(--s-mgn)"><div class="lab">毛利率</div><div class="val">{{ fin.margin|pct }}</div><div class="sub">毛利 {{ fin.gross_profit|money }}(營收扣退款、商品成本,跟損益簡表一致)</div></div>
   <div class="card kpi"><div class="lab">還沒收到的貨款</div><div class="val">{{ k.ar_amount|money }}</div><div class="sub">{{ k.ar_count }} 筆 · <a href="/reports?tab=aging">看清單</a></div></div>
 </div>
 
@@ -139,7 +139,10 @@
   var step = (W - padL - padR) / Math.max(MON.length - 1, 1);
   var X = function (i) { return padL + i * step; };
   var Y = function (v) { return bot - (v / ymax) * (bot - top); };
-  var kfmt = function (v) { return (v / 1000).toFixed(0) + 'k'; };
+  // 金額小(剛開始用、資料少)時用 k 會全部變成 0k / 1k,刻度標示跟點的位置對不上
+  var kfmt = function (v) {
+    return ymax < 10000 ? Math.round(v).toLocaleString('en-US') : (v / 1000).toFixed(ymax < 30000 ? 1 : 0) + 'k';
+  };
   var money = function (v) { return 'NT$ ' + Math.round(v).toLocaleString('en-US'); };
   var g = ['<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block">'];
   [1, 0.66, 0.33, 0].forEach(function (f) {

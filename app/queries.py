@@ -174,6 +174,9 @@ def alerts(season=None, asof=None, mode="season", year=None):
                WHERE {sc} AND o.order_kind='銷售'""", sp)
     if d["base"] and d["disc"] / d["base"] > 0.03:
         out.append({"text": f"折扣佔比 {d['disc']/d['base']*100:.0f}%(少收的錢)", "href": "/reports"})
+    nc = q1(f'SELECT COUNT(*) n FROM "order" o WHERE {sc} AND {NOCOST_O}', sp)["n"]
+    if nc:
+        out.append({"text": f"{nc} 張銷售訂單還沒填成本移轉價(欠小農沒記到)", "href": "/orders?filter=nocost"})
     rv = q1("SELECT COUNT(*) n FROM review_queue WHERE status='待處理'")["n"]
     if rv:
         out.append({"text": f"待確認資料 {rv} 筆", "href": "/review"})
@@ -322,6 +325,9 @@ def top_customers(season=None, n=5, mode="season", year=None):
 
 
 # ---------- 訂單管理 --------------------------------------------
+# 銷售訂單有品項的成本移轉價是 0(2026-10-22):多半是 Google 表單 / Excel 匯入的,總帳沒記「欠小農」
+NOCOST_O = "o.order_kind='銷售' AND EXISTS (SELECT 1 FROM order_line l WHERE l.order_id=o.order_id AND COALESCE(l.line_cost,0) <= 0)"
+
 def orders_filter(flt="all", kw="", alias="o"):
     """訂單清單 / 匯出共用的篩選條件(對應訂單頁的分頁 + 搜尋框)。
     回傳 (where_clause, params_list);需搭配 LEFT JOIN customer cu 使用。"""
@@ -335,6 +341,8 @@ def orders_filter(flt="all", kw="", alias="o"):
     elif flt == "unshipped":
         where.append(f"{alias}.ship_status='待出貨' AND julianday(?)-julianday({alias}.order_date) > 3")
         args.append(a)
+    elif flt == "nocost":
+        where.append(NOCOST_O.replace("o.", f"{alias}."))
     if kw:
         where.append(f"({alias}.order_no LIKE ? OR cu.display_name LIKE ?)")
         args += [f"%{kw}%", f"%{kw}%"]
