@@ -1733,25 +1733,16 @@ DOC_TYPES = ['發票', '收據']   # 憑證類型(1015 版 Excel:發票、收據
 #   共用同一張 op_expense 表(用科目分組區分)。共用欄位(日期、備註)只填一次;憑證類型 / 發票號碼
 #   放在 G 區塊。金額填「發票金額(支付金額)」= 含稅付出去的錢,費用 = 發票金額 − 進項稅額。
 #   沒有攤提月數,也不再經過確認頁(分錄在同一頁即時預覽)。
-EXP_KINDS = {"VD": dict(label="營運支出", list_url="/finance/expenses", active="expenses"),
-             "VE": dict(label="其他支出", list_url="/other-expenses", active="otherexp")}
+# 2026-10-22 使用者決定拿掉兩個清單頁(總帳明細用「來源」篩就看得到,點傳票號碼回來編輯);
+# 新增從「＋ 記一筆」進,存檔 / 刪除後回到總帳篩好的畫面。
+EXP_LIST_URL = "/ledger?source=op_expense"
+EXP_KINDS = {"VD": dict(label="營運支出", list_url=EXP_LIST_URL, active="entry"),
+             "VE": dict(label="其他支出", list_url=EXP_LIST_URL, active="entry")}
 
-
-def _expense_list(request, grp):
-    k = EXP_KINDS[grp]
-    rows = q("""SELECT e.* FROM op_expense e
-                WHERE COALESCE((SELECT grp FROM account a WHERE a.code=e.account_code), 'VD') = ?
-                ORDER BY COALESCE(e.expense_date, e.ym || '-01') DESC, e.expense_id DESC""", (grp,))
-    return tpl.TemplateResponse("finance_expenses.html", dict(
-        request=request, active=k["active"], rows=rows, grp=grp, kind=k))
-
-@app.get("/finance/expenses", response_class=HTMLResponse)
-def finance_expenses(request: Request):
-    return _expense_list(request, "VD")
-
-@app.get("/other-expenses", response_class=HTMLResponse)
-def other_expenses(request: Request):
-    return _expense_list(request, "VE")
+@app.get("/finance/expenses")
+@app.get("/other-expenses")
+def expense_list_moved():
+    return RedirectResponse(EXP_LIST_URL, status_code=303)
 
 def _expense_form_ctx(request, e, grp="VD"):
     if e and e.get("account_code"):
@@ -1776,7 +1767,7 @@ def other_expense_new(request: Request):
 def finance_expense_edit(request: Request, eid: int):
     e = q("SELECT * FROM op_expense WHERE expense_id=?", (eid,))
     if not e:
-        return RedirectResponse("/finance/expenses", status_code=303)
+        return RedirectResponse(EXP_LIST_URL, status_code=303)
     return tpl.TemplateResponse("finance_expense_form.html", _expense_form_ctx(request, e[0]))
 
 
@@ -1791,14 +1782,14 @@ async def finance_expense_save(request: Request):
     fl = lambda k: _num(f.get(k))
     eid = f.get("expense_id")
     if eid and _source_locked("op_expense", eid):
-        return _locked_redirect(request, "/finance/expenses")
+        return _locked_redirect(request, EXP_LIST_URL)
     code = g("account_code")
     acct = q1("SELECT code, name, grp FROM account WHERE code=? AND grp IN ('VD','VE')", (code,))
     grp = acct.get("grp") or (f.get("grp") if f.get("grp") in EXP_KINDS else "VD")
     list_url = EXP_KINDS[grp]["list_url"]
     if f.get("_delete") and eid:
         _expense_delete(eid)
-        return RedirectResponse(list_url, status_code=303)
+        return RedirectResponse(f"{list_url}&expdel=1", status_code=303)
     back = f"/finance/expenses/{eid}/edit" if eid else (
         "/other-expenses/new" if grp == "VE" else "/finance/expenses/new")
     date = g("expense_date")
@@ -1828,7 +1819,7 @@ async def finance_expense_save(request: Request):
     # 2026-10-20(1019 同仁問題第 4 條):總帳備註要帶使用者填的備註,改備註總帳跟著改
     ledger.save_voucher("op_expense", new_id, date, legs,
                         note=f"{EXP_KINDS[grp]['label']}:{acct['name']}" + (f" {cols['note']}" if cols["note"] else ""))
-    return RedirectResponse(f"{list_url}?ok=1", status_code=303)
+    return RedirectResponse(f"{list_url}&expok=1", status_code=303)
 
 
 # ---------- 9 宮格 B 類:首頁入口 ----------------------------

@@ -10,6 +10,8 @@
 <hr class="rule">
 {% include "_book_tabs.html" %}
 {% set qp = request.query_params %}
+{% if qp.get('expok') %}<div class="ok">支出已存檔,總帳也已經記好(下面是「營運支出 / 其他支出」的傳票,點傳票號碼可以回去改)。</div>{% endif %}
+{% if qp.get('expdel') %}<div class="ok">已刪除這筆支出,總帳的傳票也一起刪了。</div>{% endif %}
 {% if qp.get('deleted') %}<div class="ok">已刪除傳票 {{ qp.get('deleted') }}(來源那筆資料也一起刪了)。</div>{% endif %}
 {% if qp.get('skipped') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">{{ qp.get('skipped') }} 是設備取得 / 折舊 / 年度結轉,不能從這裡刪,沒有動。</div>{% endif %}
 <p class="muted" style="font-size:13px;margin:-4px 0 14px;line-height:1.7">
