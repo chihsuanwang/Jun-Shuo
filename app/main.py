@@ -1172,7 +1172,7 @@ async def order_create(request: Request):
 
     prods = f.getlist("product_id"); qtys = f.getlist("qty")
     ups   = f.getlist("unit_price")
-    costs = f.getlist("line_cost")   # 每列成本,家易自己填(2026-10-16)
+    ucosts = f.getlist("unit_cost")   # 每列單位成本,家易自己填(2026-10-22 起改成單位成本,不再是這列總額)
     lines, line_costs = [], []
     for i, p in enumerate(prods):
         if not p:
@@ -1191,8 +1191,13 @@ async def order_create(request: Request):
             up = None
         if up is None:                       # 沒填單價 -> 帶標準價
             up = lp if (lp is not None and order_kind == "銷售") else 0
+        uc = _num(ucosts[i]) if i < len(ucosts) else 0
         lines.append((pid, qv, up, None, lp))
-        line_costs.append(_num(costs[i]) if i < len(costs) else 0)
+        line_costs.append(qv * uc)
+    # 單位成本必填(2026-10-22):每一列只要有品項+數量,成本就不能是 0 或沒填——
+    # 這是「借採購成本/貸應付帳款」唯一的依據,漏填會讓應付小農的帳少記。
+    if lines and any(lc <= 0 for lc in line_costs):
+        return RedirectResponse("/orders/new?err=cost", status_code=303)
 
     discount_total = flt("discount_total")
     subtotal = sum(qv * up for _, qv, up, _, _ in lines)
@@ -1491,7 +1496,7 @@ async def order_update(request: Request, oid: int):
     # --- 重建訂單明細 ---
     prods, qtys = f.getlist("product_id"), f.getlist("qty")
     ups, gl = f.getlist("unit_price"), f.getlist("is_gift")
-    costs = f.getlist("line_cost")
+    ucosts = f.getlist("unit_cost")
     new_lines, new_costs = [], []
     for i, p in enumerate(prods):
         if not p:
@@ -1508,8 +1513,13 @@ async def order_update(request: Request, oid: int):
             up = 0
         pid = int(p)
         is_gift = 1 if (i < len(gl) and gl[i] == "是") else 0
+        uc = _num(ucosts[i]) if i < len(ucosts) else 0
         new_lines.append((pid, qv, up if not is_gift else 0, None, is_gift))
-        new_costs.append(_num(costs[i]) if i < len(costs) else 0)
+        new_costs.append(qv * uc)
+    # 單位成本必填(2026-10-22),理由同新增訂單——驗證要放在刪舊列之前,
+    # 不然成本沒填寫被擋下來時,舊的訂單明細已經被刪光了。
+    if new_lines and any(lc <= 0 for lc in new_costs):
+        return RedirectResponse(f"/orders/{oid}?err=cost", status_code=303)
     execute("DELETE FROM order_line WHERE order_id=?", (oid,))
     for (p, qv, up, b, gf), lc in zip(new_lines, new_costs):
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,line_cost)

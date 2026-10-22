@@ -7,6 +7,7 @@
 {% if request.query_params.get('err') == 'required' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請選擇客戶與銷售管道。</div>{% endif %}
 {% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
+{% if request.query_params.get('err') == 'cost' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">每一列都要填「單位成本」(跟小農買一個單位多少錢),不能是 0 或留空,請補上再存檔。</div>{% endif %}
 
 <form method="post" action="/orders">
 <div class="card" style="margin-bottom:16px">
@@ -35,7 +36,7 @@
 <div class="card" style="margin-bottom:16px">
   <h3 class="serif">訂單明細</h3>
   <table>
-    <thead><tr><th>品項</th><th>數量</th><th>單價</th><th>小計</th><th>成本<span class="muted">(這列總額)</span></th><th></th></tr></thead>
+    <thead><tr><th>品項</th><th>數量</th><th>單價</th><th>小計</th><th>單位成本<span class="muted">(必填)</span></th><th>成本小計</th><th></th></tr></thead>
     <tbody id="lines">
     {% for i in range(3) %}
       <tr class="line">
@@ -45,12 +46,13 @@
         <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
         <td class="linesub r">0</td>
-        <td><input name="line_cost" type="number" step="1" min="0" placeholder="這列成本" style="width:110px"></td>
+        <td><input name="unit_cost" type="number" step="1" min="0" placeholder="每單位成本" style="width:100px"></td>
+        <td class="linecost r">0</td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
       </tr>
     {% endfor %}
     </tbody>
-    <tfoot><tr><td colspan="3" class="r"><b>應收合計(含稅)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="2" class="muted" style="font-size:11px">成本:跟小農買這些貨的錢,自己填</td></tr></tfoot>
+    <tfoot><tr><td colspan="3" class="r"><b>應收合計(含稅)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="3" class="muted" style="font-size:11px">成本:跟小農買這一項,一個單位多少錢,自己填(必填)</td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
   <p class="muted" style="font-size:11px;margin-top:10px">成本記成「應付帳款」(欠小農);真的付錢給小農時,到左邊「應付帳款(付小農)」勾選付款。</p>
@@ -102,6 +104,7 @@
       if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
     });
     var subCell = clone.querySelector('.linesub'); if (subCell) subCell.textContent = '0';
+    var costCell = clone.querySelector('.linecost'); if (costCell) costCell.textContent = '0';
     body.appendChild(clone);
   });
   body.addEventListener('click', function (e) {
@@ -127,9 +130,12 @@
     body.querySelectorAll('tr.line').forEach(function (row) {
       var qty = parseFloat(row.querySelector('input[name="qty"]').value) || 0;
       var up = parseFloat(row.querySelector('input[name="unit_price"]').value) || 0;
+      var uc = parseFloat(row.querySelector('input[name="unit_cost"]').value) || 0;
       var sub = qty * up;
       var cell = row.querySelector('.linesub');
       if (cell) cell.textContent = sub.toLocaleString();
+      var costCell = row.querySelector('.linecost');
+      if (costCell) costCell.textContent = (qty * uc).toLocaleString();
       sum += sub;
     });
     if (shipCostInput) sum += parseFloat(shipCostInput.value) || 0;
@@ -137,7 +143,7 @@
     if (t) t.textContent = sum.toLocaleString();
   }
   body.addEventListener('input', function (e) {
-    if (e.target.name === 'qty' || e.target.name === 'unit_price') recalc();
+    if (e.target.name === 'qty' || e.target.name === 'unit_price' || e.target.name === 'unit_cost') recalc();
   });
   if (shipCostInput) shipCostInput.addEventListener('input', recalc);
 
