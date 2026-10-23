@@ -8,6 +8,7 @@
 </div></div>
 <hr class="rule">
 
+{% if request.query_params.get('err') == 'salvage' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">殘值不能是負數,也要比取得成本小。</div>{% endif %}
 {% if request.query_params.get('err') == 'life' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">使用年限最少要 {{ min_months }} 個月(10 年)。</div>{% endif %}
 <form method="post" action="/assets">
 {% if a %}<input type="hidden" name="asset_id" value="{{ a.asset_id }}">{% endif %}
@@ -23,8 +24,8 @@
     <div><label>取得成本</label><input name="cost" id="cost" type="number" step="1" value="{{ d.cost|round(0) if d.cost else '' }}" required></div>
     <div><label>進項稅額(沒有填 0)</label><input name="tax_amount" type="number" step="1" min="0" value="{{ (d.tax_amount or 0)|round(0)|int }}"></div>
     <div><label>使用年限(月)<span class="muted">(最少 {{ min_months }} 個月 = 10 年)</span></label><input name="life_months" id="life" type="number" min="{{ min_months }}" step="1" value="{{ (a.life_months or a.life_years * 12) if a else min_months }}" required></div>
-    <div><label>殘值</label><input value="0" disabled>
-      <div class="muted" style="font-size:11px;margin-top:3px">殘值一律算 0,不用填</div></div>
+    <div><label>殘值</label><input name="salvage" id="salvage" type="number" step="1" min="0" value="{{ (d.salvage or 0)|round(0)|int }}">
+      <div class="muted" style="font-size:11px;margin-top:3px">用到年限時估計還值多少(賣掉 / 報廢可回收的錢);不確定就填 0。折舊只攤「成本 − 殘值」</div></div>
     <div><label>付款帳戶</label>
       <select name="payment_account">
         {% for x in cash_accounts %}<option value="{{ x.name }}" {{ 'selected' if (d.payment_account or '現金') == x.name }}>{{ x.name }}</option>{% endfor %}
@@ -50,7 +51,7 @@
 <script>
 (function () {
   var cat = document.getElementById('cat'), life = document.getElementById('life');
-  var cost = document.getElementById('cost');
+  var cost = document.getElementById('cost'), salvage = document.getElementById('salvage');
   var hint = document.getElementById('hint');
   cat.addEventListener('change', function () {
     var o = cat.selectedOptions[0];
@@ -58,13 +59,15 @@
     calc();
   });
   function calc() {
-    var c = +cost.value || 0, m = +life.value || 0;
-    var per = m ? Math.ceil(c / m) : 0;   // 每月折舊 = 無條件進位(成本 ÷ 月數),殘值 0
+    var c = +cost.value || 0, s = +salvage.value || 0, m = +life.value || 0, base = c - s;
+    if (c && s >= c) { hint.textContent = '殘值要比取得成本小。'; return; }
+    var per = m ? Math.ceil(base / m) : 0;   // 每月折舊 = 無條件進位((成本 − 殘值)÷ 月數)
     hint.textContent = m && c
-      ? '每月折舊 ' + per.toLocaleString() + '(成本 ÷ ' + m + ' 個月,無條件進位)· 每年約 ' + (per * 12).toLocaleString()
+      ? '每月折舊 ' + per.toLocaleString() + '(' + (s ? '(成本 − 殘值 ' + s.toLocaleString() + ')' : '成本') +
+        ' ÷ ' + m + ' 個月,無條件進位)· 每年約 ' + (per * 12).toLocaleString()
       : '';
   }
-  [cost, life].forEach(function (el) { el.addEventListener('input', calc); });
+  [cost, salvage, life].forEach(function (el) { el.addEventListener('input', calc); });
   calc();
 })();
 </script>

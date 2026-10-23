@@ -8,8 +8,8 @@
 <hr class="rule">
 {% if request.query_params.get('paid') %}<div class="ok">已付款 {{ request.query_params.get('paid') }} 筆,總帳也已經記好。</div>{% endif %}
 <p class="muted" style="font-size:13px;margin:-4px 0 14px;line-height:1.7">
-  開訂單時,成本記成「借 採購成本 / 貸 應付帳款」(欠小農)。真的付錢給小農時,勾選那幾張訂單、按「付款」,
-  選從哪個帳戶付,系統記「借 應付帳款 / 貸 現金或銀行」。未付金額 = 成本 − 已付 − 還沒付時就退回小農的。
+  開訂單時,每列填的成本移轉價記成「借 採購成本 / 貸 應付帳款」(欠小農)。真的付錢給小農時,勾選那幾張訂單、按「付款」,
+  選從哪個帳戶付,系統記「借 應付帳款 / 貸 現金或銀行」。未付金額 = 成本移轉價 − 已付 − 還沒付時就退回小農的。
 </p>
 
 <form method="post" action="/payables/pay" id="payForm">
@@ -19,7 +19,7 @@
     <span class="muted" style="font-size:13px">共 {{ unpaid|length }} 筆 · {{ unpaid_total|money }} 元</span>
   </div>
   <table class="gl">
-    <thead><tr><th style="width:34px"><input type="checkbox" id="chkAll" style="width:auto"></th><th>交易紀錄號碼</th><th>交易日期</th><th>客戶</th><th data-num>成本</th><th data-num>已付</th><th data-num>退回小農</th><th data-num>未付</th></tr></thead>
+    <thead><tr><th style="width:34px"><input type="checkbox" id="chkAll" style="width:auto"></th><th>交易紀錄號碼</th><th>交易日期</th><th>客戶</th><th data-num>成本移轉價</th><th data-num>已付</th><th data-num>退回小農</th><th data-num>未付</th></tr></thead>
     <tbody>{% for r in unpaid %}
       <tr>
         <td><input type="checkbox" class="rchk" name="order_id" value="{{ r.order_id }}" data-amt="{{ r.due }}" style="width:auto"></td>

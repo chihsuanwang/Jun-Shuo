@@ -185,35 +185,13 @@ def alerts(season=None, asof=None, mode="season", year=None):
 
 # ---------- 儀表板圖表 --------------------------------------------
 def monthly(season=None, mode="season", year=None):
-    """依訂單日期歸月,金額用實收(只算已收款 / 部分收款的訂單)。"""
-    sc, sp = _S(season, mode=mode, year=year)
-    rev_rows = q(f"""SELECT strftime('%Y-%m', o.order_date) ym,
-                            COALESCE(SUM({REV_PAID}),0) rev
-                     FROM "order" o WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}
-                     GROUP BY ym""", sp)
-    cogs_rows = q(f"""SELECT strftime('%Y-%m', o.order_date) ym,
-                             COALESCE(SUM(COALESCE(ol.line_cost,0)),0) cogs
-                      FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
-                      JOIN product p ON p.product_id=ol.product_id
-                      WHERE {sc} AND o.order_kind='銷售' AND {PAID_O}
-                      GROUP BY ym""", sp)
-    cogs_map = {r["ym"]: r["cogs"] for r in cogs_rows}
-    rows = [dict(ym=r["ym"], rev=r["rev"], gp=r["rev"] - cogs_map.get(r["ym"], 0)) for r in rev_rows]
-    rc, rp = _S(season, alias="sr", mode=mode, date_col="return_date", year=year)
-    rmap = {r["ym"]: r for r in q(f"""SELECT strftime('%Y-%m', sr.return_date) ym,
-                COALESCE(SUM({RET_REFUND}),0) ret,
-                COALESCE(SUM({RET_COGS}),0) rcogs
-              FROM sales_return sr
-              WHERE {rc} GROUP BY ym""", rp)}
-    by_ym = {r["ym"]: r for r in rows}
-    for ym, x in rmap.items():
-        r = by_ym.get(ym)
-        if not r:
-            r = dict(ym=ym, rev=0.0, gp=0.0)
-            rows.append(r)
-        r["rev"] = (r["rev"] or 0) - x["ret"]
-        r["gp"] = (r["gp"] or 0) - x["ret"] + x["rcogs"]
-    rows.sort(key=lambda r: r["ym"])
+    """儀表板「月營收 / 毛利趨勢」。2026-10-23 起跟營收卡片、損益簡表同一套:從總帳抓,營收開單就算、不含稅
+    (退款前),毛利 = 營收 − 退款 − 銷貨成本。只列有營收 / 成本 / 退款的月份(淡月不畫 0 點,跟原本一樣)。"""
+    rows = []
+    for ym in finance_months(season, mode=mode, year=year):
+        d = finance_month(ym)
+        if round(d["revenue"], 2) or round(d["returns"], 2) or round(d["cogs"], 2):
+            rows.append(dict(ym=ym, rev=d["revenue"], gp=d["gross_profit"]))
     return rows
 
 
@@ -464,7 +442,7 @@ def _add_months(ym, k):
     return f"{y}-{m:02d}"
 
 def asset_dep_base(a):
-    """可提折舊基礎 = 成本 − 補助 − 殘值(不小於 0)。2026-10-16 起補助、殘值都是 0。"""
+    """可提折舊基礎 = 成本 − 補助 − 殘值(不小於 0)。2026-10-16 起補助都是 0;殘值 2026-10-23 起可以填。"""
     return max(0.0, (a["cost"] or 0) - (a["grant_amount"] or 0) - (a["salvage"] or 0))
 
 

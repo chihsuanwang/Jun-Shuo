@@ -657,7 +657,7 @@ async def product_line_assign(request: Request):
 
 
 # ---------- 固定資產卡 + 折舊(v2 回合 3) -------------------
-# 2026-10-08 同仁回饋:耐用年數最少 10 年(畫面跟存檔都擋),殘值一律 0
+# 2026-10-08 同仁回饋:耐用年數最少 10 年(畫面跟存檔都擋);殘值 2026-10-23 起可以填(原本一律 0)
 ASSET_MIN_LIFE = 10          # 年;2026-10-16 起表單填「月」,最少 ASSET_MIN_LIFE*12 = 120 個月
 ASSET_MIN_MONTHS = ASSET_MIN_LIFE * 12
 ASSET_CATS = {"機器設備": 120, "生財器具": 120, "運輸設備": 120,
@@ -719,17 +719,31 @@ async def asset_save(request: Request):
         return RedirectResponse(f"{back}?err=life", status_code=303)
     cost = fl("cost")
     tax = fl("tax_amount")
+    salvage = fl("salvage")
+    if salvage < 0 or (salvage and salvage >= cost):
+        back = f"/assets/{aid}/edit" if aid else "/assets/new"
+        return RedirectResponse(f"{back}?err=salvage", status_code=303)
     category = g("category")
     payment_account = g("payment_account") or "現金"
     cols = dict(
         name=name, category=category,
-        acquire_date=date, cost=cost, grant_amount=0, salvage=0, tax_amount=tax,
+        acquire_date=date, cost=cost, grant_amount=0, salvage=salvage, tax_amount=tax,
         life_months=months, life_years=months // 12, method="平均法",
         disposed_date=g("disposed_date"), payment_account=payment_account, note=g("note"))
     if aid:
+        old = q1("SELECT cost, salvage, life_months, acquire_date, disposed_date FROM fixed_asset WHERE asset_id=?", (int(aid),))
         sets = ",".join(f"{k}=:{k}" for k in cols)
         execute(f"UPDATE fixed_asset SET {sets} WHERE asset_id=:id", {**cols, "id": int(aid)})
         new_id = int(aid)
+        # 折舊傳票是「記過的月份不再動」:成本 / 殘值 / 年限 / 取得日 / 處分日一改,已記的月份金額就不對了。
+        # 把還沒結轉年度的折舊傳票清掉,回到 /assets 時 sync_depreciation_vouchers 會照新數字補回來。
+        if any((old.get(k) or 0) != (cols[k] or 0) for k in ("cost", "salvage", "life_months", "acquire_date", "disposed_date")):
+            closed = _closed_years()
+            for y in {r["y"] for r in q("SELECT DISTINCT substr(entry_date,1,4) y FROM ledger_entry "
+                                         "WHERE source_type='asset_depreciation' AND source_id=?", (new_id,))}:
+                if int(y) not in closed:
+                    execute("DELETE FROM ledger_entry WHERE source_type='asset_depreciation' AND source_id=? "
+                            "AND substr(entry_date,1,4)=?", (new_id, y))
     else:
         keys = ",".join(cols)
         new_id = execute(f"INSERT INTO fixed_asset({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
