@@ -15,16 +15,21 @@
 <input type="hidden" name="kind" value="manual_adjustment"><input type="hidden" name="back" value="/adjustments">
 {% include "_bulk_delete.html" %}
 <div class="card" style="overflow-x:auto">
-  <table>
-    <thead><tr><th style="width:34px"><input type="checkbox" class="chkall" style="width:auto" title="全選"></th><th>日期</th><th>科目代碼</th><th>科目名稱</th><th data-num>借方</th><th data-num>貸方</th><th>備註</th><th></th></tr></thead>
+  <style>
+    /* 每張傳票第二行起少了 rowspan 的兩格,不能靠「第幾格」決定對齊,每格自己指定 */
+    table.adj .al { text-align: left; }
+    table.adj .ar { text-align: right; font-variant-numeric: tabular-nums; }
+  </style>
+  <table class="adj">
+    <thead><tr><th style="width:34px"><input type="checkbox" class="chkall" style="width:auto" title="全選"></th><th class="al">日期</th><th class="al">科目代碼</th><th class="al">科目名稱</th><th class="ar">借方</th><th class="ar">貸方</th><th class="al">備註</th><th></th></tr></thead>
     <tbody>{% for r in rows %}
       {% for l in r.lines %}
       <tr>
         {% if loop.first %}<td rowspan="{{ r.lines|length }}"><input type="checkbox" name="id" value="{{ r.entry_id }}" style="width:auto"></td>
-        <td rowspan="{{ r.lines|length }}">{{ r.entry_date }}</td>{% endif %}
-        <td>{{ l.account_code }}</td><td>{{ l.account_name }}</td>
-        <td>{{ l.debit|money if l.debit else '' }}</td><td>{{ l.credit|money if l.credit else '' }}</td>
-        {% if loop.first %}<td rowspan="{{ r.lines|length }}" class="muted" style="text-align:left">{{ r.note or '' }}</td>
+        <td rowspan="{{ r.lines|length }}" class="al">{{ r.entry_date }}</td>{% endif %}
+        <td class="al">{{ l.account_code }}</td><td class="al">{{ l.account_name }}</td>
+        <td class="ar">{{ l.debit|money if l.debit else '' }}</td><td class="ar">{{ l.credit|money if l.credit else '' }}</td>
+        {% if loop.first %}<td rowspan="{{ r.lines|length }}" class="muted al">{{ r.note or '' }}</td>
         <td rowspan="{{ r.lines|length }}"><a href="/adjustments/{{ r.entry_id }}/edit">編輯</a></td>{% endif %}
       </tr>
       {% endfor %}
