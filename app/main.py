@@ -731,24 +731,15 @@ async def asset_save(request: Request):
         life_months=months, life_years=months // 12, method="平均法",
         disposed_date=g("disposed_date"), payment_account=payment_account, note=g("note"))
     if aid:
-        old = q1("SELECT cost, salvage, life_months, acquire_date, disposed_date FROM fixed_asset WHERE asset_id=?", (int(aid),))
         sets = ",".join(f"{k}=:{k}" for k in cols)
         execute(f"UPDATE fixed_asset SET {sets} WHERE asset_id=:id", {**cols, "id": int(aid)})
         new_id = int(aid)
-        # 折舊傳票是「記過的月份不再動」:成本 / 殘值 / 年限 / 取得日 / 處分日一改,已記的月份金額就不對了。
-        # 把還沒結轉年度的折舊傳票清掉,回到 /assets 時 sync_depreciation_vouchers 會照新數字補回來。
-        if any((old.get(k) or 0) != (cols[k] or 0) for k in ("cost", "salvage", "life_months", "acquire_date", "disposed_date")):
-            closed = _closed_years()
-            for y in {r["y"] for r in q("SELECT DISTINCT substr(entry_date,1,4) y FROM ledger_entry "
-                                         "WHERE source_type='asset_depreciation' AND source_id=?", (new_id,))}:
-                if int(y) not in closed:
-                    execute("DELETE FROM ledger_entry WHERE source_type='asset_depreciation' AND source_id=? "
-                            "AND substr(entry_date,1,4)=?", (new_id, y))
     else:
         keys = ",".join(cols)
         new_id = execute(f"INSERT INTO fixed_asset({keys}) VALUES({','.join(':' + k for k in cols)})", cols)
     legs = ledger.compose_asset_acquire_entries(category, cost, tax, payment_account)
     ledger.save_voucher("asset_acquire", new_id, date, legs, note=f"設備取得:{name}")
+    Q.sync_depreciation_vouchers()   # 成本 / 殘值 / 年限 / 日期改了,總帳折舊馬上對到新數字(已結轉年度不動)
     return RedirectResponse("/assets", status_code=303)
 
 
@@ -1158,7 +1149,7 @@ def order_new(request: Request):
         products=q("SELECT product_id,sku,name,uom FROM product WHERE status='在售' ORDER BY sku"),
         today=dt.date.today().isoformat(),
         prices_json=json.dumps(prices), cust_seg_json=json.dumps(cust_seg),
-        lastcost_json=json.dumps(Q.last_unit_costs()),
+        lastcost=Q.last_unit_costs(),
     ))
 
 
@@ -1174,6 +1165,8 @@ async def order_create(request: Request):
     order_date = one("order_date")
     if not one("customer_id") or not one("channel_id"):
         return RedirectResponse("/orders/new?err=required", status_code=303)
+    if not _valid_date(order_date):
+        return RedirectResponse("/orders/new?err=date", status_code=303)
     customer_id = int(one("customer_id"))
     channel_id = int(one("channel_id"))
     order_kind = one("order_kind", "銷售")
@@ -1253,6 +1246,15 @@ async def order_create(request: Request):
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
 
 
+def _valid_date(s):
+    """訂單日期一定要是 YYYY-MM-DD(畫面是日期選擇器;這裡擋繞過畫面直接送的怪字串,
+    不然會一路帶進訂單號碼、成本移轉價紀錄、頁面裡的 JSON)。"""
+    try:
+        return dt.date.fromisoformat(str(s)).isoformat() == s
+    except ValueError:
+        return False
+
+
 def _num(v):
     """表單數字欄:空白 / 打錯 → 0,負數也當 0。"""
     try:
@@ -1276,13 +1278,9 @@ def _cost_missing(order_kind, line_costs):
 def _unit_cost_value(l):
     """編輯畫面「成本移轉價(每單位)」欄位要帶的值。存的原值跟這列總額對得上就用原值;
     對不上(舊資料、舊 migration 從商品目錄帶的)就用總額 ÷ 數量,留 6 位小數,存回去不會飄。"""
-    qty, lc, uc = l["qty"] or 0, l["line_cost"] or 0, l.get("unit_cost")
-    if uc is not None and abs(_line_cost(qty, uc) - lc) < 0.005:
-        v = uc
-    elif qty:
-        v = round(lc / qty, 6)
-    else:
+    if not l["qty"]:
         return ""
+    v = Q._unit_cost_of(l["qty"], l["line_cost"], l.get("unit_cost"))   # 規則只寫一份,紀錄頁 / 自動帶入共用
     return f"{v:.6f}".rstrip("0").rstrip(".")
 
 tpl.env.filters["unit_cost_value"] = _unit_cost_value
@@ -1452,7 +1450,7 @@ def order_detail(request: Request, oid: int):
         returns=Q.returns_list(oid), return_kinds=ledger.RETURN_KINDS,
         order_cost=sum(l["line_cost"] or 0 for l in lines),
         farmer_paid=_farmer_paid(oid),
-        lastcost_json=json.dumps(Q.last_unit_costs(exclude_order=oid)),
+        lastcost=Q.last_unit_costs(exclude_order=oid),
         today=dt.date.today().isoformat()))
 
 
@@ -1571,6 +1569,8 @@ async def order_update(request: Request, oid: int):
     shipping_fee = flt("shipping_fee_charged")   # 跟客人收的運費,算進應收(2026-10-16)
     total = subtotal - disc + shipping_fee
     kind = g("order_kind") or o["order_kind"]
+    if g("order_date") and not _valid_date(g("order_date")):
+        return RedirectResponse(f"/orders/{oid}?err=date", status_code=303)
 
     # 所有檢查都要在刪掉舊明細之前做完(2026-10-22):原本稅額 / 發票 / 收款日 / 出貨的檢查排在
     # 改寫明細之後,被擋下來時明細已經換成新的,訂單金額跟總帳卻還是舊的,兩邊對不起來。

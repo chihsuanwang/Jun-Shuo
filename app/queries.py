@@ -2,7 +2,7 @@
 season=None 代表全部產季;asof 為『結算日』('latest'=最新訂單日 / 'today' / 'YYYY-MM-DD')。
 毛利 = 銷售明細營收 - 明細成本(數量×批次單位成本);運費損益另計。"""
 import datetime as dt
-from db import q, q1
+from db import q, q1, execute
 import ledger
 
 
@@ -620,26 +620,35 @@ def asset_list(as_of_ym=None):
 
 
 def sync_depreciation_vouchers():
-    """開 /assets 頁時呼叫:把每個在用資產從取得月到「這個月」(或處分月)還沒記過的折舊
-    月份補上分錄。已經記過的月份不動——用 ledger.save_voucher_if_new,不是整張重開。"""
+    """把總帳的折舊傳票對到目前的固定資產設定(開 /assets 頁、存檔固定資產後呼叫)。
+    每台資產從取得月到「這個月」(或處分月)每月該記多少,跟總帳已記的逐月比對:沒記的補上;
+    記了但金額不對(成本 / 殘值 / 年限 / 取得日 / 處分日改過)或不該記的(月份移掉了)重記 / 刪掉。
+    已結轉的年度一律不動(1019 同仁問題第 6 條)。金額沒變的月份不碰,傳票號碼不會亂跳。"""
     this_ym = dt.date.today().strftime("%Y-%m")
+    closed = {int(r["source_id"]) for r in q("SELECT DISTINCT source_id FROM ledger_entry WHERE source_type='year_closing'")}
     for a in q("SELECT * FROM fixed_asset"):
+        aid, expected = a["asset_id"], {}
         months = asset_life_months(a)
-        if asset_dep_base(a) <= 0 or months <= 0 or not a["acquire_date"]:
-            continue
-        start = a["acquire_date"][:7]
-        end = this_ym
-        if a["disposed_date"] and a["disposed_date"][:7] < end:
-            end = a["disposed_date"][:7]
-        n = min(months, max(0, _months_between(start, end) + 1))
-        closed = {r["source_id"] for r in q("SELECT DISTINCT source_id FROM ledger_entry WHERE source_type='year_closing'")}
-        for i in range(n):
-            ym = _add_months(start, i)
-            if int(ym[:4]) in closed:      # 已結轉的年度不能再動(1019 同仁問題第 6 條)
-                continue
-            legs = ledger.compose_depreciation_entries(asset_monthly_dep(a, i))
-            ledger.save_voucher_if_new("asset_depreciation", a["asset_id"], f"{ym}-01", legs,
-                                        note=f"折舊:{a['name']}")
+        if asset_dep_base(a) > 0 and months > 0 and a["acquire_date"]:
+            start = a["acquire_date"][:7]
+            end = this_ym
+            if a["disposed_date"] and a["disposed_date"][:7] < end:
+                end = a["disposed_date"][:7]
+            for i in range(min(months, max(0, _months_between(start, end) + 1))):
+                amt = asset_monthly_dep(a, i)
+                if amt:
+                    expected[f"{_add_months(start, i)}-01"] = amt
+        posted = {r["d"]: r["v"] for r in q("""SELECT entry_date d, SUM(debit) v FROM ledger_entry
+                                                WHERE source_type='asset_depreciation' AND source_id=?
+                                                GROUP BY entry_date""", (aid,))}
+        for d, v in posted.items():
+            if int(d[:4]) not in closed and abs(expected.get(d, 0) - (v or 0)) > 0.005:
+                execute("DELETE FROM ledger_entry WHERE source_type='asset_depreciation' AND source_id=? AND entry_date=?",
+                        (aid, d))
+        for d, amt in expected.items():
+            if int(d[:4]) not in closed:
+                ledger.save_voucher_if_new("asset_depreciation", aid, d, ledger.compose_depreciation_entries(amt),
+                                            note=f"折舊:{a['name']}")
 
 # ---------- 退款 / 退回小農(2026-10-08,取代銷貨退回 / 折讓) -------------
 def _returns_agg(season, mode="season", year=None):

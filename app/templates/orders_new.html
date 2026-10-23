@@ -6,6 +6,7 @@
 {% if request.query_params.get('ok') %}<div class="ok">訂單已建立。</div>{% endif %}
 {% if request.query_params.get('err') == 'required' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請選擇客戶與銷售管道。</div>{% endif %}
 {% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
+{% if request.query_params.get('err') == 'date' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">訂單日期格式不對,請用日期選擇器選一天再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單一定要開發票,請填上發票號碼再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'cost' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單每一列都要填「成本移轉價」(跟小農買一個單位多少錢),不能是 0 或留空,請補上再存檔。</div>{% endif %}
 
@@ -166,19 +167,25 @@
   // --- 依客戶分級自動帶標準價 ---
   // --- 成本移轉價:帶入這個商品上一次的單價,跟上次不同時提醒(2026-10-23) ---
   //   上一次 = 訂單日期最新、成本 > 0 的那一筆,不分客戶(queries.last_unit_costs)
-  var LASTCOST = {{ lastcost_json | safe }};
+  var LASTCOST = {{ lastcost|tojson }};
   function fmtU(v) { return (Math.round(v * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
   function costHint(row) {
     var el = row.querySelector('.costhint'); if (!el) return;
     var pid = row.querySelector('select[name="product_id"]').value, last = pid && LASTCOST[pid];
-    if (!last || false) { el.innerHTML = ''; return; }
+    if (!last) { el.innerHTML = ''; return; }
     var v = parseFloat(row.querySelector('input[name="unit_cost"]').value);
-    var link = '<a href="/cost-history?season=all&pid=' + pid + '#detail" target="_blank" title="' +
-               last.date + ' ' + last.order_no + '">上次 ' + fmtU(last.u) + '</a>';
+    // 用 DOM 組,不拼 HTML 字串(訂單號碼 / 日期是資料庫來的字)
+    var a = document.createElement('a');
+    a.href = '/cost-history?season=all&pid=' + encodeURIComponent(pid) + '#detail';
+    a.target = '_blank'; a.title = last.date + ' ' + last.order_no;
+    a.textContent = '上次 ' + fmtU(last.u);
+    el.textContent = ''; el.appendChild(a);
     if (isNaN(v) || Math.abs(v - last.u) < 0.005) {
-      el.className = 'costhint muted'; el.innerHTML = link + '(' + last.date.slice(5).replace('-', '/') + ')';
+      el.className = 'costhint muted';
+      el.appendChild(document.createTextNode('(' + String(last.date).slice(5).replace('-', '/') + ')'));
     } else {
-      el.className = 'costhint changed'; el.innerHTML = link + ' → ' + fmtU(v) + (v > last.u ? ' ↑' : ' ↓');
+      el.className = 'costhint changed';
+      el.appendChild(document.createTextNode(' → ' + fmtU(v) + (v > last.u ? ' ↑' : ' ↓')));
     }
   }
   function fillCost(row) {

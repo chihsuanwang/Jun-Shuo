@@ -38,6 +38,7 @@
 {% if request.query_params.get('payerr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">收款帳戶選了現金 / 銀行,但沒填收款日——請在下面「收款」卡補上,或改用上面「標記已收款」按鈕。</div>{% endif %}
 {% if request.query_params.get('shiperr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">出貨狀態選了「已出貨」,但出貨方式 / 出貨日沒填——請在下面「出貨」卡補上,或改用上面「標記已出貨」按鈕。</div>{% endif %}
 {% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
+{% if request.query_params.get('err') == 'date' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">訂單日期格式不對,請用日期選擇器選一天再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'cost' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單每一列都要填「成本移轉價」(跟小農買一個單位多少錢),不能是 0 或留空,請補上再存檔。</div>{% endif %}
 
@@ -64,7 +65,7 @@
     <tbody id="lines">
     {% for l in lines %}
       <tr class="line">
-        <td><select name="product_id">
+        <td><select name="product_id"><option value="">—</option>
           {% for p in products %}<option value="{{ p.product_id }}" {{ 'selected' if p.product_id==l.product_id }}>{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
         </select></td>
         <td><input name="qty" type="number" step="any" min="0" value="{{ l.qty|plain_num }}"></td>
@@ -78,7 +79,7 @@
     {% endfor %}
     {% if not lines %}
       <tr class="line">
-        <td><select name="product_id">{% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}</select></td>
+        <td><select name="product_id"><option value="">—</option>{% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}</select></td>
         <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
         <td class="linesub r">0</td>
@@ -245,19 +246,25 @@
   // --- 成本移轉價:帶入這個商品上一次的單價,跟上次不同時提醒(2026-10-23) ---
   //   上一次 = 訂單日期最新、成本 > 0 的那一筆,不分客戶,不算這張訂單自己(queries.last_unit_costs)
   //   已經存好的列不動(data-auto 沒設),只有新加的列、換了商品的列才帶入 + 提醒
-  var LASTCOST = {{ lastcost_json | safe }};
+  var LASTCOST = {{ lastcost|tojson }};
   function fmtU(v) { return (Math.round(v * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
   function costHint(row) {
     var el = row.querySelector('.costhint'); if (!el) return;
     var pid = row.querySelector('select[name="product_id"]').value, last = pid && LASTCOST[pid];
     if (!last || row.dataset.auto !== '1') { el.innerHTML = ''; return; }
     var v = parseFloat(row.querySelector('input[name="unit_cost"]').value);
-    var link = '<a href="/cost-history?season=all&pid=' + pid + '#detail" target="_blank" title="' +
-               last.date + ' ' + last.order_no + '">上次 ' + fmtU(last.u) + '</a>';
+    // 用 DOM 組,不拼 HTML 字串(訂單號碼 / 日期是資料庫來的字)
+    var a = document.createElement('a');
+    a.href = '/cost-history?season=all&pid=' + encodeURIComponent(pid) + '#detail';
+    a.target = '_blank'; a.title = last.date + ' ' + last.order_no;
+    a.textContent = '上次 ' + fmtU(last.u);
+    el.textContent = ''; el.appendChild(a);
     if (isNaN(v) || Math.abs(v - last.u) < 0.005) {
-      el.className = 'costhint muted'; el.innerHTML = link + '(' + last.date.slice(5).replace('-', '/') + ')';
+      el.className = 'costhint muted';
+      el.appendChild(document.createTextNode('(' + String(last.date).slice(5).replace('-', '/') + ')'));
     } else {
-      el.className = 'costhint changed'; el.innerHTML = link + ' → ' + fmtU(v) + (v > last.u ? ' ↑' : ' ↓');
+      el.className = 'costhint changed';
+      el.appendChild(document.createTextNode(' → ' + fmtU(v) + (v > last.u ? ' ↑' : ' ↓')));
     }
   }
   function fillCost(row) {
