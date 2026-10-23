@@ -424,7 +424,9 @@ CREATE TABLE account (
   grp        TEXT NOT NULL,              -- C / E / F / G / J / K / N / P / T / UA / VA / VC / VD / UB / VE / 其他
   sort       INTEGER NOT NULL DEFAULT 0,
   active     INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),   -- 0 = 停用(下拉選單不出現,舊傳票照常顯示)
-  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  parent_code TEXT,                       -- 上層科目(2026-10-23),例:1103-01 的上層是 1103
+  is_summary INTEGER NOT NULL DEFAULT 0   -- 1 = 彙總科目:不能記帳,金額 = 底下所有科目加總
 );
 
 -- 24. 全鏈路毛利分析(2026-10)——**2026-10-20 依 1019 同仁問題第 11 條拿掉畫面**,表留著不用(dormant)----------

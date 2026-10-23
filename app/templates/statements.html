@@ -36,15 +36,25 @@
 <p class="muted" style="font-size:13px;margin:-4px 0 16px;line-height:1.7">
   {{ tb.lo }} ~ {{ tb.hi }}。<b>期初餘額</b> = 前一年底為止的累計;<b>期末餘額</b> = 期初 + 借方金額 − 貸方金額。
   <b>金額借方是正、貸方是負</b>(負債、權益、收入的餘額是負數),所以全部科目的期末餘額加總應該 = 0。<br>
-  「3353 本期損益」= 這一年 4~7 開頭科目的淨額(一樣借正貸負,有賺是負數),是算出來的,不算進合計跟檢核。
+  「3353 本期損益」= 這一年 4~7 開頭科目的淨額(一樣借正貸負,有賺是負數),是算出來的,不算進合計跟檢核。<br>
+  <b>彙總科目</b>(粗體,例如 1103 銀行存款)= 底下縮排的科目加總;合計跟檢核只加明細科目,不會重複算。上層是誰在「會計科目設定」調整。
 </p>
+<style>
+  table.stmt tr.tb-sum td { background: var(--paper-2); font-weight: 700; }
+  .tb-toggle { display:flex; gap:6px; margin-bottom:10px; }
+  .tb-toggle button.on { background: var(--seal); color: #FBF6EA; border-color: var(--seal); }
+</style>
+<div class="tb-toggle">
+  <button type="button" class="ghost on" data-mode="all">展開明細</button>
+  <button type="button" class="ghost" data-mode="top">只看上層</button>
+</div>
 <div class="card stmt-card" style="margin-bottom:16px">
   <table class="stmt">
     <colgroup><col style="width:64px"><col class="c-code"><col class="c-name"><col class="c-amt"><col class="c-amt"><col class="c-amt"><col class="c-amt"></colgroup>
     <thead><tr><th>期別</th><th style="text-align:left">科目代碼</th><th style="text-align:left">科目名稱</th><th data-num>期初餘額</th><th data-num>借方金額</th><th data-num>貸方金額</th><th data-num>期末餘額</th></tr></thead>
     <tbody>{% for r in tb.rows %}
-      <tr style="{{ 'background:var(--paper-2)' if r.synthetic }}">
-        <td>{{ tb.year }}</td><td style="text-align:left">{{ r.account_code }}</td><td style="text-align:left">{{ r.account_name }}{{ '(算出來的)' if r.synthetic }}</td>
+      <tr class="{{ 'tb-sum' if r.summary }}" data-level="{{ r.level or 0 }}" style="{{ 'background:var(--paper-2)' if r.synthetic }}">
+        <td>{{ tb.year }}</td><td style="text-align:left;padding-left:{{ 10 + (r.level or 0) * 18 }}px">{{ r.account_code }}</td><td style="text-align:left;padding-left:{{ 10 + (r.level or 0) * 18 }}px">{{ r.account_name }}{{ '(算出來的)' if r.synthetic }}{{ '(合計)' if r.summary }}</td>
         <td class="r {{ 'neg' if r.open_bal and r.open_bal < 0 }}">{{ '—' if r.synthetic else r.open_bal|money }}</td>
         <td class="r">{{ '—' if r.synthetic else r.dr|money }}</td>
         <td class="r">{{ '—' if r.synthetic else r.cr|money }}</td>
@@ -62,4 +72,20 @@
     <b class="{{ 'pos' if tb.check == 0 else 'neg' }}">{{ tb.check|money }}</b>
   </div>
 </div>
+<script>
+// 只看上層:藏起縮排的明細(level > 0),彙總科目一列就是合計。選擇記在這台瀏覽器。
+(function () {
+  var btns = document.querySelectorAll('.tb-toggle button');
+  function apply(mode) {
+    document.querySelectorAll('table.stmt tbody tr').forEach(function (tr) {
+      tr.hidden = mode === 'top' && +tr.dataset.level > 0;
+    });
+    btns.forEach(function (b) { b.classList.toggle('on', b.dataset.mode === mode); });
+    try { localStorage.setItem('tbMode', mode); } catch (e) {}
+  }
+  btns.forEach(function (b) { b.addEventListener('click', function () { apply(b.dataset.mode); }); });
+  var saved = 'all'; try { saved = localStorage.getItem('tbMode') || 'all'; } catch (e) {}
+  apply(saved);
+})();
+</script>
 {% endblock %}

@@ -1081,14 +1081,14 @@ def trial_balance(year):
     rows = []
     for a in _chart.accounts(active_only=False, postable_only=True):
         g = agg.pop(a["code"], None) or {}
-        rows.append(dict(account_code=a["code"], account_name=a["name"],
+        rows.append(dict(account_code=a["code"], account_name=a["name"], parent_code=a["parent_code"],
                          open_bal=round(g.get("open_bal") or 0, 2), dr=round(g.get("dr") or 0, 2),
-                         cr=round(g.get("cr") or 0, 2), synthetic=False))
+                         cr=round(g.get("cr") or 0, 2), synthetic=False, summary=False))
     for code, g in agg.items():          # 科目表裡已經刪掉、但總帳還有的(理論上不會有)
         if code == PNL_SUMMARY_ACCOUNT[0]:
             continue
         rows.append(dict(account_code=code, account_name=g["account_name"], open_bal=round(g["open_bal"] or 0, 2),
-                         dr=round(g["dr"] or 0, 2), cr=round(g["cr"] or 0, 2), synthetic=False))
+                         dr=round(g["dr"] or 0, 2), cr=round(g["cr"] or 0, 2), synthetic=False, summary=False))
     for r in rows:
         r["close_bal"] = round(r["open_bal"] + r["dr"] - r["cr"], 2)
     pnl = q1("""SELECT COALESCE(SUM(debit - credit), 0) v FROM ledger_entry
@@ -1096,9 +1096,24 @@ def trial_balance(year):
                   AND substr(account_code, 1, 1) IN ('4','5','6','7')""", (lo, hi))["v"]
     code, name = PNL_SUMMARY_ACCOUNT
     rows.append(dict(account_code=code, account_name=name, open_bal=None, dr=None, cr=None,
-                     close_bal=round(pnl or 0, 2), synthetic=True))
-    rows.sort(key=lambda r: r["account_code"])
+                     close_bal=round(pnl or 0, 2), synthetic=True, summary=False))
+    # 科目階層(2026-10-23):彙總科目一列 = 底下所有明細科目加總(可以多層),排成樹狀(上層在前、子科目縮排)。
+    # 合計 / 檢核只加明細科目,彙總列不重複算。
     real = [r for r in rows if not r["synthetic"]]
+    sums = _chart.accounts(active_only=False, include_summary=True)
+    sums = [a for a in sums if a["is_summary"]]
+    for a in sums:
+        rows.append(dict(account_code=a["code"], account_name=a["name"], parent_code=a["parent_code"],
+                         open_bal=0.0, dr=0.0, cr=0.0, close_bal=0.0, synthetic=False, summary=True))
+    rows = _chart.tree_order(rows, code_key="account_code")
+    for r in reversed(rows):              # 樹狀順序倒著走:子科目一定先算完,再加到上層
+        p = r.get("parent_code")
+        if r["synthetic"] or not p:
+            continue
+        up = next((x for x in rows if x["account_code"] == p and x["summary"]), None)
+        if up:
+            for k in ("open_bal", "dr", "cr", "close_bal"):
+                up[k] = round(up[k] + (r[k] or 0), 2)
     return dict(year=year, lo=lo, hi=hi, rows=rows,
                 total_open=round(sum(r["open_bal"] for r in real), 2),
                 total_dr=round(sum(r["dr"] for r in real), 2), total_cr=round(sum(r["cr"] for r in real), 2),
@@ -1109,15 +1124,18 @@ def account_ledger(code, lo=None, hi=None):
     """科目明細(2026-10-16,照 1015 版各明細工作表的「產出報表樣式」):某個科目的每一筆分錄,
     依日期排,算累計餘額。累計餘額跟正式報表同一套正負號規則(正常增加的方向是正數)。
     識別碼(發票號碼)跟總帳頁一樣依來源抓。lo/hi 是 YYYY-MM-DD,沒給就全部。"""
-    where, args = ["account_code=?"], [code]
+    import chart as _chart
+    codes = [code] + _chart.descendants(code)    # 彙總科目(2026-10-23):列出底下所有科目的分錄
+    inn = f"account_code IN ({','.join('?' * len(codes))})"
+    where, args = [inn], list(codes)
     if lo:
         where.append("entry_date>=?"); args.append(lo)
     if hi:
         where.append("entry_date<=?"); args.append(hi)
     opening = 0.0
     if lo:
-        r0 = q1("SELECT COALESCE(SUM(debit-credit),0) v FROM ledger_entry WHERE account_code=? AND entry_date<?",
-                (code, lo))
+        r0 = q1(f"SELECT COALESCE(SUM(debit-credit),0) v FROM ledger_entry WHERE {inn} AND entry_date<?",
+                codes + [lo])
         opening = _display_balance(code, r0["v"] or 0)
     rows = q(f"""SELECT * FROM ledger_entry WHERE {' AND '.join(where)}
                  ORDER BY entry_date, voucher_no, entry_id""", args)
@@ -1126,7 +1144,7 @@ def account_ledger(code, lo=None, hi=None):
         r["amount"] = _display_balance(code, (r["debit"] or 0) - (r["credit"] or 0))
         bal += r["amount"]
         r["balance"] = bal
-    return dict(rows=rows, opening=opening, closing=bal)
+    return dict(rows=rows, opening=opening, closing=bal, n_children=len(codes) - 1)
 
 
 # ---------- 成本移轉價紀錄(2026-10-23) ---------------------------------

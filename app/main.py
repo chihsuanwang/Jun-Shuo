@@ -220,6 +220,11 @@ def migrate_db():
                    grp TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 0,
                    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')))""")
+        acols = [r["name"] for r in q("PRAGMA table_info(account)")]
+        if "parent_code" not in acols:           # 科目階層(2026-10-23),保留資料加欄位
+            execute("ALTER TABLE account ADD COLUMN parent_code TEXT")
+        if "is_summary" not in acols:
+            execute("ALTER TABLE account ADD COLUMN is_summary INTEGER NOT NULL DEFAULT 0")
         chart.ensure_chart()
         if q1("SELECT 1 FROM sqlite_master WHERE name='bank_account'"):
             for b in q("SELECT name, account_code FROM bank_account"):
@@ -1876,7 +1881,7 @@ async def finance_expense_save(request: Request):
     if eid and _source_locked("op_expense", eid):
         return _locked_redirect(request, EXP_LIST_URL)
     code = g("account_code")
-    acct = q1("SELECT code, name, grp FROM account WHERE code=? AND grp IN ('VD','VE')", (code,))
+    acct = q1("SELECT code, name, grp FROM account WHERE code=? AND grp IN ('VD','VE') AND is_summary=0", (code,))
     grp = acct.get("grp") or (f.get("grp") if f.get("grp") in EXP_KINDS else "VD")
     list_url = EXP_KINDS[grp]["list_url"]
     if f.get("_delete") and eid:
@@ -1979,7 +1984,7 @@ async def other_income_save(request: Request):
         return RedirectResponse("/other-income", status_code=303)
     date = (f.get("income_date") or "").strip()
     code = g("account_code")
-    acct = q1("SELECT code, name FROM account WHERE code=? AND grp='UB'", (code,))
+    acct = q1("SELECT code, name FROM account WHERE code=? AND grp='UB' AND is_summary=0", (code,))
     if not (date and acct):
         return RedirectResponse("/other-income", status_code=303)
     doc = g("doc_type")
@@ -2285,11 +2290,23 @@ def _voucher_edit_url(source_type, source_id):
 def accounts_page(request: Request):
     used = {r["account_code"]: r["n"] for r in
             q("SELECT account_code, COUNT(*) n FROM ledger_entry GROUP BY account_code")}
-    rows = chart.accounts(active_only=False)
-    groups = [dict(key=k, label=lbl, rows=[dict(r, used=used.get(r["code"], 0)) for r in rows if r["grp"] == k])
+    rows = chart.accounts(active_only=False, include_summary=True)
+    kids = {}
+    for r in rows:
+        if r["parent_code"]:
+            kids.setdefault(r["parent_code"], []).append(r["code"])
+    summaries = [r for r in rows if r["is_summary"]]
+    names = {r["code"]: r["name"] for r in rows}
+    for r in rows:
+        r["used"] = used.get(r["code"], 0)
+        r["n_kids"] = len(kids.get(r["code"], []))
+        r["blocked"] = {r["code"], *chart.descendants(r["code"])}   # 不能選自己或自己底下的當上層
+        r["parent_name"] = names.get(r["parent_code"], "")
+    groups = [dict(key=k, label=lbl, rows=chart.tree_order([r for r in rows if r["grp"] == k]))
               for k, lbl in chart.GROUPS]
     return tpl.TemplateResponse("accounts.html", dict(
-        request=request, active="accounts", groups=groups, computed=chart.COMPUTED_CODES))
+        request=request, active="accounts", groups=groups, computed=chart.COMPUTED_CODES,
+        summaries=summaries, summary_codes=[r["code"] for r in summaries]))
 
 @app.post("/accounts")
 async def account_add(request: Request):
@@ -2301,9 +2318,28 @@ async def account_add(request: Request):
         return RedirectResponse("/accounts?err=missing", status_code=303)
     if q1("SELECT 1 FROM account WHERE code=?", (code,)):
         return RedirectResponse(f"/accounts?err=dup&code={code}", status_code=303)
+    parent = (f.get("parent_code") or "").strip() or None
+    if parent and not q1("SELECT 1 FROM account WHERE code=? AND is_summary=1", (parent,)):
+        return RedirectResponse(f"/accounts?err=parent#g-{grp}", status_code=303)
+    is_summary = 1 if f.get("is_summary") else 0
     sort = (q1("SELECT MAX(sort) m FROM account").get("m") or 0) + 1
-    execute("INSERT INTO account(code,name,grp,sort) VALUES(?,?,?,?)", (code, name, grp, sort))
+    execute("INSERT INTO account(code,name,grp,sort,parent_code,is_summary) VALUES(?,?,?,?,?,?)",
+            (code, name, grp, sort, parent, is_summary))
     return RedirectResponse(f"/accounts?added={code}#g-{grp}", status_code=303)
+
+@app.post("/accounts/{code}/parent")
+async def account_set_parent(request: Request, code: str):
+    """改上層科目(2026-10-23):只能掛到彙總科目底下,不能掛到自己或自己底下的科目(會繞圈)。"""
+    f = await request.form()
+    parent = (f.get("parent_code") or "").strip() or None
+    row = q1("SELECT grp FROM account WHERE code=?", (code,))
+    if not row:
+        return RedirectResponse("/accounts", status_code=303)
+    if parent and (parent == code or parent in chart.descendants(code)
+                   or not q1("SELECT 1 FROM account WHERE code=? AND is_summary=1", (parent,))):
+        return RedirectResponse(f"/accounts?err=parent#g-{row['grp']}", status_code=303)
+    execute("UPDATE account SET parent_code=? WHERE code=?", (parent, code))
+    return RedirectResponse(f"/accounts?moved={code}#g-{row['grp']}", status_code=303)
 
 @app.post("/accounts/{code}/rename")
 async def account_rename(request: Request, code: str):
@@ -2328,6 +2364,8 @@ def account_delete(code: str):
     row = q1("SELECT grp FROM account WHERE code=?", (code,))
     if q1("SELECT 1 FROM ledger_entry WHERE account_code=? LIMIT 1", (code,)):
         return RedirectResponse(f"/accounts?err=used&code={code}#g-{row.get('grp', '')}", status_code=303)
+    if q1("SELECT 1 FROM account WHERE parent_code=? LIMIT 1", (code,)):
+        return RedirectResponse(f"/accounts?err=haskids&code={code}#g-{row.get('grp', '')}", status_code=303)
     execute("DELETE FROM account WHERE code=?", (code,))
     return RedirectResponse(f"/accounts?deleted={code}#g-{row.get('grp', '')}", status_code=303)
 
@@ -2395,10 +2433,11 @@ def trial_balance_csv(request: Request):
     """試算表下載:跟畫面一樣(期初、本期借貸、期末,借正貸負)。"""
     year, _ = _trial_year(request)
     tb = Q.trial_balance(year)
-    rows = [[year, r["account_code"], r["account_name"] + ("(算出來的,不計入檢核)" if r["synthetic"] else ""),
+    rows = [[year, r["account_code"], "　" * r.get("level", 0) + r["account_name"]
+             + ("(算出來的,不計入檢核)" if r["synthetic"] else "(合計,不計入加總)" if r["summary"] else ""),
              "" if r["synthetic"] else round(r["open_bal"]), "" if r["synthetic"] else round(r["dr"]),
              "" if r["synthetic"] else round(r["cr"]), round(r["close_bal"])] for r in tb["rows"]]
-    rows += [[], ["", "", "合計(不含本期損益)", round(tb["total_open"]), round(tb["total_dr"]), round(tb["total_cr"]),
+    rows += [[], ["", "", "合計(不含本期損益、不含彙總科目的合計列)", round(tb["total_open"]), round(tb["total_dr"]), round(tb["total_cr"]),
                   round(tb["check"])], ["", "", "檢核:期末餘額加總(應該 = 0)", "", "", "", round(tb["check"])]]
     # 欄位照同仁給的「試算表」格式(2026-10-21)
     return csv_response(f"試算表_{year}年.csv", ["期別", "科目代碼", "科目名稱", "期初餘額", "借方金額", "貸方金額", "期末餘額"], rows)
@@ -2550,8 +2589,8 @@ def account_ledger_page(request: Request):
         r["invoice_no"] = inv.get((r["source_type"], r["source_id"]), "")
         r["src_label"] = LEDGER_SOURCES.get(r["source_type"], r["source_type"])
     used = {r["account_code"] for r in q("SELECT DISTINCT account_code FROM ledger_entry")}
-    groups = [dict(key=k, label=lbl, accts=[a for a in chart.accounts([k], active_only=False)
-                                              if a["code"] not in chart.COMPUTED_CODES])
+    groups = [dict(key=k, label=lbl, accts=chart.tree_order([a for a in chart.accounts([k], active_only=False, include_summary=True)
+                                                             if a["code"] not in chart.COMPUTED_CODES]))
               for k, lbl in chart.GROUPS]
     return tpl.TemplateResponse("account_ledger.html", dict(
         request=request, active="acctledger", acct=acct, d=d, lo=lo, hi=hi,

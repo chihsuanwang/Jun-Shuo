@@ -13,41 +13,61 @@
 {% if qp.get('err') == 'dup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">科目代碼 {{ qp.get('code') }} 已經有了,請換一個。</div>{% endif %}
 {% if qp.get('err') == 'missing' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">科目代碼跟名稱都要填。</div>{% endif %}
 {% if qp.get('err') == 'used' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">{{ qp.get('code') }} 已經記過帳,不能刪除;不想再用的話按「停用」。</div>{% endif %}
+{% if qp.get('moved') %}<div class="ok">已改 {{ qp.get('moved') }} 的上層科目。</div>{% endif %}
+{% if qp.get('err') == 'parent' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">上層科目只能選「彙總科目」,而且不能選自己或自己底下的科目。</div>{% endif %}
+{% if qp.get('err') == 'haskids' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">{{ qp.get('code') }} 底下還有科目,不能刪除;先把底下的科目移到別的上層或刪掉。</div>{% endif %}
 {% if qp.get('err') == 'bankdup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">已經有別的銀行帳戶叫這個名字了。</div>{% endif %}
 
 <p class="muted" style="font-size:13px;margin:-4px 0 16px;line-height:1.7">
   系統所有記帳畫面的科目都從這裡來,分組照同事的「帳務設定表」。<br>
   <b>改名</b>:連之前已經記過的傳票一起改。<b>停用</b>:下拉選單不再出現,舊傳票照常顯示。
-  <b>刪除</b>:只有從來沒記過帳的科目才能刪。
+  <b>刪除</b>:只有從來沒記過帳的科目才能刪。<br>
+  <b>彙總科目</b>(標「彙總」的,例如 1103 銀行存款):不能記帳、不會出現在記帳下拉選單,試算表上的金額 = 底下所有科目加總。
+  <b>上層科目</b>:這個科目要加總到哪個彙總科目底下,隨時可以改;新增科目時會照代碼自動建議(例如 1103-04 → 1103)。
 </p>
+<style>
+  .acc-summary td { background: var(--paper-2); font-weight: 600; }
+  .acc-tag { display:inline-block; font-size:11px; padding:0 7px; border-radius:999px; background:var(--seal); color:#FBF6EA; margin-left:6px; font-weight:600; }
+  .acc-indent { display:inline-block; }
+</style>
 
 <div class="chips" style="margin-bottom:16px;font-size:13px">
   {% for g in groups %}<a class="chip" href="#g-{{ g.key }}">{{ g.key }} {{ g.label }}</a>{% endfor %}
 </div>
 
 {% for g in groups %}
-<div class="card" id="g-{{ g.key }}" style="max-width:760px;margin-bottom:16px">
+<div class="card" id="g-{{ g.key }}" style="max-width:980px;margin-bottom:16px;overflow-x:auto">
   <h3 class="serif">{{ g.key }} · {{ g.label }}</h3>
   <table class="vt">
-    <thead><tr><th>科目代碼</th><th>科目名稱</th><th>已記帳</th><th></th></tr></thead>
+    <thead><tr><th>科目代碼</th><th>科目名稱</th><th>上層科目</th><th>已記帳</th><th></th></tr></thead>
     <tbody>
     {% for r in g.rows %}
-      <tr style="{{ 'opacity:.5' if not r.active }}">
-        <td>{{ r.code }}</td>
+      <tr class="{{ 'acc-summary' if r.is_summary }}" style="{{ 'opacity:.5' if not r.active }}">
+        <td style="white-space:nowrap"><span class="acc-indent" style="width:{{ r.level * 18 }}px"></span>{{ r.code }}{% if r.is_summary %}<span class="acc-tag">彙總</span>{% endif %}</td>
         <td>
           <form method="post" action="/accounts/{{ r.code }}/rename" style="display:flex;gap:6px;align-items:center;margin:0">
             <input name="name" value="{{ r.name }}" style="width:220px">
             <button type="submit" class="ghost" style="padding:4px 10px">改名</button>
           </form>
         </td>
-        <td class="r">{{ r.used }} 筆</td>
+        <td>
+          {% if r.code not in computed %}
+          <form method="post" action="/accounts/{{ r.code }}/parent" style="margin:0">
+            <select name="parent_code" onchange="this.form.submit()" style="width:auto;max-width:200px">
+              <option value="">— 沒有上層 —</option>
+              {% for s in summaries %}{% if s.code not in r.blocked %}<option value="{{ s.code }}" {{ 'selected' if r.parent_code == s.code }}>{{ s.code }} {{ s.name }}</option>{% endif %}{% endfor %}
+            </select>
+          </form>
+          {% endif %}
+        </td>
+        <td class="r" style="white-space:nowrap">{% if r.is_summary %}<span class="muted">底下 {{ r.n_kids }} 個</span>{% else %}{{ r.used }} 筆{% endif %}</td>
         <td style="white-space:nowrap">
           {% if r.code not in computed %}
           <form method="post" action="/accounts/{{ r.code }}/toggle" style="display:inline;margin:0">
             <button type="submit" class="ghost" style="padding:4px 10px">{{ '停用' if r.active else '恢復使用' }}</button>
           </form>
           {% else %}<span class="muted" style="font-size:12px">報表算出來的</span>{% endif %}
-          {% if not r.used %}
+          {% if not r.used and not r.n_kids %}
           <form method="post" action="/accounts/{{ r.code }}/delete" style="display:inline;margin:0"
                 onsubmit="return confirm('刪除科目 {{ r.code }} {{ r.name }}?')">
             <button type="submit" class="ghost" style="padding:4px 10px">刪除</button>
@@ -55,15 +75,38 @@
           {% endif %}
         </td>
       </tr>
-    {% else %}<tr><td colspan="4" class="muted" style="text-align:left">這組還沒有科目。</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="5" class="muted" style="text-align:left">這組還沒有科目。</td></tr>{% endfor %}
     </tbody>
   </table>
   <form method="post" action="/accounts" style="display:flex;gap:8px;align-items:end;margin-top:12px;flex-wrap:wrap">
     <input type="hidden" name="grp" value="{{ g.key }}">
     <div><label>新增科目代碼</label><input name="code" placeholder="例:6188-06" style="width:130px" required></div>
     <div><label>科目名稱</label><input name="name" placeholder="例:其他費用-包裝費" style="width:220px" required></div>
+    <div><label>上層科目</label><select name="parent_code" class="newparent" style="width:auto;max-width:220px">
+      <option value="">— 沒有上層 —</option>
+      {% for s in summaries %}<option value="{{ s.code }}">{{ s.code }} {{ s.name }}</option>{% endfor %}
+    </select></div>
+    <label style="display:flex;align-items:center;gap:6px;margin:0 0 9px;font-size:13px;color:var(--ink)">
+      <input type="checkbox" name="is_summary" value="1" style="width:auto"> 這是彙總科目(不能記帳)
+    </label>
     <button type="submit" class="ghost">＋ 新增到這組</button>
   </form>
 </div>
 {% endfor %}
+<script>
+// 打新科目代碼時,照代碼自動建議上層(去掉最後一段「-xx」往上找彙總科目;1103-04 → 1103)。手動改過就不再自動帶。
+(function () {
+  var SUMS = {{ summary_codes | tojson }};
+  document.querySelectorAll('form[action="/accounts"]').forEach(function (f) {
+    var code = f.querySelector('input[name="code"]'), sel = f.querySelector('select.newparent'), touched = false;
+    sel.addEventListener('change', function () { touched = true; });
+    code.addEventListener('input', function () {
+      if (touched) return;
+      var parts = code.value.trim().split('-'), hit = '';
+      while (parts.length > 1 && !hit) { parts.pop(); var c = parts.join('-'); if (SUMS.indexOf(c) >= 0) hit = c; }
+      sel.value = hit;
+    });
+  });
+})();
+</script>
 {% endblock %}

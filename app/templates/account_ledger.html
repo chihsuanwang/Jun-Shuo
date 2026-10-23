@@ -13,7 +13,7 @@
 <form method="get" action="/account-ledger" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:16px">
   <div><label>科目</label><select name="code" onchange="this.form.submit()" style="min-width:260px">
     {% for g in groups %}<optgroup label="{{ g.key }} {{ g.label }}">
-      {% for a in g.accts %}<option value="{{ a.code }}" {{ 'selected' if a.code == acct.code }}>{{ a.code }} {{ a.name }}{{ '' if a.code in used else '(沒有交易)' }}</option>{% endfor %}
+      {% for a in g.accts %}<option value="{{ a.code }}" {{ 'selected' if a.code == acct.code }}>{{ '　' * (a.level or 0) }}{{ a.code }} {{ a.name }}{% if a.is_summary %}(彙總,含底下科目){% elif a.code not in used %}(沒有交易){% endif %}</option>{% endfor %}
     </optgroup>{% endfor %}
   </select></div>
   <div><label>從</label><input type="date" data-nolock name="from" value="{{ lo }}" style="width:auto"></div>
@@ -23,7 +23,8 @@
 
 <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:16px">
   <div class="card kpi"><div class="lab">科目代碼</div><div class="val">{{ acct.code }}</div></div>
-  <div class="card kpi"><div class="lab">科目名稱</div><div class="val" style="font-size:20px">{{ acct.name }}</div></div>
+  <div class="card kpi"><div class="lab">科目名稱</div><div class="val" style="font-size:20px">{{ acct.name }}</div>
+    {% if d.n_children %}<div class="sub">彙總科目:包含底下 {{ d.n_children }} 個科目的交易</div>{% endif %}</div>
   <div class="card kpi" style="border-top-color:var(--leaf)"><div class="lab">{{ '期末餘額' if lo or hi else '目前餘額' }}</div>
     <div class="val {{ 'neg' if d.closing < 0 }}">{{ d.closing|money }}</div>
     {% if lo %}<div class="sub">期初 {{ d.opening|money }}</div>{% endif %}</div>
@@ -31,18 +32,18 @@
 
 <div class="card" style="overflow-x:auto">
   <table class="gl">
-    <thead><tr><th>傳票號碼</th><th>交易日期</th><th>來源</th><th>識別碼</th><th data-num>借方</th><th data-num>貸方</th><th data-num>交易金額</th><th data-num>本次餘額</th><th>備註</th></tr></thead>
+    <thead><tr><th>傳票號碼</th><th>交易日期</th>{% if d.n_children %}<th>科目</th>{% endif %}<th>來源</th><th>識別碼</th><th data-num>借方</th><th data-num>貸方</th><th data-num>交易金額</th><th data-num>本次餘額</th><th>備註</th></tr></thead>
     <tbody>
-    {% if lo %}<tr class="muted"><td colspan="7">期初餘額</td><td class="r">{{ d.opening|money }}</td><td></td></tr>{% endif %}
+    {% if lo %}<tr class="muted"><td colspan="{{ 8 if d.n_children else 7 }}">期初餘額</td><td class="r">{{ d.opening|money }}</td><td></td></tr>{% endif %}
     {% for r in d.rows %}
       <tr>
-        <td>{{ r.voucher_no }}</td><td>{{ r.entry_date }}</td><td class="muted">{{ r.src_label }}</td><td>{{ r.invoice_no }}</td>
+        <td>{{ r.voucher_no }}</td><td>{{ r.entry_date }}</td>{% if d.n_children %}<td>{{ r.account_code }} {{ r.account_name }}</td>{% endif %}<td class="muted">{{ r.src_label }}</td><td>{{ r.invoice_no }}</td>
         <td class="r">{{ r.debit|money if r.debit else '' }}</td><td class="r">{{ r.credit|money if r.credit else '' }}</td>
         <td class="r {{ 'neg' if r.amount < 0 }}">{% if r.amount < 0 %}({{ (-r.amount)|money }}){% else %}{{ r.amount|money }}{% endif %}</td>
         <td class="r">{{ r.balance|money }}</td>
         <td class="muted">{{ r.note or '' }}</td>
       </tr>
-    {% else %}<tr><td colspan="9" class="muted" style="text-align:left">這個科目在這段期間沒有交易。</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="{{ 10 if d.n_children else 9 }}" class="muted" style="text-align:left">這個科目在這段期間沒有交易。</td></tr>{% endfor %}
     </tbody>
   </table>
 </div>

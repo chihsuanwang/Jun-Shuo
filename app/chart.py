@@ -65,6 +65,82 @@ DEFAULT_CHART = [
 # 只在報表上算出來、不能拿來記帳的科目(不會出現在任何下拉選單,試算表也不補 0 列)
 COMPUTED_CODES = {"3353", "5950"}
 
+# ---------- 科目階層(2026-10-23) ----------------------------------------
+#   account.parent_code = 上層科目;account.is_summary = 1 是「彙總科目」:不能記帳(不出現在任何記帳下拉),
+#   金額 = 底下所有科目加總(可以多層)。新增科目時用代碼自動建議上層(1103-04 → 1103),使用者可以改。
+#   初始的彙總科目(名稱可在會計科目設定頁改)。5111 叫「銷貨成本」:底下有採購成本 5111-01~05,
+#   也有同仁 10/20 加的 5111-2150-03 原料報廢損失、5111-2408 / 5111-2417-01 製造費用——都算營業成本。
+SUMMARY_DEFAULTS = [
+    ("C", "1103", "銀行存款"), ("F", "1301", "商品存貨"), ("F", "1311", "製成品"),
+    ("UA", "4111", "銷貨收入"), ("VA", "5111", "銷貨成本"), ("VD", "6110", "薪資費用"),
+    ("VD", "6188", "其他費用"), ("UB", "7190", "其他收入"),
+]
+
+
+def suggest_parent(code, summaries=None):
+    """用代碼找最接近的彙總科目當上層:去掉最後一段「-xx」一直往上找(5111-2150-03 → 5111-2150 → 5111)。"""
+    if summaries is None:
+        summaries = {r["code"] for r in q("SELECT code FROM account WHERE is_summary=1")}
+    parts = (code or "").split("-")
+    while len(parts) > 1:
+        parts.pop()
+        cand = "-".join(parts)
+        if cand in summaries and cand != code:
+            return cand
+    return None
+
+
+def setup_hierarchy():
+    """建初始彙總科目,沒有上層的科目照代碼自動掛上去(只掛到彙總科目底下)。"""
+    for i, (g, code, name) in enumerate(SUMMARY_DEFAULTS):
+        if not q1("SELECT 1 FROM account WHERE code=?", (code,)):
+            execute("INSERT INTO account(code,name,grp,sort,is_summary) VALUES(?,?,?,?,1)", (code, name, g, -100 + i))
+    summaries = {r["code"] for r in q("SELECT code FROM account WHERE is_summary=1")}
+    for r in q("SELECT code FROM account WHERE parent_code IS NULL"):
+        p = suggest_parent(r["code"], summaries)
+        if p:
+            execute("UPDATE account SET parent_code=? WHERE code=?", (p, r["code"]))
+
+
+def descendants(code):
+    """這個科目底下所有層的子科目代碼(不含自己)。"""
+    kids = {}
+    for r in q("SELECT code, parent_code FROM account WHERE parent_code IS NOT NULL"):
+        kids.setdefault(r["parent_code"], []).append(r["code"])
+    out, stack = [], list(kids.get(code, []))
+    while stack:
+        c = stack.pop()
+        out.append(c)
+        stack.extend(kids.get(c, []))
+    return out
+
+
+def tree_order(rows, code_key="code"):
+    """把一串科目(dict,要有 code_key、parent_code)排成樹:上層在前、子科目縮排在後,同層照代碼排。
+    每列加 level(0 = 最上層)。上層不在這串裡的就當最上層。"""
+    by = {r[code_key]: r for r in rows}
+    kids = {}
+    roots = []
+    for r in rows:
+        p = r.get("parent_code")
+        if p and p in by and p != r[code_key]:
+            kids.setdefault(p, []).append(r)
+        else:
+            roots.append(r)
+    out, seen = [], set()
+
+    def walk(r, lvl):
+        if r[code_key] in seen:
+            return
+        seen.add(r[code_key])
+        r["level"] = lvl
+        out.append(r)
+        for k in sorted(kids.get(r[code_key], []), key=lambda x: x[code_key]):
+            walk(k, lvl + 1)
+    for r in sorted(roots, key=lambda x: x[code_key]):
+        walk(r, 0)
+    return out
+
 
 def ensure_chart(cx=None):
     """account 表是空的就灌 DEFAULT_CHART。cx 給 seed.py 用(它有自己的連線)。"""
@@ -82,14 +158,20 @@ def ensure_chart(cx=None):
 
 # 2026-10-20 同仁回覆「待同仁確認」新增的科目。已經在用的資料庫(含 Render 網站)開機時補上一次,
 # 用 PRAGMA user_version 記「補過了」,之後使用者自己刪掉也不會一直被補回來。
+# 版本 2(2026-10-23):建初始彙總科目、掛上層(setup_hierarchy),之後使用者改名 / 搬移都不會被蓋回來。
 CHART_ADDITIONS = {
     1: ["2215", "5111-2150-03", "5111-2408", "5111-2417-01", "6111"],
+    2: setup_hierarchy,
 }
 
 
 def apply_chart_additions():
     ver = q1("PRAGMA user_version").get("user_version") or 0
     for v in sorted(k for k in CHART_ADDITIONS if k > ver):
+        if callable(CHART_ADDITIONS[v]):
+            CHART_ADDITIONS[v]()
+            execute(f"PRAGMA user_version = {int(v)}")
+            continue
         for code in CHART_ADDITIONS[v]:
             if q1("SELECT 1 FROM account WHERE code=?", (code,)):
                 continue
@@ -103,14 +185,18 @@ def name_of(code, default=None):
     return r.get("name") or default or code
 
 
-def accounts(groups=None, active_only=True, postable_only=False):
-    """依分組列科目(下拉選單用),回傳 list of dict(code,name,grp)。groups=None 是全部。"""
+def accounts(groups=None, active_only=True, postable_only=False, include_summary=False):
+    """依分組列科目(下拉選單用),回傳 list of dict(code,name,grp,active,parent_code,is_summary)。groups=None 是全部。
+    預設**不含彙總科目**(彙總科目不能記帳,記帳下拉一律不能出現);科目設定 / 試算表 / 科目明細才傳 include_summary=True。"""
     where, args = ["1=1"], []
     if groups:
         where.append(f"grp IN ({','.join('?' * len(groups))})"); args += list(groups)
     if active_only:
         where.append("active=1")
-    rows = q(f"SELECT code, name, grp, active FROM account WHERE {' AND '.join(where)} ORDER BY code", args)
+    if not include_summary:
+        where.append("is_summary=0")
+    rows = q(f"""SELECT code, name, grp, active, parent_code, is_summary FROM account
+                 WHERE {' AND '.join(where)} ORDER BY code""", args)
     if postable_only:
         rows = [r for r in rows if r["code"] not in COMPUTED_CODES]
     return rows
@@ -127,12 +213,13 @@ def cash_account(payment_account):
     name = (payment_account or "").strip()
     if not name or name == "現金":
         return ("1102", name_of("1102", "現金"))
-    r = q1("SELECT code, name FROM account WHERE grp='C' AND name=?", (name,))
+    r = q1("SELECT code, name FROM account WHERE grp='C' AND is_summary=0 AND name=?", (name,))
     if r:
         return (r["code"], r["name"])
     nums = [int(x["code"].split("-")[1]) for x in q("SELECT code FROM account WHERE code LIKE '1103-%'")
             if x["code"].split("-")[1].isdigit()]
     code = f"1103-{(max(nums) if nums else 0) + 1:02d}"
     sort = (q1("SELECT MAX(sort) m FROM account").get("m") or 0) + 1
-    execute("INSERT INTO account(code,name,grp,sort) VALUES(?,?,?,?)", (code, name, "C", sort))
+    execute("INSERT INTO account(code,name,grp,sort,parent_code) VALUES(?,?,?,?,?)",
+            (code, name, "C", sort, suggest_parent(code)))
     return (code, name)
