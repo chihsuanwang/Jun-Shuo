@@ -8,7 +8,7 @@
 {% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
 {% if request.query_params.get('err') == 'date' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">訂單日期格式不對,請用日期選擇器選一天再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單一定要開發票,請填上發票號碼再存檔。</div>{% endif %}
-{% if request.query_params.get('err') == 'invoicedup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">發票號碼 {{ request.query_params.get('no') }} 已經用在訂單 {{ request.query_params.get('dup') }},發票號碼不能重複,請再檢查一次。</div>{% endif %}
+{% if request.query_params.get('err') == 'invoicedup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">發票號碼 {{ request.query_params.get('no') }} 已經用在{{ request.query_params.get('dup') }},發票號碼不能重複,請再檢查一次。</div>{% endif %}
 {% if copy_o %}<div class="ok">從訂單 <a href="/orders/{{ copy_o.order_id }}">{{ copy_o.order_no }}</a> 複製:客戶、品項、數量、單價、運費都先帶好了,成本移轉價帶入每個商品上一次的單價。
   <b>這張還沒建立</b>——確認內容、填上發票號碼後按「存檔並建立訂單」才會存。</div>{% endif %}
 {% if request.query_params.get('err') == 'cost' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單每一列都要填「成本移轉價」(跟小農買一個單位多少錢),不能是 0 或留空,請補上再存檔。</div>{% endif %}
@@ -328,7 +328,7 @@
   }
   kind.addEventListener('change', toggle);
   toggle();
-  wireInvoiceCheck(num, 0);
+  wireInvoiceCheck(num, 'order', 0);
 })();
 </script>
 {% endblock %}

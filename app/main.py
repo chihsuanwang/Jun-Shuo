@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import os, io, re, csv, json, glob, shutil, sys, runpy, base64, datetime as dt
+from urllib.parse import quote
 
 import paths
 import queries as Q
@@ -1225,7 +1226,7 @@ async def order_create(request: Request):
         return RedirectResponse("/orders/new?err=invoice", status_code=303)
     dup = _invoice_taken(tax_doc_no)
     if dup:
-        return RedirectResponse(f"/orders/new?err=invoicedup&no={tax_doc_no}&dup={dup['order_no']}", status_code=303)
+        return RedirectResponse(f"/orders/new?err=invoicedup&no={tax_doc_no}&dup={quote(dup['label'])}", status_code=303)
     invoiced = 1 if tax_doc_no else 0
     # 銷項稅額(2026-10-08):售價含稅,家易自己填稅額,系統不算;只擋明顯打錯(負數或比商品金額還大)
     sales_tax = flt("sales_tax") if order_kind == "銷售" else 0.0
@@ -1260,22 +1261,34 @@ def _norm_invoice(no):
     return re.sub(r"[\s\-]", "", no or "").upper()
 
 
-def _invoice_taken(no, exclude_oid=None):
-    """發票號碼不得重複(2026-10-23):回傳已經用了這個號碼的那張訂單(沒有就 None)。編輯時排除自己。"""
+def _invoice_taken(no, exclude=None):
+    """發票號碼不得重複(2026-10-23):訂單(tax_doc_no)、其他收益、營運支出(invoice_no)三邊共用一個比對池
+    ——統一發票號碼全國不重複,出現兩次一定是重複記帳或打錯。回傳撞到的那一筆(kind / id / label / url),
+    沒有就 None。exclude = (kind, id),編輯時排除自己。"""
     n = _norm_invoice(no)
     if not n:
         return None
-    for r in q("""SELECT order_id, order_no, tax_doc_no FROM "order" WHERE COALESCE(tax_doc_no,'') <> ''"""):
-        if r["order_id"] != exclude_oid and _norm_invoice(r["tax_doc_no"]) == n:
-            return r
+    srcs = [
+        ("order", """SELECT order_id id, tax_doc_no no, '訂單 ' || order_no label FROM "order"
+                     WHERE COALESCE(tax_doc_no,'') <> ''""", "/orders/{}"),
+        ("income", """SELECT income_id id, invoice_no no, '其他收益 ' || income_date || ' ' || COALESCE(category,'') label
+                      FROM other_income WHERE COALESCE(invoice_no,'') <> ''""", "/other-income/{}/edit"),
+        ("expense", """SELECT expense_id id, invoice_no no,
+                              '營運支出 / 其他支出 ' || COALESCE(expense_date, ym) || ' ' || COALESCE(category,'') label
+                       FROM op_expense WHERE COALESCE(invoice_no,'') <> ''""", "/finance/expenses/{}/edit"),
+    ]
+    for kind, sql, url in srcs:
+        for r in q(sql):
+            if (kind, r["id"]) != exclude and _norm_invoice(r["no"]) == n:
+                return dict(kind=kind, id=r["id"], label=r["label"], url=url.format(r["id"]))
     return None
 
 
 @app.get("/api/invoice-check")
-def api_invoice_check(no: str = "", exclude: int = 0):
-    """訂單畫面打完發票號碼就先問一次,重複的話當場紅字,不用等存檔被擋回來(表單才不會清空)。"""
-    r = _invoice_taken(no, exclude_oid=exclude or None)
-    return {"no": _norm_invoice(no), "taken": r["order_no"] if r else None, "order_id": r["order_id"] if r else None}
+def api_invoice_check(no: str = "", kind: str = "order", exclude: int = 0):
+    """訂單 / 其他收益 / 營運支出畫面打完發票號碼就先問一次,重複的話當場紅字,不用等存檔被擋回來(表單才不會清空)。"""
+    r = _invoice_taken(no, exclude=(kind, exclude) if exclude else None)
+    return {"no": _norm_invoice(no), "taken": r["label"] if r else None, "url": r["url"] if r else None}
 
 
 def _valid_date(s):
@@ -1611,9 +1624,9 @@ async def order_update(request: Request, oid: int):
     tax_doc_no = _norm_invoice(g("tax_doc_no"))
     if f.get("invoiced") and not tax_doc_no:
         return RedirectResponse(f"/orders/{oid}?err=invoice", status_code=303)
-    dup = _invoice_taken(tax_doc_no, exclude_oid=oid)
+    dup = _invoice_taken(tax_doc_no, exclude=("order", oid))
     if dup:
-        return RedirectResponse(f"/orders/{oid}?err=invoicedup&no={tax_doc_no}&dup={dup['order_no']}", status_code=303)
+        return RedirectResponse(f"/orders/{oid}?err=invoicedup&no={tax_doc_no}&dup={quote(dup['label'])}", status_code=303)
     sales_tax = flt("sales_tax") if kind == "銷售" else 0.0
     if sales_tax < 0 or (sales_tax and sales_tax >= total):
         return RedirectResponse(f"/orders/{oid}?err=tax", status_code=303)
@@ -1879,12 +1892,16 @@ async def finance_expense_save(request: Request):
     if tax >= total:
         return RedirectResponse(f"{back}?err=tax", status_code=303)
     doc = g("doc_type")
-    if doc == "發票" and not g("invoice_no"):
+    inv = _norm_invoice(g("invoice_no")) if doc == "發票" else ""
+    if doc == "發票" and not inv:
         return RedirectResponse(f"{back}?ierr=1", status_code=303)
+    dup = _invoice_taken(inv, exclude=("expense", int(eid)) if eid else None)
+    if dup:
+        return RedirectResponse(f"{back}?ierr=dup&no={inv}&dup={quote(dup['label'])}", status_code=303)
     cols = dict(expense_date=date, ym=date[:7], category=acct["name"], account_code=code,
                 amount=total - tax, amortize_months=None, tax_amount=tax,
                 payment_account=g("payment_account") or "現金", doc_type=doc,
-                invoice_no=(g("invoice_no") if doc == "發票" else None), note=g("note"))
+                invoice_no=(inv or None), note=g("note"))
     if eid:
         sets = ",".join(f"{k}=:{k}" for k in cols)
         execute(f"UPDATE op_expense SET {sets}, updated_at=datetime('now','localtime') WHERE expense_id=:id",
@@ -1966,9 +1983,13 @@ async def other_income_save(request: Request):
     if not (date and acct):
         return RedirectResponse("/other-income", status_code=303)
     doc = g("doc_type")
-    if doc == "發票" and not g("invoice_no"):
-        back = f"/other-income/{iid}/edit" if iid else "/other-income/new"
+    inv = _norm_invoice(g("invoice_no")) if doc == "發票" else ""
+    back = f"/other-income/{iid}/edit" if iid else "/other-income/new"
+    if doc == "發票" and not inv:
         return RedirectResponse(f"{back}?ierr=1", status_code=303)
+    dup = _invoice_taken(inv, exclude=("income", int(iid)) if iid else None)
+    if dup:
+        return RedirectResponse(f"{back}?ierr=dup&no={inv}&dup={quote(dup['label'])}", status_code=303)
     cat = acct["name"]
     total = _num(f.get("invoice_amount"))   # 發票金額(實收金額),含稅(2026-10-17)
     tax = _num(f.get("tax_amount"))
@@ -1976,7 +1997,7 @@ async def other_income_save(request: Request):
         back = f"/other-income/{iid}/edit" if iid else "/other-income/new"
         return RedirectResponse(f"{back}?err=1", status_code=303)
     cols = dict(income_date=date, category=cat, account_code=code, amount=total - tax, tax_amount=tax,
-                doc_type=doc, invoice_no=(g("invoice_no") if doc == "發票" else None),
+                doc_type=doc, invoice_no=(inv or None),
                 payment_account=g("payment_account"), note=g("note"))
     if iid:
         sets = ",".join(f"{k}=:{k}" for k in cols)

@@ -12,7 +12,7 @@
 </div></div>
 <hr class="rule">
 {% set qp = request.query_params %}
-{% if qp.get('ierr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">憑證類型選了發票,發票號碼要填。</div>{% endif %}
+{% if qp.get('ierr') == 'dup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">發票號碼 {{ request.query_params.get('no') }} 已經用在{{ request.query_params.get('dup') }},發票號碼不能重複,請再檢查一次。</div>{% elif qp.get('ierr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">憑證類型選了發票,發票號碼要填。</div>{% endif %}
 {% if qp.get('err') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">發票金額要大於 0,銷項稅額不能大於或等於發票金額。</div>{% endif %}
 <form method="post" action="/other-income">
 {% if r %}<input type="hidden" name="income_id" value="{{ r.income_id }}">{% endif %}
@@ -66,6 +66,7 @@
   {% endif %}
 </div>
 </form>
+{% include "_invoice_check.html" %}
 <script>
 (function () {
   var NAMES = {{ acct_names | tojson }}, BANKS = {{ bank_codes | tojson }};
@@ -84,6 +85,8 @@
   }
   [acct, amt, tax, pay, d].forEach(function (el) { el.addEventListener('input', upd); el.addEventListener('change', upd); });
   upd();
+  var recheck = wireInvoiceCheck(n, 'income', {{ r.income_id if r else 0 }}, function () { return d.value === '發票'; });
+  d.addEventListener('change', recheck);
 })();
 </script>
 {% endblock %}

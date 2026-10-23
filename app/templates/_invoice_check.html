@@ -1,27 +1,31 @@
 {# 發票號碼不得重複(2026-10-23):打完號碼(離開欄位)就問 /api/invoice-check,重複的話當場紅字 +
    擋住送出,不用等存檔被後端擋回來(那樣整張表單會清空)。後端照樣會再檢查一次。
-   用法:wireInvoiceCheck(輸入框, 這張訂單的 order_id 或 0) #}
+   訂單 / 其他收益 / 營運支出三邊共用一個比對池(統一發票號碼全國不重複)。
+   用法:wireInvoiceCheck(輸入框, 'order' | 'income' | 'expense', 這筆自己的 id 或 0, [什麼時候要檢查的函式])
+   第四個參數:欄位藏起來(憑證不是發票)時要回 false——藏起來的欄位如果還掛著錯誤,表單會默默送不出去。 #}
 <script>
-window.wireInvoiceCheck = function (input, excludeId) {
+window.wireInvoiceCheck = function (input, kind, excludeId, isActive) {
   if (!input) return;
   var msg = document.createElement('div');
   msg.style.cssText = 'font-size:11px;margin-top:3px;color:var(--seal);font-weight:600';
   input.parentNode.appendChild(msg);
+  function clear() { input.setCustomValidity(''); msg.textContent = ''; }
   function check() {
+    clear();
     var v = input.value.trim();
-    input.setCustomValidity(''); msg.textContent = '';
-    if (!v) return;
-    fetch('/api/invoice-check?no=' + encodeURIComponent(v) + '&exclude=' + (excludeId || 0))
+    if (!v || (isActive && !isActive())) return;
+    fetch('/api/invoice-check?no=' + encodeURIComponent(v) + '&kind=' + kind + '&exclude=' + (excludeId || 0))
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        if (input.value.trim() !== v || !d.taken) return;
-        var t = '發票號碼 ' + d.no + ' 已經用在訂單 ' + d.taken + ',不能重複';
+        if (input.value.trim() !== v || !d.taken || (isActive && !isActive())) return;
+        var t = '發票號碼 ' + d.no + ' 已經用在' + d.taken + ',不能重複';
         input.setCustomValidity(t); msg.textContent = t;
       })
       .catch(function () {});
   }
   input.addEventListener('change', check);
-  input.addEventListener('input', function () { input.setCustomValidity(''); msg.textContent = ''; });
+  input.addEventListener('input', clear);
   if (input.value.trim()) check();
+  return check;   // 憑證類型切換時可以再呼叫一次
 };
 </script>
