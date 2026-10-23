@@ -20,9 +20,7 @@
       <input type="hidden" name="ship_method" id="markShipMethod">
       <input type="hidden" name="shipped_date" id="markShippedDate">
       <button type="submit" {{ 'disabled' if o.ship_status!='待出貨' }}>標記已出貨</button></form>
-    <form method="post" action="/orders/{{ o.order_id }}/copy" style="display:inline"
-          onsubmit="return confirm('確定要複製這張訂單嗎?會建立一張新的訂單(品項、客戶、管道相同,收款/出貨狀態重新開始)。')">
-      <button type="submit" class="ghost">複製訂單</button></form>
+    <a href="/orders/new?copy={{ o.order_id }}" title="帶這張訂單的資料打開新增訂單畫面,補上發票號碼、確認後存檔才會建立"><button type="button" class="ghost">複製訂單</button></a>
     <form method="post" action="/orders/{{ o.order_id }}/delete" style="display:inline"
           onsubmit="return confirm('確定要刪除這張訂單嗎?刪除後無法復原,連同品項、退款紀錄、總帳傳票一起刪掉。')">
       <button type="submit" class="ghost" style="color:var(--seal);border-color:var(--seal)">刪除訂單</button></form>
@@ -39,6 +37,7 @@
 {% if request.query_params.get('shiperr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">出貨狀態選了「已出貨」,但出貨方式 / 出貨日沒填——請在下面「出貨」卡補上,或改用上面「標記已出貨」按鈕。</div>{% endif %}
 {% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
 {% if request.query_params.get('err') == 'date' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">訂單日期格式不對,請用日期選擇器選一天再存檔。</div>{% endif %}
+{% if request.query_params.get('err') == 'invoicedup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">發票號碼 {{ request.query_params.get('no') }} 已經用在訂單 {{ request.query_params.get('dup') }},發票號碼不能重複,請再檢查一次。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'cost' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單每一列都要填「成本移轉價」(跟小農買一個單位多少錢),不能是 0 或留空,請補上再存檔。</div>{% endif %}
 
@@ -353,6 +352,7 @@
   recalc();
 })();
 </script>
+{% include "_invoice_check.html" %}
 <script>
 (function () {
   var box = document.getElementById('invoicedBox'), num = document.getElementById('taxDocNo'),
@@ -363,6 +363,7 @@
   }
   box.addEventListener('change', toggle);
   toggle();
+  wireInvoiceCheck(num, {{ o.order_id }});
 })();
 </script>
 {% endblock %}

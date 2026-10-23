@@ -8,28 +8,32 @@
 {% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
 {% if request.query_params.get('err') == 'date' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">訂單日期格式不對,請用日期選擇器選一天再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單一定要開發票,請填上發票號碼再存檔。</div>{% endif %}
+{% if request.query_params.get('err') == 'invoicedup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">發票號碼 {{ request.query_params.get('no') }} 已經用在訂單 {{ request.query_params.get('dup') }},發票號碼不能重複,請再檢查一次。</div>{% endif %}
+{% if copy_o %}<div class="ok">從訂單 <a href="/orders/{{ copy_o.order_id }}">{{ copy_o.order_no }}</a> 複製:客戶、品項、數量、單價、運費都先帶好了,成本移轉價帶入每個商品上一次的單價。
+  <b>這張還沒建立</b>——確認內容、填上發票號碼後按「存檔並建立訂單」才會存。</div>{% endif %}
 {% if request.query_params.get('err') == 'cost' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單每一列都要填「成本移轉價」(跟小農買一個單位多少錢),不能是 0 或留空,請補上再存檔。</div>{% endif %}
 
 <style>.costhint{font-size:11px;margin-top:3px;line-height:1.35;white-space:nowrap}.costhint.changed{color:var(--seal);font-weight:600}</style>
 <form method="post" action="/orders">
+{% if copy_o %}<input type="hidden" name="note" value="複製自 {{ copy_o.order_no }}">{% endif %}
 <div class="card" style="margin-bottom:16px">
   <h3 class="serif">基本</h3>
   <div class="grid" style="grid-template-columns:repeat(4,1fr)">
     <div><label>訂單日</label><input type="date" name="order_date" value="{{ today }}" required></div>
     <div>
       <label>客戶</label>
-      <input type="hidden" name="customer_id" id="custId">
+      <input type="hidden" name="customer_id" id="custId" value="{{ copy_o.customer_id if copy_o else '' }}">
       <div style="position:relative">
-        <input id="custSearch" autocomplete="off" placeholder="打名字或電話搜尋…">
+        <input id="custSearch" autocomplete="off" placeholder="打名字或電話搜尋…" value="{{ copy_o.cust or '' if copy_o else '' }}">
         <div id="custResults" class="ac" hidden></div>
       </div>
       <div style="font-size:11px;margin-top:4px"><a href="/customers/new?next=/orders/new">找不到?先去新增客戶 →</a></div>
     </div>
     <div><label>銷售管道</label><select name="channel_id" required>
-      {% for c in channels %}<option value="{{ c.channel_id }}">{{ c.name }}</option>{% endfor %}
+      {% for c in channels %}<option value="{{ c.channel_id }}" {{ 'selected' if copy_o and copy_o.channel_id == c.channel_id }}>{{ c.name }}</option>{% endfor %}
     </select></div>
     <div><label>訂單種類</label><select name="order_kind">
-      {% for k in ['銷售','贈送-公關','贈送-捐贈','樣品','理賠重寄','換貨補出','內部領用'] %}<option>{{ k }}</option>{% endfor %}
+      {% for k in ['銷售','贈送-公關','贈送-捐贈','樣品','理賠重寄','換貨補出','內部領用'] %}<option {{ 'selected' if copy_o and copy_o.order_kind == k }}>{{ k }}</option>{% endfor %}
     </select></div>
   </div>
   <div id="custCard" hidden style="margin-top:14px;background:var(--paper-2);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.7"></div>
@@ -40,7 +44,20 @@
   <table>
     <thead><tr><th>品項</th><th>數量</th><th>單價</th><th style="white-space:nowrap">小計</th><th style="white-space:nowrap">成本移轉價<div class="muted" style="font-size:11px;font-weight:normal">每單位,必填</div></th><th style="white-space:nowrap">移轉價小計</th><th></th></tr></thead>
     <tbody id="lines">
-    {% for i in range(3) %}
+    {% for l in copy_lines %}
+      <tr class="line">
+        <td><select name="product_id"><option value="">—</option>
+          {% for p in products %}<option value="{{ p.product_id }}" {{ 'selected' if p.product_id == l.product_id }}>{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
+        </select></td>
+        <td><input name="qty" type="number" step="any" min="0" value="{{ l.qty|plain_num }}"></td>
+        <td><input name="unit_price" type="number" step="any" min="0" value="{{ l.unit_price|plain_num }}"></td>
+        <td class="linesub r">0</td>
+        <td><input name="unit_cost" type="number" step="any" min="0" placeholder="每單位" style="width:100px"><div class="costhint"></div></td>
+        <td class="linecost r">0</td>
+        <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
+      </tr>
+    {% endfor %}
+    {% for i in range(1 if copy_lines else 3) %}
       <tr class="line">
         <td><select name="product_id"><option value="">—</option>
           {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
@@ -65,9 +82,9 @@
     <h3 class="serif">物流</h3>
     <div class="grid" style="grid-template-columns:1fr 1fr">
       <div><label>出貨方式</label><select name="ship_method">
-        <option value="">—</option>{% for s in ['自行配送','客戶自取','宅配','超商店到店','超商賣貨便','冷藏宅配'] %}<option>{{ s }}</option>{% endfor %}
+        <option value="">—</option>{% for s in ['自行配送','客戶自取','宅配','超商店到店','超商賣貨便','冷藏宅配'] %}<option {{ 'selected' if copy_o and copy_o.ship_method == s }}>{{ s }}</option>{% endfor %}
       </select></div>
-      <div><label>運費(跟客人收)</label><input name="shipping_fee_charged" type="number" step="1" min="0" value="0">
+      <div><label>運費(跟客人收)</label><input name="shipping_fee_charged" type="number" step="1" min="0" value="{{ (copy_o.shipping_fee_charged or 0)|round(0)|int if copy_o else 0 }}">
         <div class="muted" style="font-size:11px;margin-top:3px">算進應收合計;付給物流的運費請從營運支出記</div></div>
     </div>
   </div>
@@ -82,7 +99,7 @@
       </div>
       <div><label id="taxDocLabel">發票號碼(必填)</label><input name="tax_doc_no" id="taxDocNo" required>
         <div class="muted" id="taxDocHint" style="font-size:11px;margin-top:3px">銷售訂單一定要開發票;贈送、樣品等不是賣東西的訂單不用填</div></div>
-      <div><label>銷項稅額<span class="muted">(售價裡含的稅)</span></label><input name="sales_tax" type="number" step="1" min="0" value="0">
+      <div><label>銷項稅額<span class="muted">(售價裡含的稅)</span></label><input name="sales_tax" type="number" step="1" min="0" value="{{ (copy_o.sales_tax or 0)|round(0)|int if copy_o else 0 }}">
         <div class="muted" style="font-size:11px;margin-top:3px">售價都是含稅價,這張訂單的稅額請自己填</div></div>
     </div>
   </div>
@@ -193,6 +210,12 @@
     row.querySelector('input[name="unit_cost"]').value = last ? Math.round(last.u * 1e6) / 1e6 : '';
     costHint(row);
   }
+  {% if copy_o %}
+  body.querySelectorAll('tr.line').forEach(function (r) {
+    if (r.querySelector('select[name="product_id"]').value) fillCost(r);
+  });
+  recalc();
+  {% endif %}
   var PRICES = {{ prices_json | safe }};
   var CUSTSEG = {{ cust_seg_json | safe }};
   var custId = document.getElementById('custId');
@@ -292,6 +315,7 @@
   });
 })();
 </script>
+{% include "_invoice_check.html" %}
 <script>
 (function () {
   // 銷售訂單一定要開發票(2026-10-23);贈送、樣品等非銷售訂單不開
@@ -304,6 +328,7 @@
   }
   kind.addEventListener('change', toggle);
   toggle();
+  wireInvoiceCheck(num, 0);
 })();
 </script>
 {% endblock %}

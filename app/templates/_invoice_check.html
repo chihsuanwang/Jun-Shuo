@@ -1,0 +1,27 @@
+{# 發票號碼不得重複(2026-10-23):打完號碼(離開欄位)就問 /api/invoice-check,重複的話當場紅字 +
+   擋住送出,不用等存檔被後端擋回來(那樣整張表單會清空)。後端照樣會再檢查一次。
+   用法:wireInvoiceCheck(輸入框, 這張訂單的 order_id 或 0) #}
+<script>
+window.wireInvoiceCheck = function (input, excludeId) {
+  if (!input) return;
+  var msg = document.createElement('div');
+  msg.style.cssText = 'font-size:11px;margin-top:3px;color:var(--seal);font-weight:600';
+  input.parentNode.appendChild(msg);
+  function check() {
+    var v = input.value.trim();
+    input.setCustomValidity(''); msg.textContent = '';
+    if (!v) return;
+    fetch('/api/invoice-check?no=' + encodeURIComponent(v) + '&exclude=' + (excludeId || 0))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (input.value.trim() !== v || !d.taken) return;
+        var t = '發票號碼 ' + d.no + ' 已經用在訂單 ' + d.taken + ',不能重複';
+        input.setCustomValidity(t); msg.textContent = t;
+      })
+      .catch(function () {});
+  }
+  input.addEventListener('change', check);
+  input.addEventListener('input', function () { input.setCustomValidity(''); msg.textContent = ''; });
+  if (input.value.trim()) check();
+};
+</script>

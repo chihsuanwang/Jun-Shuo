@@ -1138,6 +1138,10 @@ def next_order_no(date=None):
 # ---------- 新增訂單 -------------------------------------------
 @app.get("/orders/new", response_class=HTMLResponse)
 def order_new(request: Request):
+    # 複製訂單(2026-10-23):不直接建單,帶原單資料打開新增訂單畫面,補發票號碼、確認後存檔才建立,
+    # 跟新增訂單走同一套檢查(發票必填 / 不重複、成本必填、成本移轉價帶上一次的單價)
+    src = request.query_params.get("copy") or ""
+    copy_o, copy_lines = (Q.order_get(int(src)) if src.isdigit() else (None, []))
     customers = q("SELECT customer_id,display_name,segment FROM customer ORDER BY display_name")
     prices = {}
     for r in q("SELECT product_id,customer_segment,unit_price FROM price_list WHERE channel_id IS NULL"):
@@ -1150,6 +1154,7 @@ def order_new(request: Request):
         today=dt.date.today().isoformat(),
         prices_json=json.dumps(prices), cust_seg_json=json.dumps(cust_seg),
         lastcost=Q.last_unit_costs(),
+        copy_o=copy_o, copy_lines=copy_lines if copy_o else [],
     ))
 
 
@@ -1215,9 +1220,13 @@ async def order_create(request: Request):
     total = subtotal - discount_total + shipping_fee
     # 銷售訂單一定要開發票、填發票號碼(2026-10-23 使用者決定);贈送 / 樣品等非銷售訂單不開。
     # 編輯訂單(order_update)維持「勾了已開發票才要號碼」,不然沒號碼的舊訂單會改不動。
-    if order_kind == "銷售" and not one("tax_doc_no"):
+    tax_doc_no = _norm_invoice(one("tax_doc_no"))
+    if order_kind == "銷售" and not tax_doc_no:
         return RedirectResponse("/orders/new?err=invoice", status_code=303)
-    invoiced = 1 if one("tax_doc_no") else 0
+    dup = _invoice_taken(tax_doc_no)
+    if dup:
+        return RedirectResponse(f"/orders/new?err=invoicedup&no={tax_doc_no}&dup={dup['order_no']}", status_code=303)
+    invoiced = 1 if tax_doc_no else 0
     # 銷項稅額(2026-10-08):售價含稅,家易自己填稅額,系統不算;只擋明顯打錯(負數或比商品金額還大)
     sales_tax = flt("sales_tax") if order_kind == "銷售" else 0.0
     if sales_tax < 0 or (sales_tax and sales_tax >= total):
@@ -1229,13 +1238,13 @@ async def order_create(request: Request):
     pay_status = "免收款" if order_kind != "銷售" else ("已收款" if recv else "待收款")
     oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
                      discount_total,order_total,sales_tax,cost_payment_account,payment_method,payment_status,
-                     shipping_fee_charged,ship_method,ship_status,invoiced,tax_doc_no)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?)""",
+                     shipping_fee_charged,ship_method,ship_status,invoiced,tax_doc_no,note)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, '待出貨',?,?,?)""",
                   (next_order_no(order_date), order_date, Q.season_of(order_date), customer_id, channel_id, order_kind,
                    discount_total, total, sales_tax, None,   # 1019 同仁問題第 1 條:成本記應付帳款,不直接付
                    None, pay_status,
                    shipping_fee, one("ship_method") or None,
-                   invoiced, one("tax_doc_no") or None))
+                   invoiced, tax_doc_no or None, one("note") or None))
     if recv:
         execute('UPDATE "order" SET paid_date=order_date, paid_amount=order_total, payment_account=? WHERE order_id=?',
                 (recv, oid))
@@ -1244,6 +1253,29 @@ async def order_create(request: Request):
                    VALUES(?,?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up, lc, uc))
     _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
+
+
+def _norm_invoice(no):
+    """發票號碼統一寫法:去空白、去連字號、轉大寫(AB-12345678、ab 12345678 都存成 AB12345678)。"""
+    return re.sub(r"[\s\-]", "", no or "").upper()
+
+
+def _invoice_taken(no, exclude_oid=None):
+    """發票號碼不得重複(2026-10-23):回傳已經用了這個號碼的那張訂單(沒有就 None)。編輯時排除自己。"""
+    n = _norm_invoice(no)
+    if not n:
+        return None
+    for r in q("""SELECT order_id, order_no, tax_doc_no FROM "order" WHERE COALESCE(tax_doc_no,'') <> ''"""):
+        if r["order_id"] != exclude_oid and _norm_invoice(r["tax_doc_no"]) == n:
+            return r
+    return None
+
+
+@app.get("/api/invoice-check")
+def api_invoice_check(no: str = "", exclude: int = 0):
+    """訂單畫面打完發票號碼就先問一次,重複的話當場紅字,不用等存檔被擋回來(表單才不會清空)。"""
+    r = _invoice_taken(no, exclude_oid=exclude or None)
+    return {"no": _norm_invoice(no), "taken": r["order_no"] if r else None, "order_id": r["order_id"] if r else None}
 
 
 def _valid_date(s):
@@ -1576,8 +1608,12 @@ async def order_update(request: Request, oid: int):
     # 改寫明細之後,被擋下來時明細已經換成新的,訂單金額跟總帳卻還是舊的,兩邊對不起來。
     if _cost_missing(kind, new_costs):
         return RedirectResponse(f"/orders/{oid}?err=cost", status_code=303)
-    if f.get("invoiced") and not g("tax_doc_no"):
+    tax_doc_no = _norm_invoice(g("tax_doc_no"))
+    if f.get("invoiced") and not tax_doc_no:
         return RedirectResponse(f"/orders/{oid}?err=invoice", status_code=303)
+    dup = _invoice_taken(tax_doc_no, exclude_oid=oid)
+    if dup:
+        return RedirectResponse(f"/orders/{oid}?err=invoicedup&no={tax_doc_no}&dup={dup['order_no']}", status_code=303)
     sales_tax = flt("sales_tax") if kind == "銷售" else 0.0
     if sales_tax < 0 or (sales_tax and sales_tax >= total):
         return RedirectResponse(f"/orders/{oid}?err=tax", status_code=303)
@@ -1605,7 +1641,7 @@ async def order_update(request: Request, oid: int):
                 shipped_date=g("shipped_date"), delivered_date=g("delivered_date"),
                 ship_status=g("ship_status") or "待出貨",
                 shipping_fee_charged=shipping_fee, note=g("note"),
-                invoiced=(1 if f.get("invoiced") else 0), tax_doc_no=g("tax_doc_no"))
+                invoiced=(1 if f.get("invoiced") else 0), tax_doc_no=tax_doc_no or None)
     if cust_id and cust_id.isdigit():
         cols["customer_id"] = int(cust_id)
     if cols.get("order_date"):
@@ -1614,31 +1650,6 @@ async def order_update(request: Request, oid: int):
     execute(f'UPDATE "order" SET {sets} WHERE order_id=:id', {**cols, "id": oid})
     _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
-
-@app.post("/orders/{oid}/copy")
-def order_copy(oid: int):
-    o, lines = Q.order_get(oid)
-    if not o:
-        return RedirectResponse("/orders", status_code=303)
-    noid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
-                      order_total,payment_method,payment_status,ship_method,ship_status,note)
-                      VALUES(?,?,?,?,?,?,?,?, '待收款', ?, '待出貨', ?)""",
-                   (next_order_no(), dt.date.today().isoformat(), o["season"], o["customer_id"],
-                    o["channel_id"], o["order_kind"], 0, o["payment_method"],
-                    o["ship_method"], f"複製自 {o['order_no']}"))
-    subtotal = 0
-    for l in lines:
-        subtotal += 0 if l["is_gift"] else (l["qty"] * l["unit_price"])
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,is_gift,line_cost,unit_cost)
-                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                (noid, l["product_id"], l["batch_id"], l["qty"], l["unit_price"],
-                 l["list_price"], 0 if l["is_gift"] else l["qty"] * l["unit_price"], l["is_gift"],
-                 l["line_cost"] or 0, l["unit_cost"]))
-    ship = o["shipping_fee_charged"] or 0
-    execute('UPDATE "order" SET order_total=?, sales_tax=?, shipping_fee_charged=?, cost_payment_account=NULL WHERE order_id=?',
-            (subtotal + ship, o["sales_tax"] or 0, ship, noid))
-    _post_order_ledger(noid)
-    return RedirectResponse(f"/orders/{noid}?ok=1", status_code=303)
 
 @app.post("/orders/{oid}/delete")
 def order_delete_route(request: Request, oid: int):
