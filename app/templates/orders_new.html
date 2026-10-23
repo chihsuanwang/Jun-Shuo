@@ -6,7 +6,7 @@
 {% if request.query_params.get('ok') %}<div class="ok">訂單已建立。</div>{% endif %}
 {% if request.query_params.get('err') == 'required' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請選擇客戶與銷售管道。</div>{% endif %}
 {% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
-{% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
+{% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單一定要開發票,請填上發票號碼再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'cost' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單每一列都要填「成本移轉價」(跟小農買一個單位多少錢),不能是 0 或留空,請補上再存檔。</div>{% endif %}
 
 <form method="post" action="/orders">
@@ -78,12 +78,8 @@
       </select>
         <div class="muted" style="font-size:11px;margin-top:3px">還沒收到錢就選應收帳款,收到後到「應收帳款」頁勾選收款;當場收齊就選收到哪個帳戶</div>
       </div>
-      <div style="display:flex;align-items:flex-end;padding-bottom:9px">
-        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--ink)">
-          <input type="checkbox" name="invoiced" id="invoicedBox" value="1" style="width:auto"> 已開發票
-        </label>
-      </div>
-      <div><label id="taxDocLabel">發票號碼(選填)</label><input name="tax_doc_no" id="taxDocNo"></div>
+      <div><label id="taxDocLabel">發票號碼(必填)</label><input name="tax_doc_no" id="taxDocNo" required>
+        <div class="muted" id="taxDocHint" style="font-size:11px;margin-top:3px">銷售訂單一定要開發票;贈送、樣品等不是賣東西的訂單不用填</div></div>
       <div><label>銷項稅額<span class="muted">(售價裡含的稅)</span></label><input name="sales_tax" type="number" step="1" min="0" value="0">
         <div class="muted" style="font-size:11px;margin-top:3px">售價都是含稅價,這張訂單的稅額請自己填</div></div>
     </div>
@@ -265,13 +261,16 @@
 </script>
 <script>
 (function () {
-  var box = document.getElementById('invoicedBox'), num = document.getElementById('taxDocNo'),
+  // 銷售訂單一定要開發票(2026-10-23);贈送、樣品等非銷售訂單不開
+  var kind = document.querySelector('select[name="order_kind"]'), num = document.getElementById('taxDocNo'),
       label = document.getElementById('taxDocLabel');
   function toggle() {
-    num.required = box.checked;
-    label.textContent = box.checked ? '發票號碼' : '發票號碼(選填)';
+    var sale = kind.value === '銷售';
+    num.required = sale;
+    label.textContent = sale ? '發票號碼(必填)' : '發票號碼(不用填)';
   }
-  box.addEventListener('change', toggle);
+  kind.addEventListener('change', toggle);
+  toggle();
 })();
 </script>
 {% endblock %}

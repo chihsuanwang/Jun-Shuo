@@ -1220,9 +1220,11 @@ async def order_create(request: Request):
     # 實際付給物流的運費由家易從營運支出記(6114 運費),訂單不再自動記運費支出。
     shipping_fee = flt("shipping_fee_charged")
     total = subtotal - discount_total + shipping_fee
-    invoiced = 1 if one("invoiced") else 0
-    if invoiced and not one("tax_doc_no"):
+    # 銷售訂單一定要開發票、填發票號碼(2026-10-23 使用者決定);贈送 / 樣品等非銷售訂單不開。
+    # 編輯訂單(order_update)維持「勾了已開發票才要號碼」,不然沒號碼的舊訂單會改不動。
+    if order_kind == "銷售" and not one("tax_doc_no"):
         return RedirectResponse("/orders/new?err=invoice", status_code=303)
+    invoiced = 1 if one("tax_doc_no") else 0
     # 銷項稅額(2026-10-08):售價含稅,家易自己填稅額,系統不算;只擋明顯打錯(負數或比商品金額還大)
     sales_tax = flt("sales_tax") if order_kind == "銷售" else 0.0
     if sales_tax < 0 or (sales_tax and sales_tax >= total):
