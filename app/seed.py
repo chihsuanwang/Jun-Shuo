@@ -175,7 +175,8 @@ def make_order(d, cname, kind, lines, ship_method, pay_status, ship_status=None,
         ship_status = "已送達" if pay_status == "已收款" else "已出貨"
     # 銷項稅額(2026-10-08):售價含稅,家易手動填;示範資料用含稅總額 ÷ 1.05 拆出 5%
     sales_tax = round(total - total / 1.05) if kind == "銷售" else 0
-    invoiced = 1 if ci["seg"] in ("批發", "機構") else 0
+    # 2026-10-23 起銷售訂單一定要開發票、號碼不能重複,示範資料也照這個規則:每張銷售訂單都有自己的號碼
+    invoiced = 1 if kind == "銷售" else 0
     tax_doc_no = f"AA{order_no:08d}" if invoiced else None
     paid_amount = total if pay_status == "已收款" else None   # 收款一次收齊
     ono = f"S{d.strftime('%Y%m%d')}{sum(1 for x in _onos if x.startswith('S' + d.strftime('%Y%m%d'))) + 1:03d}"
