@@ -1118,3 +1118,74 @@ def account_ledger(code, lo=None, hi=None):
         bal += r["amount"]
         r["balance"] = bal
     return dict(rows=rows, opening=opening, closing=bal)
+
+
+# ---------- 成本移轉價紀錄(2026-10-23) ---------------------------------
+#   家易每張訂單每列自己填成本移轉價(每單位)。這裡把歷史整理出來:新增訂單自動帶入
+#   「這個商品上一次的單價」、紀錄頁看每個商品過去設多少。只讀資料,不碰總帳。
+#   「上一次」= 訂單日期最新的那一筆(同一天取最後存的,line_id 大的);成本是 0 的不算;
+#   不分客戶、不分訂單種類。
+def _unit_cost_of(qty, line_cost, unit_cost):
+    """每單位成本:存的原值跟這列總額對得上就用原值(2026-10-22 起才有),不然用總額 ÷ 數量。"""
+    qty, line_cost = qty or 0, line_cost or 0
+    if unit_cost is not None and abs(round(qty * unit_cost, 2) - line_cost) < 0.005:
+        return unit_cost
+    return round(line_cost / qty, 6) if qty else 0
+
+
+def cost_records(pid=None):
+    """成本 > 0 的訂單明細,依訂單日期由舊到新;每筆附 unit(每單位)、prev(這個商品全部歷史裡的
+    前一筆每單位,沒有就 None)、trend(up / down / same / None)。"""
+    where, args = ["COALESCE(ol.line_cost,0) > 0", "ol.qty > 0"], []
+    if pid:
+        where.append("ol.product_id=?"); args.append(int(pid))
+    rows = q(f"""SELECT ol.line_id, ol.product_id pid, p.name pname, p.sku, p.uom,
+                        ol.qty, ol.line_cost, ol.unit_cost,
+                        o.order_id, o.order_no, o.order_date, o.season, cu.display_name cust
+                 FROM order_line ol
+                 JOIN "order" o ON o.order_id=ol.order_id
+                 JOIN product p ON p.product_id=ol.product_id
+                 LEFT JOIN customer cu ON cu.customer_id=o.customer_id
+                 WHERE {' AND '.join(where)}
+                 ORDER BY o.order_date, ol.line_id""", args)
+    last = {}
+    for r in rows:
+        r["unit"] = _unit_cost_of(r["qty"], r["line_cost"], r["unit_cost"])
+        p = last.get(r["pid"])
+        r["prev"] = p
+        r["trend"] = (None if p is None else "same" if abs(r["unit"] - p) < 0.005
+                      else "up" if r["unit"] > p else "down")
+        last[r["pid"]] = r["unit"]
+    return rows
+
+
+def last_unit_costs(exclude_order=None):
+    """{product_id: {u, date, order_no, order_id}}:每個商品上一次的成本移轉價(每單位)。
+    exclude_order:訂單明細頁不要拿自己這張當「上一次」。"""
+    out = {}
+    for r in cost_records():
+        if exclude_order and r["order_id"] == exclude_order:
+            continue
+        out[r["pid"]] = dict(u=r["unit"], date=r["order_date"], order_no=r["order_no"], order_id=r["order_id"])
+    return out
+
+
+def cost_history(season=None, mode="season", year=None, pid=None):
+    """成本移轉價紀錄頁:篩選期間內每個商品的摘要 + 選到的商品明細(新到舊)。
+    跟前一次比(trend)用全部歷史算,不受篩選期間影響。"""
+    if mode == "calendar":
+        keep = set(_year_list(year))
+        inside = lambda r: int(r["order_date"][:4]) in keep
+    else:
+        keep = set(_season_list(season))
+        inside = lambda r: r["season"] in keep
+    rows = [r for r in cost_records() if inside(r)]
+    summary = {}
+    for r in rows:                         # 舊到新,最後一筆就是最近
+        s = summary.setdefault(r["pid"], dict(pid=r["pid"], pname=r["pname"], sku=r["sku"], uom=r["uom"],
+                                               n=0, lo=r["unit"], hi=r["unit"]))
+        s["n"] += 1
+        s["lo"], s["hi"] = min(s["lo"], r["unit"]), max(s["hi"], r["unit"])
+        s["last"], s["last_date"], s["trend"] = r["unit"], r["order_date"], r["trend"]
+    detail = [r for r in reversed(rows) if pid and r["pid"] == int(pid)]
+    return sorted(summary.values(), key=lambda s: s["sku"] or ""), detail

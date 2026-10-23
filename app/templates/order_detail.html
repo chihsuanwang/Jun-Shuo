@@ -41,6 +41,7 @@
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'cost' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單每一列都要填「成本移轉價」(跟小農買一個單位多少錢),不能是 0 或留空,請補上再存檔。</div>{% endif %}
 
+<style>.costhint{font-size:11px;margin-top:3px;line-height:1.35;white-space:nowrap}.costhint.changed{color:var(--seal);font-weight:600}</style>
 <form method="post" action="/orders/{{ o.order_id }}" id="orderForm">
 
 <div class="card" style="margin-bottom:16px;position:relative">
@@ -69,7 +70,7 @@
         <td><input name="qty" type="number" step="any" min="0" value="{{ l.qty|plain_num }}"></td>
         <td><input name="unit_price" type="number" step="any" min="0" value="{{ l.unit_price|plain_num }}"></td>
         <td class="linesub r">{{ (l.qty * l.unit_price)|round(0)|int }}</td>
-        <td><input name="unit_cost" type="number" step="any" min="0" value="{{ l|unit_cost_value }}" style="width:100px"></td>
+        <td><input name="unit_cost" type="number" step="any" min="0" value="{{ l|unit_cost_value }}" style="width:100px"><div class="costhint"></div></td>
         <td class="linecost r">{{ (l.line_cost or 0)|round(0)|int }}</td>
         <td><select name="is_gift" style="min-width:72px"><option>否</option><option {{ 'selected' if l.is_gift }}>是</option></select></td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
@@ -81,7 +82,7 @@
         <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
         <td class="linesub r">0</td>
-        <td><input name="unit_cost" type="number" step="any" min="0" placeholder="每單位" style="width:100px"></td>
+        <td><input name="unit_cost" type="number" step="any" min="0" placeholder="每單位" style="width:100px"><div class="costhint"></div></td>
         <td class="linecost r">0</td>
         <td><select name="is_gift" style="min-width:72px"><option>否</option><option>是</option></select></td>
         <td><button type="button" class="ghost del" style="padding:6px 10px">刪</button></td>
@@ -198,7 +199,9 @@
     });
     var subCell = clone.querySelector('.linesub'); if (subCell) subCell.textContent = '0';
     var costCell = clone.querySelector('.linecost'); if (costCell) costCell.textContent = '0';
+    clone.dataset.auto = '1';
     body.appendChild(clone);
+    fillCost(clone); recalc();
   });
   body.addEventListener('click', function (e) {
     if (!e.target.classList.contains('del')) return;
@@ -233,10 +236,35 @@
   }
   body.addEventListener('input', function (e) {
     if (e.target.name === 'qty' || e.target.name === 'unit_price' || e.target.name === 'unit_cost') recalc();
+    if (e.target.name === 'unit_cost') costHint(e.target.closest('tr'));
   });
   body.addEventListener('change', function (e) {
     if (e.target.name === 'is_gift') recalc();
+    if (e.target.name === 'product_id') { var tr = e.target.closest('tr'); tr.dataset.auto = '1'; fillCost(tr); recalc(); }
   });
+  // --- 成本移轉價:帶入這個商品上一次的單價,跟上次不同時提醒(2026-10-23) ---
+  //   上一次 = 訂單日期最新、成本 > 0 的那一筆,不分客戶,不算這張訂單自己(queries.last_unit_costs)
+  //   已經存好的列不動(data-auto 沒設),只有新加的列、換了商品的列才帶入 + 提醒
+  var LASTCOST = {{ lastcost_json | safe }};
+  function fmtU(v) { return (Math.round(v * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
+  function costHint(row) {
+    var el = row.querySelector('.costhint'); if (!el) return;
+    var pid = row.querySelector('select[name="product_id"]').value, last = pid && LASTCOST[pid];
+    if (!last || row.dataset.auto !== '1') { el.innerHTML = ''; return; }
+    var v = parseFloat(row.querySelector('input[name="unit_cost"]').value);
+    var link = '<a href="/cost-history?season=all&pid=' + pid + '#detail" target="_blank" title="' +
+               last.date + ' ' + last.order_no + '">上次 ' + fmtU(last.u) + '</a>';
+    if (isNaN(v) || Math.abs(v - last.u) < 0.005) {
+      el.className = 'costhint muted'; el.innerHTML = link + '(' + last.date.slice(5).replace('-', '/') + ')';
+    } else {
+      el.className = 'costhint changed'; el.innerHTML = link + ' → ' + fmtU(v) + (v > last.u ? ' ↑' : ' ↓');
+    }
+  }
+  function fillCost(row) {
+    var pid = row.querySelector('select[name="product_id"]').value, last = pid && LASTCOST[pid];
+    row.querySelector('input[name="unit_cost"]').value = last ? Math.round(last.u * 1e6) / 1e6 : '';
+    costHint(row);
+  }
   if (shipCostInput) shipCostInput.addEventListener('input', recalc);
 
   // 送出前先檢查成本移轉價(銷售訂單每列必填):被後端擋回來的話整張表單要重填

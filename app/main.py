@@ -1158,7 +1158,7 @@ def order_new(request: Request):
         products=q("SELECT product_id,sku,name,uom FROM product WHERE status='在售' ORDER BY sku"),
         today=dt.date.today().isoformat(),
         prices_json=json.dumps(prices), cust_seg_json=json.dumps(cust_seg),
-
+        lastcost_json=json.dumps(Q.last_unit_costs()),
     ))
 
 
@@ -1287,6 +1287,8 @@ def _unit_cost_value(l):
 
 tpl.env.filters["unit_cost_value"] = _unit_cost_value
 # 編輯畫面的數量 / 單價照存的值帶回、不四捨五入(原本 round 成整數,2.5 台斤這種存一次就變 3)
+# 成本移轉價(每單位)顯示用:千分位、最多兩位小數(12.5 → 12.5、180 → 180)
+tpl.env.filters["ucost"] = lambda v: "" if v is None else f"{float(v):,.2f}".rstrip("0").rstrip(".")
 tpl.env.filters["plain_num"] = lambda v: "" if v is None else f"{float(v):.6f}".rstrip("0").rstrip(".")
 
 
@@ -1450,6 +1452,7 @@ def order_detail(request: Request, oid: int):
         returns=Q.returns_list(oid), return_kinds=ledger.RETURN_KINDS,
         order_cost=sum(l["line_cost"] or 0 for l in lines),
         farmer_paid=_farmer_paid(oid),
+        lastcost_json=json.dumps(Q.last_unit_costs(exclude_order=oid)),
         today=dt.date.today().isoformat()))
 
 
@@ -1749,6 +1752,23 @@ def product_lines_pnl(request: Request):
     return tpl.TemplateResponse("lines.html", dict(
         request=request, active="lines", basis=basis, basis_opts=PNL_BASIS,
         d=data, **ctx))
+
+
+# ---------- 成本移轉價紀錄(2026-10-23) --------------------------------
+@app.get("/cost-history", response_class=HTMLResponse)
+def cost_history_page(request: Request):
+    view, period, asof, ctx = _seasons_ctx(request)
+    mode_kw = dict(mode=view, year=period) if view == "calendar" else dict(mode=view)
+    season_arg = None if view == "calendar" else period
+    pid = request.query_params.get("pid")
+    pid = int(pid) if pid and pid.isdigit() else None
+    summary, detail = Q.cost_history(season_arg, pid=pid, **mode_kw)
+    chosen = next((x for x in summary if x["pid"] == pid), None)
+    if pid and not chosen:                      # 這個商品在篩選期間沒有紀錄,標題還是要有名字
+        p = q1("SELECT product_id pid, name pname, sku, uom FROM product WHERE product_id=?", (pid,))
+        chosen = p or None
+    return tpl.TemplateResponse("cost_history.html", dict(
+        request=request, active="costhist", summary=summary, detail=detail, pid=pid, chosen=chosen, **ctx))
 
 
 # ---------- 財務健康:月損益 ----------------------------------

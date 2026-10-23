@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}成本移轉價紀錄 · 桂圓帳房{% endblock %}
+{% block body %}
+{% set base_qs = 'view=' ~ view ~ '&' ~ season_qs %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 看數字</div><h1 class="serif">成本移轉價紀錄</h1></div>
+</div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 14px;line-height:1.7">
+  每張訂單每個品項家易填的成本移轉價(跟小農買一個單位多少錢)。新增訂單選了商品,會自動帶入這裡「最近」的那一個單價
+  (訂單日期最新的那一筆,成本 0 的不算,不分客戶)。點商品名稱看它每一次設多少;要改哪一筆,點訂單號碼回訂單改。
+</p>
+
+<form method="get" class="filterbar" style="margin-bottom:16px">
+  {% include "_season_msel.html" %}
+  {% if pid %}<input type="hidden" name="pid" value="{{ pid }}">{% endif %}
+</form>
+
+<style>
+  table.ch td.l, table.ch th.l { text-align: left; }
+  table.ch td { font-variant-numeric: tabular-nums; }
+  .tr-up { color: var(--seal); font-weight: 700; }
+  .tr-down { color: var(--leaf); font-weight: 700; }
+  table.ch tr.on td { background: var(--paper-2); }
+</style>
+
+<div class="card" style="overflow-x:auto;margin-bottom:18px">
+  <table class="ch">
+    <thead><tr><th class="l">品項</th><th>最近單價</th><th>跟前一次比</th><th>最近日期</th><th>最低</th><th>最高</th><th>用過幾次</th></tr></thead>
+    <tbody>{% for s in summary %}
+      <tr class="{{ 'on' if s.pid == pid }}">
+        <td class="l"><a href="?{{ base_qs }}&pid={{ s.pid }}#detail">{{ s.pname }}</a> <span class="muted">（{{ s.sku }}）</span></td>
+        <td>{{ s.last|ucost }}<span class="muted"> / {{ s.uom or '單位' }}</span></td>
+        <td>{% if s.trend == 'up' %}<span class="tr-up">↑ 調高</span>{% elif s.trend == 'down' %}<span class="tr-down">↓ 調低</span>{% elif s.trend == 'same' %}<span class="muted">持平</span>{% else %}<span class="muted">第一次</span>{% endif %}</td>
+        <td>{{ s.last_date }}</td>
+        <td>{{ s.lo|ucost }}</td>
+        <td>{{ s.hi|ucost }}</td>
+        <td>{{ s.n }}</td>
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">這段期間還沒有填過成本移轉價的訂單。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+
+{% if pid %}
+<div class="card" id="detail" style="overflow-x:auto">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+    <h3 class="serif" style="margin:0">{{ chosen.pname if chosen else '' }} 每一次的成本移轉價</h3>
+    <a href="?{{ base_qs }}" style="font-size:12px">收起</a>
+  </div>
+  <table class="ch">
+    <thead><tr><th class="l">訂單日期</th><th class="l">訂單號碼</th><th class="l">客戶</th><th>數量</th><th>成本移轉價(每單位)</th><th>跟前一次比</th></tr></thead>
+    <tbody>{% for r in detail %}
+      <tr>
+        <td class="l">{{ r.order_date }}</td>
+        <td class="l"><a href="/orders/{{ r.order_id }}">{{ r.order_no }}</a></td>
+        <td class="l">{{ r.cust or '' }}</td>
+        <td>{{ r.qty|plain_num }}</td>
+        <td>{{ r.unit|ucost }}</td>
+        <td>{% if r.trend == 'up' %}<span class="tr-up">↑ {{ r.prev|ucost }} → {{ r.unit|ucost }}</span>{% elif r.trend == 'down' %}<span class="tr-down">↓ {{ r.prev|ucost }} → {{ r.unit|ucost }}</span>{% elif r.trend == 'same' %}<span class="muted">持平</span>{% else %}<span class="muted">第一次</span>{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">這個商品在這段期間沒有紀錄,可以把上面的期間改成「全部」看看。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}
