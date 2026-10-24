@@ -31,6 +31,7 @@ cx = sqlite3.connect(DB, isolation_level=None)   # 自動 commit——chart.cash
 cx.executescript(open(SQL, encoding="utf-8").read())
 import chart
 chart.ensure_chart(cx)   # 會計科目表(空白資料庫也要有,不然記帳畫面的下拉選單是空的)
+chart.ensure_product_lines(cx)   # 產品線(2026-10-24):空白資料庫也要有,不然商品只能選「未分類」
 
 if "--empty" in sys.argv:
     cx.close()
@@ -55,15 +56,9 @@ def add_voucher(date, legs, source_type, source_id, note=None):
                    leg["debit"], leg["credit"], source_type, source_id, note))
 
 # ---- 產品線:事業別 → 產品群組 -----------------------------------
-bu = {}
-for name, srt in [("龍眼", 1), ("蜂蜜", 2)]:
-    c.execute("INSERT INTO business_unit(name,sort) VALUES(?,?)", (name, srt))
-    bu[name] = c.lastrowid
-pg = {}
-for i, (gname, buname) in enumerate(
-        [("龍眼鮮果", "龍眼"), ("龍眼乾", "龍眼"), ("龍眼肉", "龍眼"), ("龍眼花", "龍眼"), ("蜂蜜", "蜂蜜")]):
-    c.execute("INSERT INTO product_group(bu_id,name,sort) VALUES(?,?,?)", (bu[buname], gname, i))
-    pg[gname] = c.lastrowid
+# 上面 chart.ensure_product_lines 已經建好(空白資料庫也會建),這裡只查出代號
+bu = {name: bid for bid, name in c.execute("SELECT bu_id, name FROM business_unit")}
+pg = {name: gid for gid, name in c.execute("SELECT pg_id, name FROM product_group")}
 
 # ---- 通路(3 個:官網 / LINE 社群〔有抽成〕/ 批發〔有結算天數〕)----
 channels = [

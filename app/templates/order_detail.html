@@ -40,6 +40,7 @@
 {% if request.query_params.get('err') == 'invoicedup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">發票號碼 {{ request.query_params.get('no') }} 已經用在{{ request.query_params.get('dup') }},發票號碼不能重複,請再檢查一次。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">勾了「已開發票」,發票號碼是必填的,請補上再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'cost' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單每一列都要填「成本移轉價」(跟小農買一個單位多少錢),不能是 0 或留空,請補上再存檔。</div>{% endif %}
+{% if request.query_params.get('err') == 'nopg' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這些商品還沒設定「產品線」:{{ request.query_params.get('names', '') }}。沒有產品線不知道收入和成本要記哪個會計科目,請先到「商品目錄」編輯商品選好產品線,再回來開單。</div>{% endif %}
 
 <style>.costhint{font-size:11px;margin-top:3px;line-height:1.35;white-space:nowrap}.costhint.changed{color:var(--seal);font-weight:600}</style>
 <form method="post" action="/orders/{{ o.order_id }}" id="orderForm">
@@ -65,7 +66,7 @@
     {% for l in lines %}
       <tr class="line">
         <td><select name="product_id"><option value="">—</option>
-          {% for p in products %}<option value="{{ p.product_id }}" {{ 'selected' if p.product_id==l.product_id }}>{{ p.name }}（{{ p.sku }}）</option>{% endfor %}
+          {% for p in products %}<option value="{{ p.product_id }}"{% if not p.product_group_id %} data-nopg data-name="{{ p.name }}"{% endif %} {{ 'selected' if p.product_id==l.product_id }}>{{ p.name }}（{{ p.sku }}）{% if not p.product_group_id %}(未設定產品線){% endif %}</option>{% endfor %}
         </select></td>
         <td><input name="qty" type="number" step="any" min="0" value="{{ l.qty|plain_num }}"></td>
         <td><input name="unit_price" type="number" step="any" min="0" value="{{ l.unit_price|plain_num }}"></td>
@@ -78,7 +79,7 @@
     {% endfor %}
     {% if not lines %}
       <tr class="line">
-        <td><select name="product_id"><option value="">—</option>{% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}（{{ p.sku }}）</option>{% endfor %}</select></td>
+        <td><select name="product_id"><option value="">—</option>{% for p in products %}<option value="{{ p.product_id }}"{% if not p.product_group_id %} data-nopg data-name="{{ p.name }}"{% endif %}>{{ p.name }}（{{ p.sku }}）{% if not p.product_group_id %}(未設定產品線){% endif %}</option>{% endfor %}</select></td>
         <td><input name="qty" type="number" step="1" min="0"></td>
         <td><input name="unit_price" type="number" step="1" min="0"></td>
         <td class="linesub r">0</td>
@@ -273,11 +274,21 @@
   }
   if (shipCostInput) shipCostInput.addEventListener('input', recalc);
 
-  // 送出前先檢查成本移轉價(銷售訂單每列必填):被後端擋回來的話整張表單要重填
+  // 送出前先檢查產品線(2026-10-24)和成本移轉價(銷售訂單每列必填):被後端擋回來的話整張表單要重填
   body.closest('form').addEventListener('submit', function (e) {
     var kind = this.querySelector('select[name="order_kind"]');
     if (kind && kind.value !== '銷售') return;
     var bad = null;
+    var nopg = [];
+    body.querySelectorAll('tr.line select[name="product_id"]').forEach(function (s) {
+      var o = s.options[s.selectedIndex];
+      if (o && o.hasAttribute('data-nopg') && nopg.indexOf(o.dataset.name) < 0) nopg.push(o.dataset.name);
+    });
+    if (nopg.length) {
+      e.preventDefault();
+      alert('這些商品還沒設定「產品線」:' + nopg.join('、') + '\n沒有產品線不知道收入和成本要記哪個會計科目,請先到「商品目錄」編輯商品選好產品線,再回來開單。');
+      return;
+    }
     body.querySelectorAll('tr.line').forEach(function (row) {
       var p = row.querySelector('select[name="product_id"]').value;
       var q = parseFloat(row.querySelector('input[name="qty"]').value) || 0;

@@ -8,6 +8,7 @@
 <hr class="rule">
 {% if request.query_params.get('perr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這個商品沒辦法刪除,因為{{ block_reason }}。可以改成「停售」,商品目錄還看得到,但新訂單不會再選到它。</div>{% endif %}
 
+{% if request.query_params.get('err') == 'pg' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請選「產品線」——賣出時收入跟成本要記到哪個會計科目,靠這個欄位決定。</div>{% endif %}
 <form method="post" action="/products">
 {% if p %}<input type="hidden" name="product_id" value="{{ p.product_id }}">{% endif %}
 
@@ -19,14 +20,15 @@
     <div><label>品名</label><input name="name" value="{{ p.name if p else '' }}" required></div>
     <div><label>型態</label><select name="product_type"><option value="">—</option>
       {% for t in types %}<option {{ 'selected' if p and p.product_type==t }}>{{ t }}</option>{% endfor %}</select></div>
-    <div><label>產品線</label>
-      <select name="product_group_id">
-        <option value="" {{ 'selected' if not (p and p.product_group_id) }}>未分類</option>
+    <div><label>產品線<span class="muted">(必填)</span></label>
+      <select name="product_group_id" id="pgSel" required>
+        <option value="" {{ 'selected' if not (p and p.product_group_id) }}>— 請選 —</option>
         {% for grp in groups %}
         <option value="{{ grp.pg_id }}" {{ 'selected' if p and p.product_group_id == grp.pg_id }}>{{ grp.bu_name }}・{{ grp.name }}</option>
         {% endfor %}
       </select>
-      <div class="muted" style="font-size:11px;margin-top:3px">賣這個商品時,銷貨收入/成本要記到哪條產品線,靠這個欄位判斷</div>
+      <div class="muted" style="font-size:11px;margin-top:3px">賣這個商品時,銷貨收入 / 成本記到哪個科目靠這個欄位決定(例:龍眼乾 → 4111-02 / 5111-02)</div>
+      <div id="pgHint" style="font-size:11px;margin-top:2px;color:var(--leaf)"></div>
     </div>
     <div><label>舊稱呼 / 原代號</label><input name="type_code_raw" value="{{ (p.type_code_raw or '') if p else '' }}" placeholder="例:#26"></div>
     <div><label>內容量(克,秤重品留空)</label><input name="net_weight_g" type="number" value="{{ p.net_weight_g if p and p.net_weight_g is not none else '' }}"></div>
@@ -64,4 +66,24 @@
         onclick="return confirm('刪除商品「{{ p.name }}」?已經有訂單、進出貨紀錄的商品沒辦法刪除,只能改「停售」。')">刪除</button>
 {% endif %}
 </form>
+<script>
+// 打品名時建議產品線(2026-10-24):只在還沒選、也沒手動改過時帶,建議完還是要自己確認。
+// 順序有意義:「龍眼蜂蜜」先比到蜂蜜;「桂圓肉」是龍眼肉、其他「桂圓」多半是龍眼乾。
+(function () {
+  var name = document.querySelector('input[name="name"]'), sel = document.getElementById('pgSel'),
+      hint = document.getElementById('pgHint'), touched = !!sel.value;
+  var RULES = [[/蜂蜜|蜜/, '蜂蜜'], [/龍眼花/, '龍眼花'], [/龍眼肉|桂圓肉/, '龍眼肉'],
+               [/龍眼乾|桂圓/, '龍眼乾'], [/鮮果|鮮龍眼/, '龍眼鮮果']];
+  var byName = {};
+  [].forEach.call(sel.options, function (o) { if (o.value) byName[o.textContent.split('・').pop().trim()] = o.value; });
+  sel.addEventListener('change', function () { touched = true; hint.textContent = ''; });
+  name.addEventListener('input', function () {
+    if (touched) return;
+    var hit = null;
+    for (var i = 0; i < RULES.length && !hit; i++) if (RULES[i][0].test(name.value)) hit = RULES[i][1];
+    sel.value = hit && byName[hit] ? byName[hit] : '';
+    hint.textContent = sel.value ? '依品名建議「' + hit + '」,不對請自己改' : '';
+  });
+})();
+</script>
 {% endblock %}

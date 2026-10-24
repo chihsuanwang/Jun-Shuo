@@ -226,6 +226,7 @@ def migrate_db():
         if "is_summary" not in acols:
             execute("ALTER TABLE account ADD COLUMN is_summary INTEGER NOT NULL DEFAULT 0")
         chart.ensure_chart()
+        chart.ensure_product_lines()   # 2026-10-24:沒有產品線(例如 seed.py --empty 建的)就補上預設 5 條
         if q1("SELECT 1 FROM sqlite_master WHERE name='bank_account'"):
             for b in q("SELECT name, account_code FROM bank_account"):
                 if not q1("SELECT 1 FROM account WHERE code=?", (b["account_code"],)):
@@ -832,6 +833,9 @@ async def product_save(request: Request):
                 gift_only=1 if f.get("gift_only") else 0,
                 status=(f.get("status") or "在售").strip(), note=g("note"))
     pid = f.get("product_id")
+    # 產品線必填(2026-10-24):沒有產品線,賣出時收入 / 成本不知道記哪個科目
+    if not (cols["product_group_id"] and q1("SELECT 1 FROM product_group WHERE pg_id=?", (cols["product_group_id"],))):
+        return RedirectResponse((f"/products/{int(pid)}/edit" if pid else "/products/new") + "?err=pg", status_code=303)
     if pid:
         pid = int(pid)
         sets = ",".join(f"{k}=:{k}" for k in cols)
@@ -1156,7 +1160,7 @@ def order_new(request: Request):
     return tpl.TemplateResponse("orders_new.html", dict(cash_accounts=chart.accounts(["C"]), 
         request=request, active="order", customers=customers,
         channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id"),
-        products=q("SELECT product_id,sku,name,uom FROM product WHERE status='在售' ORDER BY sku"),
+        products=q("SELECT product_id,sku,name,uom,product_group_id FROM product WHERE status='在售' ORDER BY sku"),
         today=dt.date.today().isoformat(),
         prices_json=json.dumps(prices), cust_seg_json=json.dumps(cust_seg),
         lastcost=Q.last_unit_costs(),
@@ -1215,6 +1219,9 @@ async def order_create(request: Request):
         line_costs.append(_line_cost(qv, uc))
     if _cost_missing(order_kind, line_costs):
         return RedirectResponse("/orders/new?err=cost", status_code=303)
+    nopg = _no_product_line(order_kind, [p for p, *_ in lines])
+    if nopg:
+        return RedirectResponse(f"/orders/new?err=nopg&names={quote('、'.join(nopg))}", status_code=303)
 
     discount_total = flt("discount_total")
     subtotal = sum(qv * up for _, qv, up, _, _ in lines)
@@ -1319,6 +1326,16 @@ def _num(v):
 #   編輯畫面才帶得回原值,不用 line_cost ÷ 數量 再四捨五入(會讓舊資料存一次就差幾塊)。
 def _line_cost(qty, unit_cost):
     return round((qty or 0) * (unit_cost or 0), 2)
+
+def _no_product_line(order_kind, product_ids):
+    """銷售訂單裡還沒設定產品線的商品名稱(2026-10-24)。沒有產品線就不知道收入 / 成本記哪個科目,
+    以前會被合到預設的 4110 / 5111-02 龍眼乾,現在直接擋下來。贈送 / 樣品等非銷售訂單總帳不記,不用擋。"""
+    if order_kind != "銷售" or not product_ids:
+        return []
+    ids = sorted({int(p) for p in product_ids})
+    return [r["name"] for r in q(f"""SELECT name FROM product WHERE product_group_id IS NULL
+                                     AND product_id IN ({','.join('?' * len(ids))})""", ids)]
+
 
 def _cost_missing(order_kind, line_costs):
     """銷售訂單每一列都要有成本移轉價(借採購成本 / 貸應付帳款的唯一依據,漏填會少記欠小農的錢)。
@@ -1491,7 +1508,7 @@ def order_detail(request: Request, oid: int):
         return RedirectResponse("/orders", status_code=303)
     return tpl.TemplateResponse("order_detail.html", dict(
         request=request, active="order", o=o, lines=lines,
-        products=q("SELECT product_id,sku,name FROM product ORDER BY sku"),
+        products=q("SELECT product_id,sku,name,product_group_id FROM product ORDER BY sku"),
         pay_methods=PAY_METHODS, pay_status=PAY_STATUS,
         ship_methods=SHIP_METHODS, ship_status=SHIP_STATUS, kinds=ORDER_KINDS,
         cash_accounts=chart.accounts(["C"]),
@@ -1626,6 +1643,9 @@ async def order_update(request: Request, oid: int):
     # 改寫明細之後,被擋下來時明細已經換成新的,訂單金額跟總帳卻還是舊的,兩邊對不起來。
     if _cost_missing(kind, new_costs):
         return RedirectResponse(f"/orders/{oid}?err=cost", status_code=303)
+    nopg = _no_product_line(kind, [p for p, *_ in new_lines])
+    if nopg:
+        return RedirectResponse(f"/orders/{oid}?err=nopg&names={quote('、'.join(nopg))}", status_code=303)
     tax_doc_no = _norm_invoice(g("tax_doc_no"))
     if f.get("invoiced") and not tax_doc_no:
         return RedirectResponse(f"/orders/{oid}?err=invoice", status_code=303)

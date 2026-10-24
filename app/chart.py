@@ -142,6 +142,36 @@ def tree_order(rows, code_key="code"):
     return out
 
 
+# ---------- 產品線(2026-10-24) -------------------------------------------
+#   賣出時銷貨收入 / 採購成本記到哪個科目,靠商品的「產品線」決定(ledger.REVENUE_ACCOUNTS / COST_ACCOUNTS
+#   用產品線**名稱**對到 4111-0x / 5111-0x)。所以產品線跟會計科目表一樣是基本設定,空白資料庫也一定要有——
+#   10/23 Render 用 seed.py --empty 清空後沒有產品線,商品只能選「未分類」,收入 / 成本全被合到預設科目。
+DEFAULT_PRODUCT_LINES = [("龍眼", ["龍眼鮮果", "龍眼乾", "龍眼肉", "龍眼花"]), ("蜂蜜", ["蜂蜜"])]
+
+
+def ensure_product_lines(cx=None):
+    """product_group 是空的就建預設的事業別 + 產品線(已經有就不動,使用者改過的不會被蓋)。cx 給 seed.py 用。"""
+    run = (lambda sql, a=(): cx.execute(sql, a)) if cx is not None else None
+    count = (cx.execute("SELECT COUNT(*) FROM product_group").fetchone()[0] if cx is not None
+             else q1("SELECT COUNT(*) n FROM product_group")["n"])
+    if count:
+        return
+    i = 0
+    for srt, (bu_name, groups) in enumerate(DEFAULT_PRODUCT_LINES, start=1):
+        if cx is not None:
+            row = cx.execute("SELECT bu_id FROM business_unit WHERE name=?", (bu_name,)).fetchone()
+            bu_id = row[0] if row else run("INSERT INTO business_unit(name,sort) VALUES(?,?)", (bu_name, srt)).lastrowid
+        else:
+            row = q1("SELECT bu_id FROM business_unit WHERE name=?", (bu_name,))
+            bu_id = row.get("bu_id") or execute("INSERT INTO business_unit(name,sort) VALUES(?,?)", (bu_name, srt))
+        for g in groups:
+            if cx is not None:
+                run("INSERT INTO product_group(bu_id,name,sort) VALUES(?,?,?)", (bu_id, g, i))
+            else:
+                execute("INSERT INTO product_group(bu_id,name,sort) VALUES(?,?,?)", (bu_id, g, i))
+            i += 1
+
+
 def ensure_chart(cx=None):
     """account 表是空的就灌 DEFAULT_CHART。cx 給 seed.py 用(它有自己的連線)。"""
     if cx is not None:

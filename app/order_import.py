@@ -124,7 +124,7 @@ def match_rows(headers, raw_rows, pay_methods):
             continue
         unmatched_headers.append(h)  # 之後找到比對就移除
 
-    products = q("SELECT product_id, sku, name FROM product WHERE status='在售'")
+    products = q("SELECT product_id, sku, name, product_group_id FROM product WHERE status='在售'")
     by_name = {p["name"]: p["product_id"] for p in products}
     by_sku = {p["sku"]: p["product_id"] for p in products}
     for h in list(unmatched_headers):
@@ -192,6 +192,12 @@ def match_rows(headers, raw_rows, pay_methods):
             rows.append(row); continue
         if not lines:
             row["status"], row["error_reason"] = "error", "沒有勾選任何商品,或商品數量都是 0"
+            err_n += 1
+            rows.append(row); continue
+        nopg = [l["name"] for l in lines
+                if not next(p["product_group_id"] for p in products if p["product_id"] == l["product_id"])]
+        if nopg:   # 2026-10-24:沒有產品線不知道收入 / 成本記哪個科目
+            row["status"], row["error_reason"] = "error", "商品還沒設定產品線(先到商品目錄設定):" + "、".join(nopg)
             err_n += 1
             rows.append(row); continue
 
