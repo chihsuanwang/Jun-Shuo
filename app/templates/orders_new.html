@@ -72,7 +72,9 @@
       </tr>
     {% endfor %}
     </tbody>
-    <tfoot><tr><td colspan="3" class="r"><b>應收合計(含稅)</b></td><td class="r"><b id="ordertotal">0</b></td><td colspan="3" class="muted" style="font-size:11px">成本移轉價:跟小農買這一項,一個單位多少錢,自己填(必填)</td></tr></tfoot>
+    <tfoot><tr><td colspan="3" class="r">商品應收款項(含稅)</td><td class="r" id="goodstotal">0</td><td colspan="3" rowspan="3" class="muted" style="font-size:11px;vertical-align:top">成本移轉價:跟小農買這一項,一個單位多少錢,自己填(必填)</td></tr>
+      <tr><td colspan="3" class="r">運費(跟客人收,下方「物流」填)</td><td class="r" id="shiptotal">0</td></tr>
+      <tr><td colspan="3" class="r"><b>應收合計(含稅)</b></td><td class="r"><b id="ordertotal">0</b></td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
   <p class="muted" style="font-size:11px;margin-top:10px">成本記成「應付帳款」(欠小農);真的付錢給小農時,到左邊「應付帳款(付小農)」勾選付款。</p>
@@ -156,9 +158,12 @@
       if (costCell) costCell.textContent = (qty * uc).toLocaleString();
       sum += sub;
     });
-    if (shipCostInput) sum += parseFloat(shipCostInput.value) || 0;
+    var ship = shipCostInput ? parseFloat(shipCostInput.value) || 0 : 0;
+    var g = document.getElementById('goodstotal'), s = document.getElementById('shiptotal');
+    if (g) g.textContent = sum.toLocaleString();
+    if (s) s.textContent = ship.toLocaleString();
     var t = document.getElementById('ordertotal');
-    if (t) t.textContent = sum.toLocaleString();
+    if (t) t.textContent = (sum + ship).toLocaleString();
   }
   body.addEventListener('input', function (e) {
     if (e.target.name === 'qty' || e.target.name === 'unit_price' || e.target.name === 'unit_cost') recalc();
