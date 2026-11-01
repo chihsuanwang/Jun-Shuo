@@ -1294,7 +1294,7 @@ async def order_create(request: Request):
     if nopg:
         return RedirectResponse(f"/orders/new?err=nopg&names={quote('、'.join(nopg))}", status_code=303)
 
-    subtotal = sum(qv * up for _, qv, up, _, _ in lines)
+    subtotal = round(sum(_line_sub(qv, up) for _, qv, up, _, _ in lines), 2)
     # 整單折扣 = 商品小計 − 「本次實際收費」(2026-11-01,例:350 × 3 算 1000 → 折扣 50,總帳借 4119-01)。
     # 「賣得比定價低」(每列單價低於商品目錄售價)的差額另由 list_price 於報表即時計算,跟這個不重複。
     discount_total = _order_discount(order_kind, one("actual_charge"), subtotal)
@@ -1336,7 +1336,7 @@ async def order_create(request: Request):
                 (recv, oid))
     for (p, qv, up, b, lp), lc, uc in zip(lines, line_costs, unit_costs):
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,line_cost,unit_cost)
-                   VALUES(?,?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, qv * up, lc, uc))
+                   VALUES(?,?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, _line_sub(qv, up), lc, uc))
     _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
 
@@ -1400,6 +1400,11 @@ def _num(v):
 def _line_cost(qty, unit_cost):
     return round((qty or 0) * (unit_cost or 0), 2)
 
+def _line_sub(qty, unit_price):
+    """每列小計四捨五入到分(2026-11-01 code-review):數量 / 單價有小數時(1.5 × 33.33 = 49.995),
+    不先進位的話應收記 49.995、收入記 49.99,總帳差 0.005 對不平,也會跟畫面的「本次實際收費」差出假折扣。"""
+    return round((qty or 0) * (unit_price or 0), 2)
+
 def _order_discount(order_kind, raw, subtotal):
     """「本次實際收費」(2026-11-01 同仁回饋)→ 整單折扣 = 商品小計 − 實際收費(存 order.discount_total)。
     空白 = 照小計收,折扣 0;收得比小計多就是負數(畫面紅字提醒,不擋)。非銷售訂單不算折扣。
@@ -1415,7 +1420,9 @@ def _order_discount(order_kind, raw, subtotal):
         return None
     if v < 0:
         return None
-    return round(subtotal - v, 2)
+    # 差額不到 1 分錢是四捨五入造成的(例:1.5 × 33.33 = 49.995,畫面送 49.99),不算折扣(2026-11-01 code-review)
+    d = subtotal - v
+    return 0.0 if abs(d) < 0.01 else round(d, 2)
 
 
 def _no_product_line(order_kind, product_ids):
@@ -1584,7 +1591,7 @@ async def order_import_confirm(request: Request):
         for ln in (row.get("lines") or []):
             up = stdprice.get(ln["product_id"], 0)
             built_lines.append((ln["product_id"], ln["qty"], up))
-            subtotal += ln["qty"] * up
+            subtotal = round(subtotal + _line_sub(ln["qty"], up), 2)
         if not built_lines:
             continue
 
@@ -1595,7 +1602,7 @@ async def order_import_confirm(request: Request):
                        subtotal, row.get("payment_method"), row["source_ref"], row.get("note") or None))
         for pid, qty, up in built_lines:
             execute("""INSERT INTO order_line(order_id,product_id,qty,unit_price,line_subtotal,line_cost)
-                       VALUES(?,?,?,?,?,0)""", (oid, pid, qty, up, qty * up))
+                       VALUES(?,?,?,?,?,0)""", (oid, pid, qty, up, _line_sub(qty, up)))
         _post_order_ledger(oid)
         imported += 1
 
@@ -1740,7 +1747,7 @@ async def order_update(request: Request, oid: int):
         new_ucosts.append(uc)
         new_costs.append(_line_cost(qv, uc))
 
-    subtotal = sum(qv * up for _, qv, up, _, gf in new_lines if not gf)
+    subtotal = round(sum(_line_sub(qv, up) for _, qv, up, _, gf in new_lines if not gf), 2)
     kind = g("order_kind") or o["order_kind"]
     disc = _order_discount(kind, g("actual_charge"), subtotal)   # 本次實際收費 → 整單折扣(2026-11-01)
     if disc is None:
@@ -1778,7 +1785,7 @@ async def order_update(request: Request, oid: int):
     execute("DELETE FROM order_line WHERE order_id=?", (oid,))
     for (p, qv, up, b, gf), lc, uc in zip(new_lines, new_costs, new_ucosts):
         execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,line_cost,unit_cost)
-                   VALUES(?,?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, qv * up, gf, lc, uc))
+                   VALUES(?,?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, _line_sub(qv, up), gf, lc, uc))
     cust_id = f.get("customer_id")
     cols = dict(order_date=g("order_date"), order_kind=kind,
                 payment_status=pay_status,

@@ -230,7 +230,7 @@
       var uc = parseFloat(row.querySelector('input[name="unit_cost"]').value) || 0;
       var giftSel = row.querySelector('select[name="is_gift"]');
       var isGift = giftSel && giftSel.value === '是';
-      var sub = isGift ? 0 : qty * up;
+      var sub = isGift ? 0 : Math.round(qty * up * 100) / 100;   // 每列記到分,跟後端 _line_sub 一致
       var cell = row.querySelector('.linesub');
       if (cell) cell.textContent = Math.round(sub).toLocaleString();
       var costCell = row.querySelector('.linecost');

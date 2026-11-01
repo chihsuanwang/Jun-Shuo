@@ -214,7 +214,7 @@ def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, c
     shipping_fee = shipping_fee or 0
     sales_tax = sales_tax or 0
     discount = discount or 0
-    total = goods - discount + shipping_fee
+    total = round(goods - discount + shipping_fee, 2)   # 應收記到分,跟各收入科目(都記到分)對得平
     total_cost = sum(cost.values())
     if total <= 0 and total_cost <= 0:
         return []

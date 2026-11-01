@@ -155,7 +155,7 @@
       var qty = parseFloat(row.querySelector('input[name="qty"]').value) || 0;
       var up = parseFloat(row.querySelector('input[name="unit_price"]').value) || 0;
       var uc = parseFloat(row.querySelector('input[name="unit_cost"]').value) || 0;
-      var sub = qty * up;
+      var sub = Math.round(qty * up * 100) / 100;   // 每列記到分,跟後端 _line_sub 一致
       var cell = row.querySelector('.linesub');
       if (cell) cell.textContent = sub.toLocaleString();
       var costCell = row.querySelector('.linecost');
