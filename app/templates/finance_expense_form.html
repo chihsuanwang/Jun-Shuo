@@ -15,6 +15,7 @@
 {% if qp.get('ierr') == 'dup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">發票號碼 {{ request.query_params.get('no') }} 已經用在{{ request.query_params.get('dup') }},發票號碼不能重複,請再檢查一次。</div>{% elif qp.get('ierr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">憑證類型選了發票,發票號碼要填。</div>{% endif %}
 {% if qp.get('err') == '1' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">日期、科目、發票金額都要填。</div>{% endif %}
 {% if qp.get('err') == 'paid' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這筆應付費用已經在「應付帳款 → 費用」付掉了,不能直接改金額或付款方式。要改的話,先到應付帳款頁把那筆付款紀錄勾選刪除,再回來改。</div>{% endif %}
+{% if qp.get('err') == 'paiddate' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這筆已經在 {{ qp.get('d', '') }} 付掉了,支出日期不能改到付款日之後。</div>{% endif %}
 {% if qp.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">進項稅額不能大於或等於發票金額。</div>{% endif %}
 
 <form method="post" action="/finance/expenses" id="expForm">

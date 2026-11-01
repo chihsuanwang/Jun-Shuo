@@ -42,9 +42,19 @@ def _source_locked(source_type, source_id):
     closed = _closed_years()
     if not closed:
         return False
-    return any(int(r["y"]) in closed for r in q(
-        "SELECT DISTINCT substr(entry_date,1,4) y FROM ledger_entry WHERE source_type=? AND source_id=?",
-        (source_type, int(source_id))))
+    # 刪除時會連帶刪掉的紀錄也要一起看(2026-11-01 code-review):刪支出會連付應付費用的紀錄一起刪、
+    # 刪訂單會連退款 / 付小農紀錄一起刪,那些傳票如果在已結轉年度,一樣不能動
+    srcs = [(source_type, int(source_id))]
+    if source_type == "op_expense":
+        srcs += [("expense_payment", r["payment_id"]) for r in
+                 q("SELECT payment_id FROM expense_payment WHERE expense_id=?", (int(source_id),))]
+    elif source_type in ("order_sale", "order_payment"):
+        srcs += [("sales_return", r["return_id"]) for r in
+                 q("SELECT return_id FROM sales_return WHERE order_id=?", (int(source_id),))]
+        srcs += [("goods_purchase", r["purchase_id"]) for r in
+                 q("SELECT purchase_id FROM goods_purchase WHERE order_id=?", (int(source_id),))]
+    return any(int(r["y"]) in closed for st, sid in srcs for r in q(
+        "SELECT DISTINCT substr(entry_date,1,4) y FROM ledger_entry WHERE source_type=? AND source_id=?", (st, sid)))
 
 def lock_min():
     closed = _closed_years()
@@ -2060,10 +2070,12 @@ async def finance_expense_save(request: Request):
     # 已經在應付帳款頁付掉的應付費用(2026-11-01):金額、付款方式不能直接改,要先撤銷付款,不然付款跟支出對不上
     if eid:
         old = q1("SELECT amount, tax_amount, payment_account FROM op_expense WHERE expense_id=?", (int(eid),))
-        if q1("SELECT 1 FROM expense_payment WHERE expense_id=?", (int(eid),)) and (
-                cols["payment_account"] != old.get("payment_account")
-                or abs((old.get("amount") or 0) + (old.get("tax_amount") or 0) - total) > 0.005):
+        paid = q1("SELECT pay_date FROM expense_payment WHERE expense_id=?", (int(eid),))
+        if paid and (cols["payment_account"] != old.get("payment_account")
+                     or abs((old.get("amount") or 0) + (old.get("tax_amount") or 0) - total) > 0.005):
             return RedirectResponse(f"{back}?err=paid", status_code=303)
+        if paid and date > paid["pay_date"]:   # 已付的支出日期不能改到付款日之後
+            return RedirectResponse(f"{back}?err=paiddate&d={paid['pay_date']}", status_code=303)
     if eid:
         sets = ",".join(f"{k}=:{k}" for k in cols)
         execute(f"UPDATE op_expense SET {sets}, updated_at=datetime('now','localtime') WHERE expense_id=:id",
@@ -2852,6 +2864,10 @@ async def payables_expense_pay(request: Request):
         return RedirectResponse("/payables?tab=expense&err=date", status_code=303)
     acct = (f.get("payment_account") or "").strip() or "現金"
     due = {r["expense_id"]: r for r in _expense_payables()[0]}
+    # 付款日不能早於支出日(2026-11-01 code-review):不然刪支出時會動到另一個(可能已結轉的)年度的付款傳票
+    early = [due[int(v)]["d"] for v in f.getlist("expense_id") if str(v).isdigit() and int(v) in due and due[int(v)]["d"] > pdate]
+    if early:
+        return RedirectResponse(f"/payables?tab=expense&err=early&d={quote(max(early))}", status_code=303)
     n = 0
     for v in dict.fromkeys(f.getlist("expense_id")):
         if not str(v).isdigit() or int(v) not in due:

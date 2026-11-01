@@ -12,6 +12,7 @@
   <a class="chip" href="/payables?tab=expense" style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if tab == 'expense' }}">費用({{ eunpaid|length }})</a>
 </div>
 {% if request.query_params.get('paid') %}<div class="ok">已付款 {{ request.query_params.get('paid') }} 筆,總帳也已經記好。</div>{% endif %}
+{% if request.query_params.get('err') == 'early' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">付款日不能早於支出日(勾選的費用最晚是 {{ request.query_params.get('d', '') }}),請改付款日,或分開付。</div>{% endif %}
 {% if request.query_params.get('err') == 'date' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">付款日格式不對,請重新選。</div>{% endif %}
 
 {% if tab == 'farmer' %}
