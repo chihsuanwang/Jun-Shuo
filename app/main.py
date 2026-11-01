@@ -272,10 +272,14 @@ def migrate_db():
                        SELECT entry_id, entry_date, amount, note, created_at FROM manual_entry_old""")
             execute("DROP TABLE manual_entry_old")
             print("[migrate] manual_entry 已換成多行")
-        # 2026-10-20:營業稅結算 / 繳納兩種傳票來源。SQLite 不能改 CHECK,總帳整張表在同一個交易裡
-        # 重建、資料照搬(不用清空網站資料庫)。
+        # 2026-10-20:營業稅結算 / 繳納兩種傳票來源;2026-11-01:付應付費用(expense_payment)。
+        # SQLite 不能改 CHECK,總帳整張表在同一個交易裡重建、資料照搬(不用清空網站資料庫)。
+        execute("""CREATE TABLE IF NOT EXISTS expense_payment (payment_id INTEGER PRIMARY KEY,
+                   expense_id INTEGER NOT NULL UNIQUE REFERENCES op_expense(expense_id), pay_date TEXT NOT NULL,
+                   amount REAL NOT NULL, payment_account TEXT, note TEXT,
+                   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')))""")
         lsql = q1("SELECT sql FROM sqlite_master WHERE name='ledger_entry'").get("sql") or ""
-        if lsql and "goods_purchase" in lsql and "vat_settlement" not in lsql:
+        if lsql and "goods_purchase" in lsql and "expense_payment" not in lsql:
             import sqlite3
             cx = sqlite3.connect(_db.DB)
             try:
@@ -287,7 +291,7 @@ def migrate_db():
                     source_type TEXT NOT NULL CHECK (source_type IN ('op_expense','order_sale','order_payment',
                       'goods_purchase','other_income','equity','manual_adjustment',
                       'asset_acquire','asset_depreciation','sales_return','year_closing',
-                      'vat_settlement','vat_payment')),
+                      'vat_settlement','vat_payment','expense_payment')),
                     source_id INTEGER NOT NULL, note TEXT,
                     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
                   INSERT INTO ledger_entry_new(entry_id,voucher_no,entry_date,account_code,account_name,debit,credit,
@@ -299,7 +303,7 @@ def migrate_db():
                   CREATE INDEX ix_ledger_voucher ON ledger_entry(voucher_no);
                   CREATE INDEX ix_ledger_source  ON ledger_entry(source_type, source_id);
                   COMMIT;""")
-                print("[migrate] ledger_entry 加上營業稅結算 / 繳納來源")
+                print("[migrate] ledger_entry 重建:加上營業稅結算 / 繳納、付應付費用來源")
             except Exception:
                 cx.rollback()
                 raise
@@ -1910,7 +1914,10 @@ def _expense_form_ctx(request, e, grp="VD"):
     # 新增從「＋ 記一筆」進、編輯從總帳傳票號碼進(2026-10-22 清單頁拿掉),左側亮對應的那一項
     return dict(request=request, active=("ledger" if e else EXP_KINDS[grp]["active"]), e=e, grp=grp, kind=EXP_KINDS[grp],
                 accts=chart.accounts([grp]), cash_accounts=chart.accounts(["C"]), docs=DOC_TYPES,
-                bank_codes={r["name"]: r["code"] for r in chart.accounts(["C"])},
+                bank_codes={**{r["name"]: r["code"] for r in chart.accounts(["C"])},
+                            ledger.EXPENSE_AP_NAME: ledger.EXPENSE_AP_ACCOUNT[0]},
+                ap_name=ledger.EXPENSE_AP_NAME,
+                exp_paid=(q1("SELECT * FROM expense_payment WHERE expense_id=?", (e["expense_id"],)) or None) if e else None,
                 acct_names={r["code"]: r["name"] for r in chart.accounts([grp])},
                 today=dt.date.today().isoformat())
 
@@ -1932,8 +1939,17 @@ def finance_expense_edit(request: Request, eid: int):
 
 
 def _expense_delete(eid):
+    # 先記應付費用、後來付掉的(2026-11-01):付款紀錄跟它的傳票一起刪
+    for r in q("SELECT payment_id FROM expense_payment WHERE expense_id=?", (int(eid),)):
+        _expense_payment_delete(r["payment_id"])
     execute("DELETE FROM op_expense WHERE expense_id=?", (int(eid),))
     ledger.delete_voucher_for("op_expense", int(eid))
+
+
+def _expense_payment_delete(pid):
+    """撤銷「付掉應付費用」:刪付款紀錄 + 傳票,那筆支出回到未付。"""
+    execute("DELETE FROM expense_payment WHERE payment_id=?", (int(pid),))
+    ledger.delete_voucher_for("expense_payment", int(pid))
 
 @app.post("/finance/expenses")
 async def finance_expense_save(request: Request):
@@ -1970,6 +1986,13 @@ async def finance_expense_save(request: Request):
                 amount=total - tax, amortize_months=None, tax_amount=tax,
                 payment_account=g("payment_account") or "現金", doc_type=doc,
                 invoice_no=(inv or None), note=g("note"))
+    # 已經在應付帳款頁付掉的應付費用(2026-11-01):金額、付款方式不能直接改,要先撤銷付款,不然付款跟支出對不上
+    if eid:
+        old = q1("SELECT amount, tax_amount, payment_account FROM op_expense WHERE expense_id=?", (int(eid),))
+        if q1("SELECT 1 FROM expense_payment WHERE expense_id=?", (int(eid),)) and (
+                cols["payment_account"] != old.get("payment_account")
+                or abs((old.get("amount") or 0) + (old.get("tax_amount") or 0) - total) > 0.005):
+            return RedirectResponse(f"{back}?err=paid", status_code=303)
     if eid:
         sets = ",".join(f"{k}=:{k}" for k in cols)
         execute(f"UPDATE op_expense SET {sets}, updated_at=datetime('now','localtime') WHERE expense_id=:id",
@@ -2241,7 +2264,7 @@ LEDGER_SOURCES = {"order_sale": "訂單成立(含付小農)", "order_payment": "
                   "manual_adjustment": "帳務調整", "asset_acquire": "設備取得", "asset_depreciation": "折舊",
                   "sales_return": "退款 / 退回小農", "year_closing": "年度結轉",
                   "vat_settlement": "營業稅結算", "vat_payment": "營業稅繳納",
-                  "goods_purchase": "付小農貨款"}
+                  "goods_purchase": "付小農貨款", "expense_payment": "付應付費用"}
 
 
 def _ledger_explain(code, debit, credit):
@@ -2336,6 +2359,7 @@ def _voucher_edit_url(source_type, source_id):
         "order_sale": f"/orders/{source_id}",
         "order_payment": f"/orders/{source_id}",
         "goods_purchase": "/payables",
+        "expense_payment": "/payables?tab=expense",
         "other_income": f"/other-income/{source_id}/edit",
         "equity": f"/equity/{source_id}/edit",
         "manual_adjustment": f"/adjustments/{source_id}/edit",
@@ -2720,13 +2744,50 @@ def _payables():
                  ORDER BY gp.purchase_date DESC, gp.purchase_id DESC""")
     return unpaid, paid
 
+# 2026-11-01 同仁回饋:營運支出 / 其他支出先記「應付費用」(貸 2191)的,在這頁「費用」分頁付款,
+#   記「借 2191 應付費用 / 貸 現金或銀行」(存在 expense_payment,一筆支出付一次、一次付清)。
+def _expense_payables():
+    unpaid = q("""SELECT e.expense_id, COALESCE(e.expense_date, e.ym) d, e.account_code, e.category, e.note,
+                         e.doc_type, e.invoice_no, ROUND(COALESCE(e.amount,0) + COALESCE(e.tax_amount,0), 2) due
+                    FROM op_expense e
+                   WHERE e.payment_account=? AND NOT EXISTS (SELECT 1 FROM expense_payment p WHERE p.expense_id=e.expense_id)
+                   ORDER BY d, e.expense_id""", (ledger.EXPENSE_AP_NAME,))
+    paid = q("""SELECT p.*, COALESCE(e.expense_date, e.ym) d, e.account_code, e.category, e.note expense_note
+                  FROM expense_payment p LEFT JOIN op_expense e ON e.expense_id=p.expense_id
+                 ORDER BY p.pay_date DESC, p.payment_id DESC""")
+    return unpaid, paid
+
 @app.get("/payables", response_class=HTMLResponse)
 def payables_page(request: Request):
+    tab = "expense" if request.query_params.get("tab") == "expense" else "farmer"
     unpaid, paid = _payables()
+    eunpaid, epaid = _expense_payables()
     return tpl.TemplateResponse("payables.html", dict(
-        request=request, active="payables", unpaid=unpaid, paid=paid,
+        request=request, active="payables", tab=tab, unpaid=unpaid, paid=paid,
         unpaid_total=sum(r["due"] for r in unpaid),
+        eunpaid=eunpaid, epaid=epaid, eunpaid_total=sum(r["due"] for r in eunpaid),
         cash_accounts=chart.accounts(["C"]), today=dt.date.today().isoformat()))
+
+@app.post("/payables/expense-pay")
+async def payables_expense_pay(request: Request):
+    f = await request.form()
+    pdate = (f.get("paid_date") or "").strip() or dt.date.today().isoformat()
+    if not _valid_date(pdate):
+        return RedirectResponse("/payables?tab=expense&err=date", status_code=303)
+    acct = (f.get("payment_account") or "").strip() or "現金"
+    due = {r["expense_id"]: r for r in _expense_payables()[0]}
+    n = 0
+    for v in dict.fromkeys(f.getlist("expense_id")):
+        if not str(v).isdigit() or int(v) not in due:
+            continue
+        r = due[int(v)]
+        label = f"{r['category'] or ''}" + (f" {r['note']}" if r["note"] else "")
+        pid = execute("""INSERT INTO expense_payment(expense_id, pay_date, amount, payment_account, note)
+                         VALUES(?,?,?,?,?)""", (r["expense_id"], pdate, r["due"], acct, f"付應付費用:{label}"))
+        ledger.save_voucher("expense_payment", pid, pdate, ledger.compose_expense_payment_entries(r["due"], acct),
+                            note=f"付應付費用:{label}")
+        n += 1
+    return RedirectResponse(f"/payables?tab=expense&paid={n}", status_code=303)
 
 @app.post("/payables/pay")
 async def payables_pay(request: Request):
@@ -2852,6 +2913,7 @@ _LEDGER_DELETERS = {
     "order_sale": order_delete,
     "order_payment": order_delete,
     "goods_purchase": _goods_purchase_delete,
+    "expense_payment": _expense_payment_delete,
     "other_income": _other_income_delete,
     "equity": _equity_delete,
     "manual_adjustment": _adjustment_delete,
@@ -2863,12 +2925,13 @@ _LEDGER_DELETERS = {
 # 一樣連總帳的傳票一起刪(重用各自的刪除邏輯)。
 _BULK_SRC = {"order": ("order_sale", "order_payment"), "op_expense": ("op_expense",),
              "other_income": ("other_income",), "equity": ("equity",), "manual_adjustment": ("manual_adjustment",),
-             "sales_return": ("sales_return",), "goods_purchase": ("goods_purchase",)}
+             "sales_return": ("sales_return",), "goods_purchase": ("goods_purchase",),
+             "expense_payment": ("expense_payment",)}
 
 _BULK_DELETERS = {
     "order": order_delete, "op_expense": _expense_delete, "other_income": _other_income_delete,
     "equity": _equity_delete, "manual_adjustment": _adjustment_delete, "sales_return": _return_delete,
-    "goods_purchase": _goods_purchase_delete,
+    "goods_purchase": _goods_purchase_delete, "expense_payment": _expense_payment_delete,
 }
 
 @app.post("/bulk-delete")

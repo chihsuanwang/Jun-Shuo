@@ -316,6 +316,19 @@ CREATE TABLE goods_purchase (
   created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
+-- 18c. 付掉應付費用(2026-11-01 同仁回饋):營運支出 / 其他支出付款方式選「應付費用」(貸 2191)時,
+--      之後在應付帳款頁「費用」分頁付款,一筆支出只付一次、一次付清(暫定,實際需要分次再改)。
+--      借 2191 應付費用 / 貸 現金或銀行(總帳來源 expense_payment)。刪支出時這筆一起刪。
+CREATE TABLE expense_payment (
+  payment_id      INTEGER PRIMARY KEY,
+  expense_id      INTEGER NOT NULL UNIQUE REFERENCES op_expense(expense_id),
+  pay_date        TEXT NOT NULL,
+  amount          REAL NOT NULL,      -- 含稅(發票金額)
+  payment_account TEXT,               -- C 組帳戶名稱
+  note            TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
 -- 19. 總帳明細(方案 B 試點:進貨 / 營運費用 自動過帳,2026-09) ----
 --     家易照舊填業務表單,系統依 ledger.py 的對照表組出分錄,存檔前在確認畫面
 --     給他看、可微調。同一來源(進貨/費用)重存 = 整張傳票重開(先刪舊列再插新列),
@@ -332,7 +345,7 @@ CREATE TABLE ledger_entry (
   source_type  TEXT NOT NULL CHECK (source_type IN ('op_expense','order_sale','order_payment',
                  'goods_purchase','other_income','equity','manual_adjustment',
                  'asset_acquire','asset_depreciation','sales_return','year_closing',
-                 'vat_settlement','vat_payment')),
+                 'vat_settlement','vat_payment','expense_payment')),
   source_id    INTEGER NOT NULL,       -- 對應來源資料表的主鍵(例:op_expense.expense_id)
   note         TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))

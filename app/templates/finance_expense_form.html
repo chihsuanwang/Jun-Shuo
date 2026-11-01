@@ -14,6 +14,7 @@
 {% set qp = request.query_params %}
 {% if qp.get('ierr') == 'dup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">發票號碼 {{ request.query_params.get('no') }} 已經用在{{ request.query_params.get('dup') }},發票號碼不能重複,請再檢查一次。</div>{% elif qp.get('ierr') %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">憑證類型選了發票,發票號碼要填。</div>{% endif %}
 {% if qp.get('err') == '1' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">日期、科目、發票金額都要填。</div>{% endif %}
+{% if qp.get('err') == 'paid' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">這筆應付費用已經在「應付帳款 → 費用」付掉了,不能直接改金額或付款方式。要改的話,先到應付帳款頁把那筆付款紀錄勾選刪除,再回來改。</div>{% endif %}
 {% if qp.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">進項稅額不能大於或等於發票金額。</div>{% endif %}
 
 <form method="post" action="/finance/expenses" id="expForm">
@@ -44,7 +45,10 @@
     <label>從哪個帳戶付</label>
     <select name="payment_account" id="pay">
       {% for a in cash_accounts %}<option value="{{ a.name }}" {{ 'selected' if ((e.payment_account if e else None) or '現金') == a.name }}>{{ a.name }}</option>{% endfor %}
+      <option value="{{ ap_name }}" {{ 'selected' if e and e.payment_account == ap_name }}>N 應付費用(還沒付,之後再付)</option>
     </select>
+    <div class="muted" style="font-size:11px;margin-top:3px">還沒付錢就選「應付費用」,真的付的時候到左邊「應付帳款 → 費用」勾選付款</div>
+    {% if exp_paid %}<div style="font-size:12px;margin-top:6px" class="pos">已在 {{ exp_paid.pay_date }} 從「{{ exp_paid.payment_account }}」付掉 {{ exp_paid.amount|money }} 元(<a href="/payables?tab=expense">應付帳款 → 費用</a>)</div>{% endif %}
   </div>
   <div class="card mod">
     <h3 class="serif"><span class="tag">G</span>進項稅額</h3>

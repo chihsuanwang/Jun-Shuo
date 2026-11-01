@@ -3,10 +3,18 @@
 {% block body %}
 <div class="head"><div>
   <div class="sup">桂圓帳房 / 每天做的</div>
-  <h1 class="serif">應付帳款(付小農)</h1>
+  <h1 class="serif">應付帳款</h1>
 </div></div>
 <hr class="rule">
+{# 兩個分頁(2026-11-01):付小農(訂單的成本移轉價)/ 費用(營運支出、其他支出先記應付費用的) #}
+<div class="chips" style="margin:6px 0 18px;font-size:13px">
+  <a class="chip" href="/payables" style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if tab == 'farmer' }}">付小農({{ unpaid|length }})</a>
+  <a class="chip" href="/payables?tab=expense" style="{{ 'background:var(--seal);color:#FBF6EA;border-color:var(--seal)' if tab == 'expense' }}">費用({{ eunpaid|length }})</a>
+</div>
 {% if request.query_params.get('paid') %}<div class="ok">已付款 {{ request.query_params.get('paid') }} 筆,總帳也已經記好。</div>{% endif %}
+{% if request.query_params.get('err') == 'date' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">付款日格式不對,請重新選。</div>{% endif %}
+
+{% if tab == 'farmer' %}
 <p class="muted" style="font-size:13px;margin:-4px 0 14px;line-height:1.7">
   開訂單時,每列填的成本移轉價記成「借 採購成本 / 貸 應付帳款」(欠小農)。真的付錢給小農時,勾選那幾張訂單、按「付款」,
   選從哪個帳戶付,系統記「借 應付帳款 / 貸 現金或銀行」。未付金額 = 成本移轉價 − 已付 − 還沒付時就退回小農的。
@@ -34,7 +42,7 @@
 </div>
 
 <style>#payBox[hidden]{display:none!important}</style>
-<div id="payBox" hidden style="position:fixed;inset:0;background:rgba(40,30,20,.35);z-index:50;display:flex;align-items:center;justify-content:center">
+<div id="payBox" hidden data-who="小農" data-what="訂單" style="position:fixed;inset:0;background:rgba(40,30,20,.35);z-index:50;display:flex;align-items:center;justify-content:center">
   <div class="card" style="width:min(420px,92vw)">
     <h3 class="serif">付款給小農</h3>
     <p id="payInfo" style="font-size:13px"></p>
@@ -71,6 +79,73 @@
 </div>
 </form>
 
+{% else %}
+<p class="muted" style="font-size:13px;margin:-4px 0 14px;line-height:1.7">
+  記營運支出 / 其他支出時,付款方式選「應付費用」(還沒付)的,記成「借 費用 + 進項稅額 / 貸 2191 應付費用」。
+  真的付錢時,勾選那幾筆、按「付款」,選從哪個帳戶付,系統記「借 應付費用 / 貸 現金或銀行」。每一筆一次付清。
+</p>
+
+<form method="post" action="/payables/expense-pay" id="payForm">
+<div class="card" style="overflow-x:auto;margin-bottom:16px">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+    <h3 class="serif">還沒付的費用</h3>
+    <span class="muted" style="font-size:13px">共 {{ eunpaid|length }} 筆 · {{ eunpaid_total|money }} 元</span>
+  </div>
+  <table class="gl">
+    <thead><tr><th style="width:34px"><input type="checkbox" id="chkAll" style="width:auto"></th><th>支出日期</th><th>科目</th><th>備註</th><th>發票號碼</th><th data-num>應付(含稅)</th></tr></thead>
+    <tbody>{% for r in eunpaid %}
+      <tr>
+        <td><input type="checkbox" class="rchk" name="expense_id" value="{{ r.expense_id }}" data-amt="{{ r.due }}" style="width:auto"></td>
+        <td><a href="/finance/expenses/{{ r.expense_id }}/edit">{{ r.d }}</a></td>
+        <td>{{ r.account_code or '' }} {{ r.category or '' }}</td><td class="muted">{{ r.note or '' }}</td>
+        <td>{{ r.invoice_no or '' }}</td>
+        <td class="r neg"><b>{{ r.due|money }}</b></td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:left">沒有還沒付的費用。</td></tr>{% endfor %}</tbody>
+  </table>
+  {% if eunpaid %}<button type="button" id="openPay" style="margin-top:12px">付款(勾選的)</button>
+  <span id="selSum" class="muted" style="font-size:12px;margin-left:8px"></span>{% endif %}
+</div>
+
+<style>#payBox[hidden]{display:none!important}</style>
+<div id="payBox" hidden data-who="廠商" data-what="費用" style="position:fixed;inset:0;background:rgba(40,30,20,.35);z-index:50;display:flex;align-items:center;justify-content:center">
+  <div class="card" style="width:min(420px,92vw)">
+    <h3 class="serif">付掉應付費用</h3>
+    <p id="payInfo" style="font-size:13px"></p>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div><label>從哪個帳戶付</label><select name="payment_account">
+        {% for a in cash_accounts %}<option value="{{ a.name }}">{{ a.name }}</option>{% endfor %}</select></div>
+      <div><label>付款日</label><input type="date" name="paid_date" value="{{ today }}"></div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px">
+      <button type="submit">確定付款</button>
+      <button type="button" class="ghost" id="closePay">取消</button>
+    </div>
+  </div>
+</div>
+</form>
+
+<form method="post" action="/bulk-delete" class="bulkdel" data-msg="勾選的付款紀錄會刪掉(總帳的付款傳票一起刪),那幾筆費用會回到「還沒付」。">
+<input type="hidden" name="kind" value="expense_payment"><input type="hidden" name="back" value="/payables?tab=expense">
+<div class="card" style="overflow-x:auto">
+  <h3 class="serif">已經付掉的費用</h3>
+  {% include "_bulk_delete.html" %}
+  <table class="gl">
+    <thead><tr><th style="width:34px"><input type="checkbox" class="chkall" style="width:auto" title="全選"></th><th>付款日</th><th>支出日期</th><th>科目</th><th data-num>金額</th><th>付款帳戶</th><th>備註</th></tr></thead>
+    <tbody>{% for r in epaid %}
+      <tr>
+        <td><input type="checkbox" name="id" value="{{ r.payment_id }}" style="width:auto"></td>
+        <td>{{ r.pay_date }}</td>
+        <td><a href="/finance/expenses/{{ r.expense_id }}/edit">{{ r.d or '' }}</a></td>
+        <td>{{ r.account_code or '' }} {{ r.category or '' }}</td><td class="r">{{ r.amount|money }}</td><td>{{ r.payment_account or '現金' }}</td>
+        <td class="muted">{{ r.expense_note or '' }}</td>
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">還沒有付款紀錄。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+</form>
+{% endif %}
+
 <script>
 (function () {
   var all = document.getElementById('chkAll'), box = document.getElementById('payBox'), open = document.getElementById('openPay');
@@ -81,8 +156,8 @@
   document.addEventListener('change', function (e) { if (e.target.classList.contains('rchk')) info(); });
   if (open) open.addEventListener('click', function () {
     var r = sum();
-    if (!r[0]) { alert('請先勾選要付款的訂單。'); return; }
-    document.getElementById('payInfo').textContent = '這 ' + r[0] + ' 筆一起付給小農,共 ' + Math.round(r[1]).toLocaleString() + ' 元。';
+    if (!r[0]) { alert('請先勾選要付款的' + box.dataset.what + '。'); return; }
+    document.getElementById('payInfo').textContent = '這 ' + r[0] + ' 筆一起付給' + box.dataset.who + ',共 ' + Math.round(r[1]).toLocaleString() + ' 元。';
     box.hidden = false;
   });
   document.getElementById('closePay') && document.getElementById('closePay').addEventListener('click', function () { box.hidden = true; });

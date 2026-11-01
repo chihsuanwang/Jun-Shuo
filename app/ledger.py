@@ -157,6 +157,12 @@ def _cash_account(payment_account):
     return chart.cash_account(payment_account)
 
 
+# 2026-11-01 同仁回饋:營運支出 / 其他支出的付款方式可以選「應付費用」(還沒付,之後到應付帳款頁付)。
+# 跟欠小農的 2171 分開科目(使用者決定);代碼暫定 2191,待同仁確認。op_expense.payment_account 存這個名稱。
+EXPENSE_AP_NAME = "應付費用"
+EXPENSE_AP_ACCOUNT = ("2191", "應付費用")
+
+
 def compose_expense_entries(account, amount, tax_amount=0, payment_account=None):
     """營運支出(VD)/ 其他費用(VE):借 費用科目 + 進項稅額 / 貸 現金或銀行。
     account 是科目代碼(2026-10-16 起表單直接選科目);舊資料傳的是類別名稱時,退回舊對照表。"""
@@ -166,7 +172,10 @@ def compose_expense_entries(account, amount, tax_amount=0, payment_account=None)
         code, name = account, chart.name_of(account)
     else:
         code, name = EXPENSE_ACCOUNTS.get(account, ("6188-99", "其他費用-其他"))
-    cash_code, cash_name = _cash_account(payment_account)
+    if payment_account == EXPENSE_AP_NAME:   # 還沒付:貸 應付費用(不能走 _cash_account,不然會被當成新銀行建起來)
+        cash_code, cash_name = EXPENSE_AP_ACCOUNT[0], chart.name_of(EXPENSE_AP_ACCOUNT[0], EXPENSE_AP_ACCOUNT[1])
+    else:
+        cash_code, cash_name = _cash_account(payment_account)
     legs = [dict(account_code=code, account_name=name, debit=amount, credit=0)]
     if tax_amount:
         legs.append(dict(account_code=TAX_INPUT_ACCOUNT[0], account_name=TAX_INPUT_ACCOUNT[1],
@@ -255,6 +264,19 @@ def compose_order_payment_entries(paid_amount, payment_account=None):
     return [
         dict(account_code=cash_code, account_name=cash_name, debit=paid_amount, credit=0),
         dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=0, credit=paid_amount),
+    ]
+
+
+def compose_expense_payment_entries(amount, payment_account=None):
+    """付掉先記成應付費用的營運支出 / 其他支出(應付帳款頁「費用」分頁):借 2191 應付費用 / 貸 現金或銀行。"""
+    amount = amount or 0
+    if amount <= 0:
+        return []
+    cash_code, cash_name = _cash_account(payment_account)
+    return [
+        dict(account_code=EXPENSE_AP_ACCOUNT[0], account_name=chart.name_of(EXPENSE_AP_ACCOUNT[0], EXPENSE_AP_ACCOUNT[1]),
+             debit=amount, credit=0),
+        dict(account_code=cash_code, account_name=cash_name, debit=0, credit=amount),
     ]
 
 

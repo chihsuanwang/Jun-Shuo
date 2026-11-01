@@ -99,7 +99,7 @@
       <tr><td colspan="3" class="r"><b>應收合計(含稅)</b></td><td class="r"><b id="ordertotal">0</b></td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
-  <p class="muted" style="font-size:11px;margin-top:10px">成本記成「應付帳款」(欠小農);真的付錢給小農時,到左邊「應付帳款(付小農)」勾選付款。</p>
+  <p class="muted" style="font-size:11px;margin-top:10px">成本記成「應付帳款」(欠小農);真的付錢給小農時,到左邊「應付帳款」頁(付小農)勾選付款。</p>
   <p style="font-size:12px;margin-top:4px">付小農:{% if order_cost > 0 %}{% if farmer_paid >= order_cost %}<span class="pos">已付清 {{ farmer_paid|money }} 元</span>{% elif farmer_paid > 0 %}已付 {{ farmer_paid|money }} / {{ order_cost|money }} 元{% else %}<span class="neg">還沒付</span>({{ order_cost|money }} 元){% endif %} · <a href="/payables">應付帳款</a>{% else %}<span class="muted">這張單沒有成本移轉價</span>{% endif %}</p>
   <p class="muted" style="font-size:11px;margin-top:6px">改完按上方「儲存」,應收合計會重算。</p>
 </div>
