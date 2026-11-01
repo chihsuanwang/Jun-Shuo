@@ -333,9 +333,69 @@ def migrate_db():
 migrate_db()
 
 
-# ---------- CSV 匯出 ------------------------------------------
+# ---------- CSV / Excel 匯出 ------------------------------------------
+# 2026-11-01:所有下載都可以選 Excel(.xlsx)或 CSV(同仁用記事本開 CSV 看不懂)。前端點下載連結時先跳視窗選格式,
+# 網址帶 ?format=xlsx|csv;這裡用 middleware 把格式放進 contextvar,csv_response 依它產生 xlsx 或 csv,
+# 各個下載路由都不用改。
+import contextvars
+_DL_FORMAT = contextvars.ContextVar("dl_format", default="csv")
+
+@app.middleware("http")
+async def _download_format(request: Request, call_next):
+    token = _DL_FORMAT.set("xlsx" if request.query_params.get("format") == "xlsx" else "csv")
+    try:
+        return await call_next(request)
+    finally:
+        _DL_FORMAT.reset(token)
+
+
+def _xlsx_bytes(header, rows, sheet="資料"):
+    """表格 → .xlsx:標題列粗體 + 底色 + 凍結,欄寬照內容(中文算兩格),數字照數字存(可以直接加總),
+    「=」開頭的文字一律當文字(不讓它變公式)。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    wb = Workbook()
+    ws = wb.active
+    ws.title = re.sub(r'[\/*?:\[\]]', "", sheet)[:31] or "資料"
+    width = {}
+    def note(i, v):
+        t = f"{v:,.2f}" if isinstance(v, float) else str(v)
+        width[i] = max(width.get(i, 0), sum(2 if ord(ch) > 0x2E80 else 1 for ch in t))
+    if header:
+        ws.append([str(h) for h in header])
+        for i, cell in enumerate(ws[1], 1):
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill("solid", fgColor="F3E9D2")
+            note(i, cell.value)
+        ws.freeze_panes = "A2"
+    for r in rows:
+        ws.append([None if v == "" else v for v in r])
+        for i, cell in enumerate(ws[ws.max_row], 1):
+            v = cell.value
+            if v is None:
+                continue
+            if isinstance(v, str) and v.startswith("="):
+                cell.data_type = "s"
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                cell.number_format = "#,##0" if float(v).is_integer() else "#,##0.00"
+            note(i, v)
+    for i, w in width.items():
+        ws.column_dimensions[get_column_letter(i)].width = min(max(w + 2, 8), 60)
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
 def csv_response(filename, header, rows):
     from urllib.parse import quote
+    rows = [["" if v is None else v for v in r] for r in rows]
+    if _DL_FORMAT.get() == "xlsx":
+        name = re.sub(r"\.csv$", "", filename) + ".xlsx"
+        cd = f"attachment; filename=export.xlsx; filename*=UTF-8''{quote(name)}"
+        return Response(_xlsx_bytes(header, rows, re.sub(r"\.csv$", "", filename)),
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": cd})
     buf = io.StringIO()
     buf.write("﻿")            # BOM，讓 Excel 正確顯示中文
     w = csv.writer(buf)

@@ -11,7 +11,7 @@
       </select>
     </form>
     <div style="margin-top:8px">
-      <a href="/statements/trial.csv?year={{ year }}"><button type="button" class="ghost">下載試算表(Excel 可開)</button></a>
+      <a href="/statements/trial.csv?year={{ year }}"><button type="button" class="ghost">下載試算表</button></a>
       <a href="/vat?year={{ year }}" style="margin-left:6px"><button type="button" class="ghost">營業稅結算</button></a>
       {% if closed %}
       <form method="post" action="/statements/reopen-year"

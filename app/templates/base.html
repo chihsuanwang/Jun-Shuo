@@ -94,5 +94,38 @@
   });
 })();
 </script>
+<style>#dlBox[hidden]{display:none!important}</style>
+<div id="dlBox" hidden style="position:fixed;inset:0;background:rgba(40,30,20,.35);z-index:60;display:flex;align-items:center;justify-content:center">
+  <div class="card" style="width:min(380px,92vw)">
+    <h3 class="serif">要下載哪一種格式?</h3>
+    <p class="muted" style="font-size:12px;line-height:1.7;margin:6px 0 12px">Excel 檔用 Excel、Google 試算表、Numbers 打開就是整理好的表格;
+      CSV 是純文字,要匯入其他系統才用。</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button type="button" data-fmt="xlsx">Excel(.xlsx)</button>
+      <button type="button" class="ghost" data-fmt="csv">CSV</button>
+      <button type="button" class="ghost" data-fmt="">取消</button>
+    </div>
+  </div>
+</div>
+<script>
+/* 下載先選格式(2026-11-01):所有 .csv 下載、訂單匯入範本,點了先問 Excel 還是 CSV,網址加 format= */
+(function () {
+  var box = document.getElementById('dlBox'), url = null;
+  function isDl(a) { return a && a.pathname && (/\.csv$/.test(a.pathname) || a.pathname === '/orders/import/template'); }
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a[href]');
+    if (!isDl(a) || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    e.preventDefault(); url = a.href; box.hidden = false;
+    box.querySelector('[data-fmt=xlsx]').focus();
+  });
+  box.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-fmt]');
+    if (!b && e.target !== box) return;
+    box.hidden = true;
+    if (b && b.dataset.fmt && url) location.href = url + (url.indexOf('?') < 0 ? '?' : '&') + 'format=' + b.dataset.fmt;
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') box.hidden = true; });
+})();
+</script>
 </body>
 </html>
