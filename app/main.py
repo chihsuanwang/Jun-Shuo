@@ -364,6 +364,9 @@ def _xlsx_bytes(header, rows, sheet="資料"):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+    # 看不見的控制字元(例:Google 表單匯入的 )Excel 不收,openpyxl 會直接丟錯變 500,先清掉(2026-11-01 code-review)
+    clean = lambda v: ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v
     wb = Workbook()
     ws = wb.active
     ws.title = re.sub(r'[\/*?:\[\]]', "", sheet)[:31] or "資料"
@@ -372,14 +375,14 @@ def _xlsx_bytes(header, rows, sheet="資料"):
         t = f"{v:,.2f}" if isinstance(v, float) else str(v)
         width[i] = max(width.get(i, 0), sum(2 if ord(ch) > 0x2E80 else 1 for ch in t))
     if header:
-        ws.append([str(h) for h in header])
+        ws.append([clean(str(h)) for h in header])
         for i, cell in enumerate(ws[1], 1):
             cell.font = Font(bold=True)
             cell.fill = PatternFill("solid", fgColor="F3E9D2")
             note(i, cell.value)
         ws.freeze_panes = "A2"
     for r in rows:
-        ws.append([None if v == "" else v for v in r])
+        ws.append([None if v == "" else clean(v) for v in r])
         for i, cell in enumerate(ws[ws.max_row], 1):
             v = cell.value
             if v is None:
