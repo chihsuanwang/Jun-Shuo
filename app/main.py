@@ -2641,11 +2641,10 @@ async def statements_reopen_year(request: Request):
 #   每兩個月一期。結算看「期末那天為止」的 2214 / 1423 / 1424 餘額(之前每期結算都會把 2214、1423
 #   歸零,所以餘額就是這期還沒結的部分)。只能照順序結:比最後一期已結算的還早的期別不能再結;
 #   撤銷只能撤最後一期、而且還沒繳納的。
-import calendar as _cal
 
 def _vat_range(year, p):
     m1, m2 = 2 * p - 1, 2 * p
-    return f"{year}-{m1:02d}-01", f"{year}-{m2:02d}-{_cal.monthrange(year, m2)[1]:02d}"
+    return f"{year}-{m1:02d}-01", Q.month_end(f"{year}-{m2:02d}")
 
 def _vat_balances(as_of):
     def bal(code):

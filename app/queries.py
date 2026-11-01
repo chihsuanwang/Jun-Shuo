@@ -597,13 +597,8 @@ def _pnl_result(d, **extra):
     out.update(extra)
     return out
 
-def _month_end(ym):
-    import calendar as _cal
-    y, m = int(ym[:4]), int(ym[5:7])
-    return f"{ym}-{_cal.monthrange(y, m)[1]:02d}"
-
 def finance_month(ym):
-    d = _ledger_pnl(f"{ym}-01", _month_end(ym))
+    d = _ledger_pnl(f"{ym}-01", month_end(ym))
     opex = [{"category": k, "amt": v} for k, v in sorted(d["opex"].items(), key=lambda x: -x[1]) if round(v, 2)]
     r = _pnl_result(d, ym=ym, opex=opex)
     r["breakeven"] = (r["opex_total"] / r["margin"]) if r["margin"] else None
@@ -715,7 +710,7 @@ def returns_list(order_id=None):
 def season_finance(season):
     """整個產季合計(從總帳抓,2026-10-20):4 月初~隔年 3 月底;進行中的產季只算到今天。"""
     lo, hi_full = f"{season}-04", f"{season + 1}-03"
-    hi = min(_month_end(hi_full), dt.date.today().isoformat())
+    hi = min(month_end(hi_full), dt.date.today().isoformat())
     d = _ledger_pnl(f"{lo}-01", hi)
     r = _pnl_result(d, season=season, window=f"{lo} ~ {hi_full}")
     r["opex"] = r["opex_total"]
