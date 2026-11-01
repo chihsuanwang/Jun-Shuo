@@ -15,11 +15,12 @@
 <div class="card" style="max-width:680px">
   <div class="grid" style="grid-template-columns:1fr 1fr">
     <div><label>名稱</label><input name="name" value="{{ d.name or '' }}" required placeholder="例:柴焙灶"></div>
-    <div><label>類別(選了會帶預設年數)</label>
+    <div><label>設備種類</label>
       <select name="category" id="cat">
-        <option value="">—</option>
-        {% for c, m in cats.items() %}<option value="{{ c }}" data-life="{{ m }}" {{ 'selected' if d.category == c }}>{{ c }}({{ m }} 個月)</option>{% endfor %}
-      </select></div>
+        {% for c, m in cats.items() %}<option value="{{ c }}" data-life="{{ m }}" {{ 'selected' if d.category == c }}>{{ c }}</option>{% endfor %}
+        {% if d.category and d.category not in cats %}<option value="{{ d.category }}" selected>{{ d.category }}(舊類別)</option>{% endif %}
+      </select>
+      <div class="muted" style="font-size:11px;margin-top:3px">折舊從取得日的下個月開始提,每月月底記一筆</div></div>
     <div><label>取得日</label><input name="acquire_date" type="date" value="{{ d.acquire_date or today }}" required></div>
     <div><label>取得成本</label><input name="cost" id="cost" type="number" step="1" value="{{ d.cost|round(0) if d.cost else '' }}" required></div>
     <div><label>進項稅額(沒有填 0)</label><input name="tax_amount" type="number" step="1" min="0" value="{{ (d.tax_amount or 0)|round(0)|int }}"></div>

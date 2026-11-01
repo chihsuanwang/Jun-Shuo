@@ -443,6 +443,25 @@ def _add_months(ym, k):
     m = (m - 1) % 12 + 1
     return f"{y}-{m:02d}"
 
+def asset_dep_start(a):
+    """第一個提折舊的月份 = 取得日的**下個月**(2026-11-01 同仁回饋;以前是取得當月就開始)。"""
+    return _add_months(a["acquire_date"][:7], 1)
+
+
+def month_end(ym):
+    """YYYY-MM 的最後一天(YYYY-MM-DD)。折舊傳票日期是當月月底。"""
+    import calendar
+    y, m = map(int, ym.split("-"))
+    return f"{ym}-{calendar.monthrange(y, m)[1]:02d}"
+
+
+def last_dep_ym(today=None):
+    """已經可以記折舊的最後一個月:傳票日期是月底,還沒到月底的月份先不記(今天就是月底才算這個月)。"""
+    d = today or dt.date.today()
+    ym = d.strftime("%Y-%m")
+    return ym if d.isoformat() == month_end(ym) else _add_months(ym, -1)
+
+
 def asset_dep_base(a):
     """可提折舊基礎 = 成本 − 補助 − 殘值(不小於 0)。2026-10-16 起補助都是 0;殘值 2026-10-23 起可以填。"""
     return max(0.0, (a["cost"] or 0) - (a["grant_amount"] or 0) - (a["salvage"] or 0))
@@ -470,7 +489,7 @@ def _asset_dep_rows(lo=None, hi=None):
         months = asset_life_months(a)
         if asset_dep_base(a) <= 0 or months <= 0 or not a["acquire_date"]:
             continue
-        start = a["acquire_date"][:7]
+        start = asset_dep_start(a)
         for i in range(months):
             ym = _add_months(start, i)
             if a["disposed_date"] and ym > a["disposed_date"][:7]:
@@ -598,9 +617,9 @@ def _months_between(a, b):
     return (by - ay) * 12 + (bm - am)
 
 def asset_list(as_of_ym=None):
-    """固定資產卡 + 到 as_of_ym 為止的累計折舊、帳面淨值。"""
+    """固定資產卡 + 到 as_of_ym 為止的累計折舊、帳面淨值(預設 = 已經到月底、總帳記得到的最後一個月)。"""
     if not as_of_ym:
-        as_of_ym = as_of()[:7]
+        as_of_ym = last_dep_ym()
     rows = q("""SELECT a.* FROM fixed_asset a
                 ORDER BY a.acquire_date DESC, a.asset_id DESC""")
     for a in rows:
@@ -614,7 +633,7 @@ def asset_list(as_of_ym=None):
             end = as_of_ym
             if a["disposed_date"] and a["disposed_date"][:7] < end:
                 end = a["disposed_date"][:7]
-            n = min(months, max(0, _months_between(a["acquire_date"][:7], end) + 1))
+            n = min(months, max(0, _months_between(asset_dep_start(a), end) + 1))
         a["accum_dep"] = min(base, sum(asset_monthly_dep(a, i) for i in range(n)))
         a["book_value"] = (a["cost"] or 0) - a["accum_dep"]
         a["in_use"] = not a["disposed_date"]
@@ -623,23 +642,24 @@ def asset_list(as_of_ym=None):
 
 def sync_depreciation_vouchers():
     """把總帳的折舊傳票對到目前的固定資產設定(開 /assets 頁、存檔固定資產後呼叫)。
-    每台資產從取得月到「這個月」(或處分月)每月該記多少,跟總帳已記的逐月比對:沒記的補上;
+    每台資產從取得的下個月到「已經過完月底的最後一個月」(或處分月)每月該記多少,傳票日期是月底
+    (2026-11-01 同仁回饋;以前從取得當月、每月 1 號),跟總帳已記的逐月比對:沒記的補上;
     記了但金額不對(成本 / 殘值 / 年限 / 取得日 / 處分日改過)或不該記的(月份移掉了)重記 / 刪掉。
     已結轉的年度一律不動(1019 同仁問題第 6 條)。金額沒變的月份不碰,傳票號碼不會亂跳。"""
-    this_ym = dt.date.today().strftime("%Y-%m")
+    this_ym = last_dep_ym()
     closed = {int(r["source_id"]) for r in q("SELECT DISTINCT source_id FROM ledger_entry WHERE source_type='year_closing'")}
     for a in q("SELECT * FROM fixed_asset"):
         aid, expected = a["asset_id"], {}
         months = asset_life_months(a)
         if asset_dep_base(a) > 0 and months > 0 and a["acquire_date"]:
-            start = a["acquire_date"][:7]
+            start = asset_dep_start(a)
             end = this_ym
             if a["disposed_date"] and a["disposed_date"][:7] < end:
                 end = a["disposed_date"][:7]
             for i in range(min(months, max(0, _months_between(start, end) + 1))):
                 amt = asset_monthly_dep(a, i)
                 if amt:
-                    expected[f"{_add_months(start, i)}-01"] = amt
+                    expected[month_end(_add_months(start, i))] = amt
         posted = {r["d"]: r["v"] for r in q("""SELECT entry_date d, SUM(debit) v FROM ledger_entry
                                                 WHERE source_type='asset_depreciation' AND source_id=?
                                                 GROUP BY entry_date""", (aid,))}

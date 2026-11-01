@@ -674,8 +674,9 @@ async def product_line_assign(request: Request):
 # 2026-10-08 同仁回饋:耐用年數最少 10 年(畫面跟存檔都擋);殘值 2026-10-23 起可以填(原本一律 0)
 ASSET_MIN_LIFE = 10          # 年;2026-10-16 起表單填「月」,最少 ASSET_MIN_LIFE*12 = 120 個月
 ASSET_MIN_MONTHS = ASSET_MIN_LIFE * 12
-ASSET_CATS = {"機器設備": 120, "生財器具": 120, "運輸設備": 120,
-              "電腦設備": 120, "房屋建築": 360, "其他": 120}   # 預設使用年限(月)
+# 2026-11-01 同仁回饋:設備種類只留「機器設備」(K 組本來就只有 1616 一個科目)。
+# 以前存過其他類別的舊資料照樣保留、照樣算,編輯畫面會把它多列一個選項,不會被默默改掉。
+ASSET_CATS = {"機器設備": 120}   # 預設使用年限(月)
 
 @app.get("/assets", response_class=HTMLResponse)
 def assets_page(request: Request):
@@ -737,7 +738,7 @@ async def asset_save(request: Request):
     if salvage < 0 or (salvage and salvage >= cost):
         back = f"/assets/{aid}/edit" if aid else "/assets/new"
         return RedirectResponse(f"{back}?err=salvage", status_code=303)
-    category = g("category")
+    category = g("category") or "機器設備"
     payment_account = g("payment_account") or "現金"
     cols = dict(
         name=name, category=category,
