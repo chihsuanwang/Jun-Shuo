@@ -246,10 +246,12 @@ def ar_recently_paid(season=None, limit=15, mode="season", year=None):
     return rows
 
 
-CASH_SRC_LABEL = {'op_expense': '營運費用', 'order_sale': '訂單成立',
-                   'order_payment': '訂單收款', 'goods_purchase': '進口商品', 'other_income': '其他收益',
+# 銀行帳戶明細的「來源」欄(2026-11-01 code-review:補上付應付費用、營業稅繳納;名稱跟總帳頁 LEDGER_SOURCES 一致)
+CASH_SRC_LABEL = {'op_expense': '營運支出 / 其他支出', 'order_sale': '訂單成立',
+                   'order_payment': '訂單收款', 'goods_purchase': '付小農貨款', 'other_income': '其他收益',
                    'equity': '資本異動', 'manual_adjustment': '帳務調整',
-                   'asset_acquire': '設備取得', 'sales_return': '退款/退回小農'}
+                   'asset_acquire': '設備取得', 'sales_return': '退款 / 退回小農',
+                   'expense_payment': '付應付費用', 'vat_settlement': '營業稅結算', 'vat_payment': '營業稅繳納'}
 
 def cash_accounts():
     """現金 / 各銀行帳戶清單——依 ledger_entry 裡實際用過的科目抓,不是另外維護的固定名單。
