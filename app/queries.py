@@ -105,9 +105,14 @@ def _S(season, alias="o", mode="season", date_col="order_date", year=None):
 PAID_O = "o.payment_status IN ('已收款','部分收款')"
 # 2026-10-16 起跟客人收的運費算收入,所以實收只扣掉銷項稅額(舊資料的「客戶付」運費也一樣當收入看)
 REV_PAID = "(o.paid_amount - COALESCE(o.sales_tax,0))"
-# 明細層級的未稅營收:每列含稅小計依該單各列佔比分掉銷項稅額(要有 alias ol + o)
-LINE_NET = ("(ol.line_subtotal * (1 - COALESCE(o.sales_tax,0) / COALESCE(NULLIF("
-            "(SELECT SUM(x.line_subtotal) FROM order_line x WHERE x.order_id=o.order_id),0),1)))")
+# 明細層級的未稅營收(要有 alias ol + o)。2026-11-01 code-review 起跟總帳同一套算法:
+#   每列含稅小計 × (1 − 整單折扣 ÷ 商品小計) × (1 − 銷項稅額 ÷ 應收合計)
+#   = 先依各列佔比分掉「本次實際收費」的折扣,再跟總帳一樣照佔比扣稅(運費也分到一份稅,所以分母是含運費的應收合計)。
+#   例:350×3 收 1000 + 運費 100、稅 55 → 這列 950 = 總帳 4111 997.5 − 4119-01 47.5。運費收入(4119-02)不算進商品營收。
+LINE_NET = ("(ol.line_subtotal"
+            " * (1 - COALESCE(o.discount_total,0) / COALESCE(NULLIF("
+            "(SELECT SUM(x.line_subtotal) FROM order_line x WHERE x.order_id=o.order_id),0),1))"
+            " * (1 - COALESCE(o.sales_tax,0) / COALESCE(NULLIF(o.order_total,0),1)))")
 # 退款 / 退回小農(2026-10-08):管理報表上退款沖減營收,小農退回的成本沖減銷貨成本
 RET_REFUND = "CASE WHEN sr.kind='退款' THEN sr.amount ELSE 0 END"
 RET_COGS = "CASE WHEN sr.kind='退回小農' THEN sr.amount ELSE 0 END"
