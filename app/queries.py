@@ -622,19 +622,17 @@ def asset_list(as_of_ym=None):
         as_of_ym = last_dep_ym()
     rows = q("""SELECT a.* FROM fixed_asset a
                 ORDER BY a.acquire_date DESC, a.asset_id DESC""")
+    posted = {r["source_id"]: r["v"] for r in q("""SELECT source_id, SUM(debit) v FROM ledger_entry
+                                                    WHERE source_type='asset_depreciation' AND entry_date <= ?
+                                                    GROUP BY source_id""", (month_end(as_of_ym),))}
     for a in rows:
         base = asset_dep_base(a)
         months = asset_life_months(a)
         a["dep_base"] = base
         a["life_months_eff"] = months
         a["monthly"] = asset_monthly_dep(a, 0)
-        n = 0
-        if a["acquire_date"] and a["monthly"]:
-            end = as_of_ym
-            if a["disposed_date"] and a["disposed_date"][:7] < end:
-                end = a["disposed_date"][:7]
-            n = min(months, max(0, _months_between(asset_dep_start(a), end) + 1))
-        a["accum_dep"] = min(base, sum(asset_monthly_dep(a, i) for i in range(n)))
+        # 累計折舊直接加總帳(2026-11-01 code-review):已結轉年度可能是舊規則記的,用公式重算會跟總帳對不上
+        a["accum_dep"] = round(posted.get(a["asset_id"], 0) or 0, 2)
         a["book_value"] = (a["cost"] or 0) - a["accum_dep"]
         a["in_use"] = not a["disposed_date"]
     return rows
@@ -648,21 +646,30 @@ def sync_depreciation_vouchers():
     已結轉的年度一律不動(1019 同仁問題第 6 條)。金額沒變的月份不碰,傳票號碼不會亂跳。"""
     this_ym = last_dep_ym()
     closed = {int(r["source_id"]) for r in q("SELECT DISTINCT source_id FROM ledger_entry WHERE source_type='year_closing'")}
+    import math
     for a in q("SELECT * FROM fixed_asset"):
         aid, expected = a["asset_id"], {}
-        months = asset_life_months(a)
-        if asset_dep_base(a) > 0 and months > 0 and a["acquire_date"]:
-            start = asset_dep_start(a)
-            end = this_ym
-            if a["disposed_date"] and a["disposed_date"][:7] < end:
-                end = a["disposed_date"][:7]
-            for i in range(min(months, max(0, _months_between(start, end) + 1))):
-                amt = asset_monthly_dep(a, i)
-                if amt:
-                    expected[month_end(_add_months(start, i))] = amt
         posted = {r["d"]: r["v"] for r in q("""SELECT entry_date d, SUM(debit) v FROM ledger_entry
                                                 WHERE source_type='asset_depreciation' AND source_id=?
                                                 GROUP BY entry_date""", (aid,))}
+        months, base = asset_life_months(a), asset_dep_base(a)
+        if base > 0 and months > 0 and a["acquire_date"]:
+            # 已結轉年度記過的折舊不能動(可能是舊規則:取得當月起、每月 1 號),未結轉年度接著它往下算:
+            # 已經提了幾個月、提了多少,剩下的照每月金額提到滿(2026-11-01 code-review:原本從頭算,交界會多提一個月)
+            locked = [v or 0 for d, v in posted.items() if int(d[:4]) in closed]
+            done, remaining = len(locked), base - sum(locked)
+            per = math.ceil(base / months)
+            end = this_ym
+            if a["disposed_date"] and a["disposed_date"][:7] < end:
+                end = a["disposed_date"][:7]
+            ym = asset_dep_start(a)
+            while ym <= end and done < months and remaining > 0.005:
+                if int(ym[:4]) not in closed:
+                    amt = min(per, round(remaining, 2))
+                    expected[month_end(ym)] = amt
+                    remaining -= amt
+                    done += 1
+                ym = _add_months(ym, 1)
         for d, v in posted.items():
             if int(d[:4]) not in closed and abs(expected.get(d, 0) - (v or 0)) > 0.005:
                 execute("DELETE FROM ledger_entry WHERE source_type='asset_depreciation' AND source_id=? AND entry_date=?",
