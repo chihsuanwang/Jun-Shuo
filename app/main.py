@@ -143,6 +143,9 @@ backup_db()
 
 
 # ---------- 啟動時輕量遷移(補既有資料庫缺的欄位) -----------------
+_REPOST_SALES_PENDING = False
+
+
 def migrate_db():
     try:
         if not os.path.exists(_db.DB):
@@ -308,7 +311,11 @@ def migrate_db():
                    credit_before REAL NOT NULL DEFAULT 0, payable REAL NOT NULL DEFAULT 0,
                    credit_after REAL NOT NULL DEFAULT 0, paid_date TEXT, paid_account TEXT,
                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')), UNIQUE (year, period))""")
+        chart_ver = q1("PRAGMA user_version").get("user_version") or 0
         chart.apply_chart_additions()
+        if chart_ver < 3:   # 運費改記 4119-02:舊訂單要照新規則重記,函式在檔案後面定義,檔尾再跑
+            global _REPOST_SALES_PENDING
+            _REPOST_SALES_PENDING = True
         gcols = [r["name"] for r in q("PRAGMA table_info(goods_purchase)")]
         if gcols and "order_id" not in gcols:
             execute("ALTER TABLE goods_purchase ADD COLUMN order_id INTEGER")
@@ -1357,10 +1364,22 @@ tpl.env.filters["ucost"] = lambda v: "" if v is None else f"{float(v):,.2f}".rst
 tpl.env.filters["plain_num"] = lambda v: "" if v is None else f"{float(v):.6f}".rstrip("0").rstrip(".")
 
 
-def _post_order_ledger(oid):
+def _repost_sales_orders():
+    """記帳規則改了之後(2026-11-01 運費改記 4119-02),把還沒結轉年度的銷售訂單成立分錄照新規則重記一次。
+    傳票號碼沿用原本的;已結轉年度不動。"""
+    closed = _closed_years()
+    n = 0
+    for r in q("""SELECT order_id, order_date FROM "order" WHERE order_kind='銷售'"""):
+        if int(r["order_date"][:4]) not in closed:
+            _post_order_ledger(r["order_id"], keep_no=True)
+            n += 1
+    print(f"[migrate] 銷售訂單照新記帳規則重記 {n} 張")
+
+
+def _post_order_ledger(oid, keep_no=False):
     """訂單存檔/標記已收款後呼叫:重開 order_sale(成立分錄)+ order_payment(收款分錄)。
     贈送/樣品等非「銷售」訂單、或還沒收到錢,對應那張就不會產生(ledger.save_voucher
-    在 legs 為空時只清空、不新增)。"""
+    在 legs 為空時只清空、不新增)。keep_no=True:傳票號碼沿用原本的(批次重記用)。"""
     o, lines = Q.order_get(oid)
     if not o:
         return
@@ -1368,11 +1387,11 @@ def _post_order_ledger(oid):
                   for l in lines]
     sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_fee_charged"],
                                                   o["sales_tax"], o["cost_payment_account"])
-    ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, note=f"訂單 {o['order_no']}")
+    ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, note=f"訂單 {o['order_no']}", keep_no=keep_no)
 
     pay_legs = ledger.compose_order_payment_entries(o["paid_amount"], o["payment_account"])
     pay_date = o["paid_date"] or o["order_date"]
-    ledger.save_voucher("order_payment", oid, pay_date, pay_legs, note=f"訂單 {o['order_no']} 收款")
+    ledger.save_voucher("order_payment", oid, pay_date, pay_legs, note=f"訂單 {o['order_no']} 收款", keep_no=keep_no)
 
 
 # ---------- 訂單管理:清單 / 明細 / 更新 -----------------------
@@ -2928,3 +2947,11 @@ def manuals_download(key: str):
     title, content = ME.export_html(key)
     cd = f"attachment; filename=manual.html; filename*=UTF-8''{quote(title)}.html"
     return Response(content, media_type="text/html; charset=utf-8", headers={"Content-Disposition": cd})
+
+
+# 開機升級的後半段:migrate_db() 跑的時候 _post_order_ledger 還沒定義,要重記的訂單留到這裡做
+if _REPOST_SALES_PENDING:
+    try:
+        _repost_sales_orders()
+    except Exception as e:
+        print("[migrate] 重記銷售訂單失敗:", e)

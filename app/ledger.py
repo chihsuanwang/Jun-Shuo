@@ -175,6 +175,11 @@ def compose_expense_entries(account, amount, tax_amount=0, payment_account=None)
     return legs
 
 
+# 2026-11-01 同仁回饋:跟客人收的運費整筆記 4119-02(不再分攤到各產品線);整單折扣記 4119-01(借方)。
+SHIPPING_REVENUE_ACCOUNT = ("4119-02", "銷貨收入-其他-運費")
+SALES_DISCOUNT_ACCOUNT = ("4119-01", "銷貨收入-其他-折扣")
+
+
 def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, cost_payment_account=None):
     """訂單成立分錄(同事「會計場景對應分錄表_1015」場景 1「成功賣出貨物時,但還未收款」):
     借 1172 應收帳款(含稅、含跟客人收的運費)/ 貸 2214 銷項稅額 + 貸 4111-xx 銷貨收入(依產品線);
@@ -184,8 +189,9 @@ def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, c
     一起記,應付帳款一進一出永遠是 0,不需要另外的付款頁。
     - lines = [(產品線名稱或 None, 含稅小計, 成本), …]。成本是家易在每個品項自己填的金額
       (2026-10-16:系統不算,商品目錄也不再有單位成本)。
-    - 跟客人收的運費依各線含稅金額佔比分進收入,家易填的銷項稅額也依同樣佔比扣掉,
-      尾差併進金額最大的那條線。運費支出不在這裡記,家易從營運支出記 6114 運費。
+    - 跟客人收的運費整筆貸記 4119-02(2026-11-01 起;以前是依各線佔比分進產品線收入)。
+    - 家易填的銷項稅額依金額佔比從各產品線收入、運費扣掉,每個收入科目記的都是未稅金額;
+      尾差併進金額最大的那一項。運費支出不在這裡記,家易從營運支出記 6114 運費。
     order_kind 不是「銷售」(贈送/樣品/內部領用等)回傳空 list,不記這筆。"""
     if order_kind != "銷售":
         return []
@@ -202,22 +208,22 @@ def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, c
         return []
     legs = []
     if total > 0:
-        g = gross if goods else {(next(iter(gross)) if gross else None): 0}
-        net = {}
-        for pg, amt in g.items():
-            share = (amt / goods) if goods else 1 / len(g)
-            net[pg] = round(amt + shipping_fee * share - sales_tax * share, 2)
+        # 各收入項目(含稅):產品線 + 運費;稅額照佔比扣掉,記未稅金額
+        parts = {("pg", pg): amt for pg, amt in gross.items() if amt}
+        if shipping_fee:
+            parts[("ship", None)] = shipping_fee
+        net = {k: round(v - sales_tax * v / total, 2) for k, v in parts.items()}
         diff = round(total - sales_tax - sum(net.values()), 2)
-        if diff:
-            biggest = max(net, key=lambda k: g[k])
+        if diff and net:
+            biggest = max(net, key=lambda k: parts[k])
             net[biggest] = round(net[biggest] + diff, 2)
         legs.append(dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=total, credit=0))
         if sales_tax:
             legs.append(dict(account_code=SALES_TAX_OUTPUT_ACCOUNT[0], account_name=SALES_TAX_OUTPUT_ACCOUNT[1],
                               debit=0, credit=sales_tax))
-        for pg, amt in net.items():
+        for (kind, pg), amt in net.items():
             if amt:
-                code, name = REVENUE_ACCOUNTS.get(pg, REVENUE_DEFAULT)
+                code, name = SHIPPING_REVENUE_ACCOUNT if kind == "ship" else REVENUE_ACCOUNTS.get(pg, REVENUE_DEFAULT)
                 legs.append(dict(account_code=code, account_name=name, debit=0, credit=amt))
     if total_cost > 0:
         for pg, c in cost.items():
@@ -505,13 +511,16 @@ def next_voucher_no(date):
     return f"GL{ymd}{n:03d}"
 
 
-def save_voucher(source_type, source_id, date, legs, note=None):
+def save_voucher(source_type, source_id, date, legs, note=None, keep_no=False):
     """整張傳票重開:先刪掉這個來源既有的分錄列,再依 legs 插入新的一組。
-    legs 為空(例:設備採購)時只清空、不產生新傳票。"""
+    legs 為空(例:設備採購)時只清空、不產生新傳票。keep_no=True 時沿用原本的傳票號碼
+    (改版後批次重記舊傳票用,號碼不會亂跳)。"""
+    old = q1("SELECT voucher_no FROM ledger_entry WHERE source_type=? AND source_id=? LIMIT 1",
+             (source_type, source_id)) if keep_no else {}
     execute("DELETE FROM ledger_entry WHERE source_type=? AND source_id=?", (source_type, source_id))
     if not legs:
         return None
-    voucher_no = next_voucher_no(date)
+    voucher_no = old.get("voucher_no") or next_voucher_no(date)
     for leg in named_legs(legs):
         execute("""INSERT INTO ledger_entry(voucher_no, entry_date, account_code, account_name,
                      debit, credit, source_type, source_id, note)
