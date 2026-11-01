@@ -143,9 +143,6 @@ backup_db()
 
 
 # ---------- 啟動時輕量遷移(補既有資料庫缺的欄位) -----------------
-_REPOST_SALES_PENDING = False
-
-
 def migrate_db():
     try:
         if not os.path.exists(_db.DB):
@@ -315,11 +312,13 @@ def migrate_db():
                    credit_before REAL NOT NULL DEFAULT 0, payable REAL NOT NULL DEFAULT 0,
                    credit_after REAL NOT NULL DEFAULT 0, paid_date TEXT, paid_account TEXT,
                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')), UNIQUE (year, period))""")
+        # app_meta:開機升級要做、但可能中途失敗的事,先記一筆「待辦」,做成功才刪(2026-11-01 code-review:
+        # 原本只看 user_version,版本一升上去,重記失敗就再也不會重試)
+        execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT)")
         chart_ver = q1("PRAGMA user_version").get("user_version") or 0
+        if chart_ver < 3:   # 運費改記 4119-02:舊訂單要照新規則重記(函式在檔案後面定義,檔尾再跑)
+            execute("INSERT OR IGNORE INTO app_meta(key, value) VALUES('repost_sales_v3', '1')")
         chart.apply_chart_additions()
-        if chart_ver < 3:   # 運費改記 4119-02:舊訂單要照新規則重記,函式在檔案後面定義,檔尾再跑
-            global _REPOST_SALES_PENDING
-            _REPOST_SALES_PENDING = True
         gcols = [r["name"] for r in q("PRAGMA table_info(goods_purchase)")]
         if gcols and "order_id" not in gcols:
             execute("ALTER TABLE goods_purchase ADD COLUMN order_id INTEGER")
@@ -1451,14 +1450,19 @@ tpl.env.filters["plain_num"] = lambda v: "" if v is None else f"{float(v):.6f}".
 
 def _repost_sales_orders():
     """記帳規則改了之後(2026-11-01 運費改記 4119-02),把還沒結轉年度的銷售訂單成立分錄照新規則重記一次。
-    傳票號碼沿用原本的;已結轉年度不動。"""
+    傳票號碼沿用原本的;已結轉年度不動。某一張失敗不影響其他張;全部成功才回 True。"""
     closed = _closed_years()
-    n = 0
-    for r in q("""SELECT order_id, order_date FROM "order" WHERE order_kind='銷售'"""):
-        if int(r["order_date"][:4]) not in closed:
-            _post_order_ledger(r["order_id"], keep_no=True)
-            n += 1
-    print(f"[migrate] 銷售訂單照新記帳規則重記 {n} 張")
+    n, failed = 0, []
+    for r in q("""SELECT order_id, order_no, order_date FROM "order" WHERE order_kind='銷售'"""):
+        try:
+            if int((r["order_date"] or "0")[:4]) not in closed:
+                _post_order_ledger(r["order_id"], keep_no=True)
+                n += 1
+        except Exception as e:
+            failed.append(r["order_no"])
+            print(f"[migrate] 訂單 {r['order_no']} 重記失敗:", e)
+    print(f"[migrate] 銷售訂單照新記帳規則重記 {n} 張" + (f",失敗 {len(failed)} 張(下次開機再試)" if failed else ""))
+    return not failed
 
 
 def _post_order_ledger(oid, keep_no=False):
@@ -3101,9 +3105,10 @@ def manuals_download(key: str):
     return Response(content, media_type="text/html; charset=utf-8", headers={"Content-Disposition": cd})
 
 
-# 開機升級的後半段:migrate_db() 跑的時候 _post_order_ledger 還沒定義,要重記的訂單留到這裡做
-if _REPOST_SALES_PENDING:
-    try:
-        _repost_sales_orders()
-    except Exception as e:
-        print("[migrate] 重記銷售訂單失敗:", e)
+# 開機升級的後半段:migrate_db() 跑的時候 _post_order_ledger 還沒定義,要重記的訂單留到這裡做。
+# app_meta 的待辦全部成功才刪,失敗就留著,下次開機再試。
+try:
+    if q1("SELECT 1 x FROM app_meta WHERE key='repost_sales_v3'") and _repost_sales_orders():
+        execute("DELETE FROM app_meta WHERE key='repost_sales_v3'")
+except Exception as e:
+    print("[migrate] 重記銷售訂單失敗(下次開機再試):", e)

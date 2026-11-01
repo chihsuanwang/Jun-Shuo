@@ -329,6 +329,10 @@ CREATE TABLE expense_payment (
   created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
+-- 18d. 開機升級的待辦(2026-11-01):可能中途失敗的升級步驟先記一筆,做成功才刪,失敗下次開機再試。
+--      目前只有 repost_sales_v3(運費改記 4119-02 後重記舊銷售訂單)。
+CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT);
+
 -- 19. 總帳明細(方案 B 試點:進貨 / 營運費用 自動過帳,2026-09) ----
 --     家易照舊填業務表單,系統依 ledger.py 的對照表組出分錄,存檔前在確認畫面
 --     給他看、可微調。同一來源(進貨/費用)重存 = 整張傳票重開(先刪舊列再插新列),
