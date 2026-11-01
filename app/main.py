@@ -1230,10 +1230,12 @@ async def order_create(request: Request):
     if nopg:
         return RedirectResponse(f"/orders/new?err=nopg&names={quote('、'.join(nopg))}", status_code=303)
 
-    discount_total = flt("discount_total")
     subtotal = sum(qv * up for _, qv, up, _, _ in lines)
-    # 每列的成交價已是實收價;discount_total 只放使用者另外填的整單折讓。
-    # 「賣得比定價低」的差額改由 list_price 於報表即時計算,不重複扣。
+    # 整單折扣 = 商品小計 − 「本次實際收費」(2026-11-01,例:350 × 3 算 1000 → 折扣 50,總帳借 4119-01)。
+    # 「賣得比定價低」(每列單價低於商品目錄售價)的差額另由 list_price 於報表即時計算,跟這個不重複。
+    discount_total = _order_discount(order_kind, one("actual_charge"), subtotal)
+    if discount_total is None:
+        return RedirectResponse("/orders/new?err=charge", status_code=303)
     # 運費(2026-10-16,1015 版 Excel):這裡的運費是「跟客人收的」,算進應收、也算收入。
     # 實際付給物流的運費由家易從營運支出記(6114 運費),訂單不再自動記運費支出。
     shipping_fee = flt("shipping_fee_charged")
@@ -1334,6 +1336,24 @@ def _num(v):
 def _line_cost(qty, unit_cost):
     return round((qty or 0) * (unit_cost or 0), 2)
 
+def _order_discount(order_kind, raw, subtotal):
+    """「本次實際收費」(2026-11-01 同仁回饋)→ 整單折扣 = 商品小計 − 實際收費(存 order.discount_total)。
+    空白 = 照小計收,折扣 0;收得比小計多就是負數(畫面紅字提醒,不擋)。非銷售訂單不算折扣。
+    填了負數或不是數字回 None(擋下來)。"""
+    if order_kind != "銷售":
+        return 0.0
+    raw = str(raw or "").strip().replace(",", "")
+    if not raw:
+        return 0.0
+    try:
+        v = float(raw)
+    except ValueError:
+        return None
+    if v < 0:
+        return None
+    return round(subtotal - v, 2)
+
+
 def _no_product_line(order_kind, product_ids):
     """銷售訂單裡還沒設定產品線的商品名稱(2026-10-24)。沒有產品線就不知道收入 / 成本記哪個科目,
     以前會被合到預設的 4110 / 5111-02 龍眼乾,現在直接擋下來。贈送 / 樣品等非銷售訂單總帳不記,不用擋。"""
@@ -1386,7 +1406,8 @@ def _post_order_ledger(oid, keep_no=False):
     sale_lines = [(l["pg_name"], 0 if l["is_gift"] else (l["line_subtotal"] or 0), l["line_cost"] or 0)
                   for l in lines]
     sale_legs = ledger.compose_order_sale_entries(sale_lines, o["order_kind"], o["shipping_fee_charged"],
-                                                  o["sales_tax"], o["cost_payment_account"])
+                                                  o["sales_tax"], o["cost_payment_account"],
+                                                  discount=o["discount_total"] or 0)
     ledger.save_voucher("order_sale", oid, o["order_date"], sale_legs, note=f"訂單 {o['order_no']}", keep_no=keep_no)
 
     pay_legs = ledger.compose_order_payment_entries(o["paid_amount"], o["payment_account"])
@@ -1651,10 +1672,12 @@ async def order_update(request: Request, oid: int):
         new_costs.append(_line_cost(qv, uc))
 
     subtotal = sum(qv * up for _, qv, up, _, gf in new_lines if not gf)
-    disc = o["discount_total"] or 0  # 折扣欄位已不開放編輯,沿用原值(通常是 0)
+    kind = g("order_kind") or o["order_kind"]
+    disc = _order_discount(kind, g("actual_charge"), subtotal)   # 本次實際收費 → 整單折扣(2026-11-01)
+    if disc is None:
+        return RedirectResponse(f"/orders/{oid}?err=charge", status_code=303)
     shipping_fee = flt("shipping_fee_charged")   # 跟客人收的運費,算進應收(2026-10-16)
     total = subtotal - disc + shipping_fee
-    kind = g("order_kind") or o["order_kind"]
     if g("order_date") and not _valid_date(g("order_date")):
         return RedirectResponse(f"/orders/{oid}?err=date", status_code=303)
 
@@ -1692,7 +1715,7 @@ async def order_update(request: Request, oid: int):
                 payment_status=pay_status,
                 paid_date=(g("paid_date") if paid else None), paid_amount=(total if paid else None),
                 payment_account=(g("payment_account") if paid else None),
-                order_total=total, sales_tax=sales_tax,
+                order_total=total, sales_tax=sales_tax, discount_total=disc,
                 cost_payment_account=None,
                 ship_method=g("ship_method"), carrier=g("carrier"), tracking_no=g("tracking_no"),
                 shipped_date=g("shipped_date"), delivered_date=g("delivered_date"),

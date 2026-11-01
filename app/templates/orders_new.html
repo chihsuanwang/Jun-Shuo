@@ -6,6 +6,7 @@
 {% if request.query_params.get('ok') %}<div class="ok">訂單已建立。</div>{% endif %}
 {% if request.query_params.get('err') == 'required' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">請選擇客戶與銷售管道。</div>{% endif %}
 {% if request.query_params.get('err') == 'tax' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷項稅額不能是負數,也不能比商品金額還大,請再檢查一次。</div>{% endif %}
+{% if request.query_params.get('err') == 'charge' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">「本次實際收費」要填 0 以上的數字(不填就是照商品小計收)。</div>{% endif %}
 {% if request.query_params.get('err') == 'date' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">訂單日期格式不對,請用日期選擇器選一天再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoice' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">銷售訂單一定要開發票,請填上發票號碼再存檔。</div>{% endif %}
 {% if request.query_params.get('err') == 'invoicedup' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">發票號碼 {{ request.query_params.get('no') }} 已經用在{{ request.query_params.get('dup') }},發票號碼不能重複,請再檢查一次。</div>{% endif %}
@@ -72,7 +73,10 @@
       </tr>
     {% endfor %}
     </tbody>
-    <tfoot><tr><td colspan="3" class="r">商品應收款項(含稅)</td><td class="r" id="goodstotal">0</td><td colspan="3" rowspan="3" class="muted" style="font-size:11px;vertical-align:top">成本移轉價:跟小農買這一項,一個單位多少錢,自己填(必填)</td></tr>
+    <tfoot><tr><td colspan="3" class="r">商品小計(含稅)</td><td class="r" id="goodstotal">0</td><td colspan="3" rowspan="4" class="muted" style="font-size:11px;vertical-align:top">成本移轉價:跟小農買這一項,一個單位多少錢,自己填(必填)</td></tr>
+      <tr id="chargeRow"><td colspan="3" class="r">本次實際收費(含稅)<div class="muted" style="font-size:11px">預設 = 商品小計;打折就改成實際收的錢</div></td>
+        <td class="r"><input name="actual_charge" id="actualCharge" type="number" step="any" min="0" data-disc="{{ copy_o.discount_total or 0 if copy_o else 0 }}" style="width:110px;text-align:right">
+        <div id="chargeHint" style="font-size:11px;margin-top:2px"></div></td></tr>
       <tr><td colspan="3" class="r">運費(跟客人收,下方「物流」填)</td><td class="r" id="shiptotal">0</td></tr>
       <tr><td colspan="3" class="r"><b>應收合計(含稅)</b></td><td class="r"><b id="ordertotal">0</b></td></tr></tfoot>
   </table>
@@ -160,16 +164,41 @@
     });
     var ship = shipCostInput ? parseFloat(shipCostInput.value) || 0 : 0;
     var g = document.getElementById('goodstotal'), s = document.getElementById('shiptotal');
+    // 本次實際收費(2026-11-01):沒動過就跟著商品小計;改過就照填的,跟小計的差額 = 整單折扣(總帳 4119-01)
+    var ac = document.getElementById('actualCharge'), hint = document.getElementById('chargeHint'),
+        kindSel = document.querySelector('select[name="order_kind"]'),
+        sale = !kindSel || kindSel.value === '銷售', r2 = function (v) { return Math.round(v * 100) / 100; };
+    var charged = sum;
+    if (ac) {
+      document.getElementById('chargeRow').hidden = !sale;
+      if (ac.dataset.disc !== undefined && !ac.dataset.init) {   // 已存的訂單 / 複製的訂單:帶回原本的實際收費
+        ac.dataset.init = '1';
+        if (parseFloat(ac.dataset.disc)) { ac.value = r2(sum - parseFloat(ac.dataset.disc)); ac.dataset.touched = '1'; }
+      }
+      if (!ac.dataset.touched) ac.value = r2(sum);
+      if (sale && ac.value !== '') charged = parseFloat(ac.value) || 0;
+      var d = r2(charged - sum);
+      hint.textContent = !sale || !d ? '' : d < 0 ? '折扣 ' + d.toLocaleString() : '比小計高 +' + d.toLocaleString() + ',請確認';
+      hint.style.color = d > 0 ? 'var(--seal)' : '';
+      hint.style.fontWeight = d > 0 ? '600' : '';
+    }
     if (g) g.textContent = sum.toLocaleString();
     if (s) s.textContent = ship.toLocaleString();
     var t = document.getElementById('ordertotal');
-    if (t) t.textContent = (sum + ship).toLocaleString();
+    if (t) t.textContent = r2(charged + ship).toLocaleString();
   }
   body.addEventListener('input', function (e) {
     if (e.target.name === 'qty' || e.target.name === 'unit_price' || e.target.name === 'unit_cost') recalc();
     if (e.target.name === 'unit_cost') costHint(e.target.closest('tr'));
   });
   if (shipCostInput) shipCostInput.addEventListener('input', recalc);
+  var acIn = document.getElementById('actualCharge');
+  if (acIn) acIn.addEventListener('input', function () {   // 清空 = 回到跟著小計
+    if (acIn.value === '') delete acIn.dataset.touched; else acIn.dataset.touched = '1';
+    recalc();
+  });
+  var kindIn = document.querySelector('select[name="order_kind"]');
+  if (kindIn) kindIn.addEventListener('change', recalc);
 
   // 送出前先檢查產品線(2026-10-24)和成本移轉價(銷售訂單每列必填):被後端擋回來的話整張表單要重填
   body.closest('form').addEventListener('submit', function (e) {

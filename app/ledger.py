@@ -180,7 +180,7 @@ SHIPPING_REVENUE_ACCOUNT = ("4119-02", "銷貨收入-其他-運費")
 SALES_DISCOUNT_ACCOUNT = ("4119-01", "銷貨收入-其他-折扣")
 
 
-def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, cost_payment_account=None):
+def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, cost_payment_account=None, discount=0):
     """訂單成立分錄(同事「會計場景對應分錄表_1015」場景 1「成功賣出貨物時,但還未收款」):
     借 1172 應收帳款(含稅、含跟客人收的運費)/ 貸 2214 銷項稅額 + 貸 4111-xx 銷貨收入(依產品線);
     借 5111-xx 採購成本(依產品線)/ 貸 2171 應付帳款(欠小農);
@@ -192,6 +192,8 @@ def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, c
     - 跟客人收的運費整筆貸記 4119-02(2026-11-01 起;以前是依各線佔比分進產品線收入)。
     - 家易填的銷項稅額依金額佔比從各產品線收入、運費扣掉,每個收入科目記的都是未稅金額;
       尾差併進金額最大的那一項。運費支出不在這裡記,家易從營運支出記 6114 運費。
+    - discount = 商品小計 − 「本次實際收費」(2026-11-01):正數借記 4119-01 折扣;負數(收得比小計多)
+      一樣記 4119-01,方向反過來(貸方)。產品線收入照原本的單價小計記,稅額也照佔比分到折扣上。
     order_kind 不是「銷售」(贈送/樣品/內部領用等)回傳空 list,不記這筆。"""
     if order_kind != "銷售":
         return []
@@ -202,20 +204,23 @@ def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, c
     goods = sum(gross.values())
     shipping_fee = shipping_fee or 0
     sales_tax = sales_tax or 0
-    total = goods + shipping_fee
+    discount = discount or 0
+    total = goods - discount + shipping_fee
     total_cost = sum(cost.values())
     if total <= 0 and total_cost <= 0:
         return []
     legs = []
     if total > 0:
-        # 各收入項目(含稅):產品線 + 運費;稅額照佔比扣掉,記未稅金額
+        # 各收入項目(含稅,貸方為正):產品線 + 運費 − 折扣;稅額照佔比扣掉,記未稅金額
         parts = {("pg", pg): amt for pg, amt in gross.items() if amt}
         if shipping_fee:
             parts[("ship", None)] = shipping_fee
+        if discount:
+            parts[("disc", None)] = -discount
         net = {k: round(v - sales_tax * v / total, 2) for k, v in parts.items()}
         diff = round(total - sales_tax - sum(net.values()), 2)
         if diff and net:
-            biggest = max(net, key=lambda k: parts[k])
+            biggest = max(net, key=lambda k: abs(parts[k]))
             net[biggest] = round(net[biggest] + diff, 2)
         legs.append(dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=total, credit=0))
         if sales_tax:
@@ -223,8 +228,9 @@ def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, c
                               debit=0, credit=sales_tax))
         for (kind, pg), amt in net.items():
             if amt:
-                code, name = SHIPPING_REVENUE_ACCOUNT if kind == "ship" else REVENUE_ACCOUNTS.get(pg, REVENUE_DEFAULT)
-                legs.append(dict(account_code=code, account_name=name, debit=0, credit=amt))
+                code, name = (SHIPPING_REVENUE_ACCOUNT if kind == "ship" else SALES_DISCOUNT_ACCOUNT if kind == "disc"
+                              else REVENUE_ACCOUNTS.get(pg, REVENUE_DEFAULT))
+                legs.append(dict(account_code=code, account_name=name, debit=max(-amt, 0), credit=max(amt, 0)))
     if total_cost > 0:
         for pg, c in cost.items():
             if c:

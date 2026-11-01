@@ -165,13 +165,15 @@ def alerts(season=None, asof=None, mode="season", year=None):
     if iss["n"]:
         out.append({"text": f"破損 / 遺失待處理 {iss['n']} 件", "href": "/issues"})
     d = q1(f"""SELECT
-                 COALESCE(SUM(o.discount_total),0)
-                 + COALESCE(SUM(CASE WHEN ol.list_price>ol.unit_price
-                                     THEN (ol.list_price-ol.unit_price)*ol.qty ELSE 0 END),0) disc,
-                 COALESCE(SUM(COALESCE(NULLIF(ol.list_price,0), ol.unit_price)*ol.qty),0)
-                 + COALESCE(SUM(o.discount_total),0) base
+                 COALESCE(SUM(CASE WHEN ol.list_price>ol.unit_price
+                                   THEN (ol.list_price-ol.unit_price)*ol.qty ELSE 0 END),0) disc,
+                 COALESCE(SUM(COALESCE(NULLIF(ol.list_price,0), ol.unit_price)*ol.qty),0) base
                FROM "order" o JOIN order_line ol ON ol.order_id=o.order_id
                WHERE {sc} AND o.order_kind='銷售'""", sp)
+    # 整單折扣(本次實際收費少收的)另外加總:跟明細 JOIN 在一起加會被每一列重複算(2026-11-01 修)
+    od = q1(f"""SELECT COALESCE(SUM(o.discount_total),0) v FROM "order" o
+                WHERE {sc} AND o.order_kind='銷售'""", sp)["v"] or 0
+    d = dict(disc=(d["disc"] or 0) + od, base=(d["base"] or 0))
     if d["base"] and d["disc"] / d["base"] > 0.03:
         out.append({"text": f"折扣佔比 {d['disc']/d['base']*100:.0f}%(少收的錢)", "href": "/reports"})
     nc = q1(f'SELECT COUNT(*) n FROM "order" o WHERE {sc} AND {NOCOST_O}', sp)["n"]
