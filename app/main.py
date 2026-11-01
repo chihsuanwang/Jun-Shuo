@@ -2593,7 +2593,12 @@ def trial_balance_csv(request: Request):
 async def statements_close_year(request: Request):
     f = await request.form()
     year = int(f.get("year"))
+    # 2026-11-01 code-review:折舊改成月底才記、而且只在開固定資產頁時補,結轉前一定要先補齊,
+    # 不然 12/31 那筆沒記到、結轉後又不會再補(已結轉年度不動)。所以年度還沒過完不能結轉,結轉前先跑一次折舊對帳。
+    if dt.date.today() < dt.date(year, 12, 31):
+        return RedirectResponse(f"/ledger?tab=trial&year={year}&closeerr=notyet", status_code=303)
     if not q("SELECT 1 FROM ledger_entry WHERE source_type='year_closing' AND source_id=?", (year,)):
+        Q.sync_depreciation_vouchers()
         legs = ledger.compose_year_closing_entries(year)
         ledger.save_voucher("year_closing", year, f"{year}-12-31", legs, note=f"{year} 年度結轉")
     return RedirectResponse(f"/ledger?tab=trial&year={year}", status_code=303)

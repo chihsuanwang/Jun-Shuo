@@ -21,6 +21,7 @@
         <button type="submit" class="ghost">撤銷結轉</button>
       </form>
       {% else %}
+      {% if request.query_params.get('closeerr') == 'notyet' %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E;margin:8px 0">{{ year }} 年還沒過完,要到 {{ year }}/12/31 當天或之後才能結轉(12 月的折舊月底才會記,結轉前要先記好)。</div>{% endif %}
       <form method="post" action="/statements/close-year"
             onsubmit="return confirm('確定產生 {{ year }} 年度結轉傳票?會把 4~7 開頭科目的本年度餘額歸零,淨額轉入累積盈虧,之後隨時可以撤銷。')"
             style="display:inline;margin-left:6px">
