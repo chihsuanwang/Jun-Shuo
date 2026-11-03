@@ -37,7 +37,7 @@ DEFAULT_CHART = [
     ("G", "1423", "進項稅額"), ("G", "1424", "留抵稅額"),
     ("J", "1996", "股東往來(資產)"),
     ("K", "1616", "機器設備"), ("K", "1618", "累計折舊-機器設備"),
-    ("N", "2171", "應付帳款"), ("N", "2191", "應付費用"),
+    ("N", "2171", "應付帳款"), ("N", "2219", "其他應付款-其他"),
     ("P", "2214", "銷項稅額"), ("P", "2215", "應付營業稅"), ("P", "2655", "股東往來(負債)"),
     ("T", "3110", "實收資本(股本)"), ("T", "3211", "資本公積"), ("T", "3310-03", "法定盈餘公積"),
     ("T", "3351-03", "累積盈虧"), ("T", "3353", "本期損益"),
@@ -201,12 +201,26 @@ def add_other_sales_accounts():
             execute("INSERT INTO account(code,name,grp,sort,parent_code) VALUES(?,?,?,?,'4119')", (code, name, g, i))
 
 
+def rename_expense_ap():
+    """2026-11-03 同仁回覆:營運支出記應付用 2219 其他應付款-其他。之前暫定的 2191 應付費用(版本 4 建的)
+    改成 2219,總帳已經記在 2191 的分錄跟著改代碼 / 名稱(金額不動,餘額一樣)。"""
+    if not q1("SELECT 1 FROM account WHERE code='2191'"):
+        return
+    if q1("SELECT 1 FROM account WHERE code='2219'"):
+        execute("DELETE FROM account WHERE code='2191'")
+    else:
+        execute("UPDATE account SET code='2219', name='其他應付款-其他' WHERE code='2191'")
+    execute("UPDATE account SET parent_code='2219' WHERE parent_code='2191'")
+    execute("UPDATE ledger_entry SET account_code='2219', account_name='其他應付款-其他' WHERE account_code='2191'")
+
+
 # 版本 3(2026-11-01):4119 銷貨收入-其他 + 折扣 / 運費。
 CHART_ADDITIONS = {
     1: ["2215", "5111-2150-03", "5111-2408", "5111-2417-01", "6111"],
     2: setup_hierarchy,
     3: add_other_sales_accounts,
-    4: ["2191"],   # 2026-11-01:營運支出 / 其他支出可以先記應付費用(代碼暫定,待同仁確認)
+    4: ["2219"],   # 2026-11-01:營運支出 / 其他支出可以先記應付(2026-11-03 同仁確認代碼)
+    5: rename_expense_ap,
 }
 
 

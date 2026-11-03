@@ -158,9 +158,10 @@ def _cash_account(payment_account):
 
 
 # 2026-11-01 同仁回饋:營運支出 / 其他支出的付款方式可以選「應付費用」(還沒付,之後到應付帳款頁付)。
-# 跟欠小農的 2171 分開科目(使用者決定);代碼暫定 2191,待同仁確認。op_expense.payment_account 存這個名稱。
+# 跟欠小農的 2171 分開科目(使用者決定);科目 2219 其他應付款-其他(2026-11-03 同仁確認,原本暫定 2191)。
+# op_expense.payment_account 存「應付費用」這個名稱(畫面選項也叫這個)。
 EXPENSE_AP_NAME = "應付費用"
-EXPENSE_AP_ACCOUNT = ("2191", "應付費用")
+EXPENSE_AP_ACCOUNT = ("2219", "其他應付款-其他")
 
 
 def compose_expense_entries(account, amount, tax_amount=0, payment_account=None):
@@ -268,7 +269,7 @@ def compose_order_payment_entries(paid_amount, payment_account=None):
 
 
 def compose_expense_payment_entries(amount, payment_account=None):
-    """付掉先記成應付費用的營運支出 / 其他支出(應付帳款頁「費用」分頁):借 2191 應付費用 / 貸 現金或銀行。"""
+    """付掉先記成應付費用的營運支出 / 其他支出(應付帳款頁「費用」分頁):借 2219 其他應付款-其他 / 貸 現金或銀行。"""
     amount = amount or 0
     if amount <= 0:
         return []

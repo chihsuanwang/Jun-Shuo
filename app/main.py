@@ -2001,6 +2001,7 @@ def _expense_form_ctx(request, e, grp="VD"):
                 bank_codes={**{r["name"]: r["code"] for r in chart.accounts(["C"])},
                             ledger.EXPENSE_AP_NAME: ledger.EXPENSE_AP_ACCOUNT[0]},
                 ap_name=ledger.EXPENSE_AP_NAME,
+                ap_acct_name=chart.name_of(ledger.EXPENSE_AP_ACCOUNT[0], ledger.EXPENSE_AP_ACCOUNT[1]),
                 exp_paid=(q1("SELECT * FROM expense_payment WHERE expense_id=?", (e["expense_id"],)) or None) if e else None,
                 acct_names={r["code"]: r["name"] for r in chart.accounts([grp])},
                 today=dt.date.today().isoformat())
@@ -2834,8 +2835,8 @@ def _payables():
                  ORDER BY gp.purchase_date DESC, gp.purchase_id DESC""")
     return unpaid, paid
 
-# 2026-11-01 同仁回饋:營運支出 / 其他支出先記「應付費用」(貸 2191)的,在這頁「費用」分頁付款,
-#   記「借 2191 應付費用 / 貸 現金或銀行」(存在 expense_payment,一筆支出付一次、一次付清)。
+# 2026-11-01 同仁回饋:營運支出 / 其他支出先記「應付費用」(貸 2219 其他應付款-其他)的,在這頁「費用」分頁付款,
+#   記「借 2219 / 貸 現金或銀行」(存在 expense_payment,一筆支出付一次、一次付清)。
 def _expense_payables():
     unpaid = q("""SELECT e.expense_id, COALESCE(e.expense_date, e.ym) d, e.account_code, e.category, e.note,
                          e.doc_type, e.invoice_no, ROUND(COALESCE(e.amount,0) + COALESCE(e.tax_amount,0), 2) due

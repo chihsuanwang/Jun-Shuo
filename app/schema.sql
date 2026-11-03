@@ -316,9 +316,9 @@ CREATE TABLE goods_purchase (
   created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
--- 18c. 付掉應付費用(2026-11-01 同仁回饋):營運支出 / 其他支出付款方式選「應付費用」(貸 2191)時,
+-- 18c. 付掉應付費用(2026-11-01 同仁回饋):營運支出 / 其他支出付款方式選「應付費用」(貸 2219 其他應付款-其他)時,
 --      之後在應付帳款頁「費用」分頁付款,一筆支出只付一次、一次付清(暫定,實際需要分次再改)。
---      借 2191 應付費用 / 貸 現金或銀行(總帳來源 expense_payment)。刪支出時這筆一起刪。
+--      借 2219 其他應付款-其他 / 貸 現金或銀行(總帳來源 expense_payment)。刪支出時這筆一起刪。
 CREATE TABLE expense_payment (
   payment_id      INTEGER PRIMARY KEY,
   expense_id      INTEGER NOT NULL UNIQUE REFERENCES op_expense(expense_id),
