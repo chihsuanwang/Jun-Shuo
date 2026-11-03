@@ -1093,7 +1093,10 @@ PNL_SUMMARY_ACCOUNT = ("3353", "本期損益")  # 同事截圖給的代碼;只�
 
 def trial_balance(year):
     """試算表(2026-10-20 依 1019 同仁問題第 2、3、5 條改):選一個西曆年,每個科目一列——
-    期初餘額(前一年底為止累計)、本期借方 / 貸方(這一年的分錄,含年度結轉)、期末餘額 = 期初 + 借 − 貸。
+    期初餘額(前一年底為止累計,含以前年度的結轉傳票)、本期借方 / 貸方(這一年的分錄,**不含這一年自己的年度結轉傳票**)、
+    期末餘額 = 期初 + 借 − 貸。2026-11-03 同仁:看 / 下載以前年度的試算表,損益科目的期末要看得到當年金額,
+    包含當年的結轉傳票會全變 0 沒辦法用;以前年度的結轉要包含(隔年損益期初才會是 0、累積盈虧才對)。
+    結轉傳票本身借貸平衡,拿掉它檢核(期末加總 = 0)不受影響。
     **正負號:借方是正、貸方是負**(負債、權益、收入的餘額是負數),所以全部科目期末加總 = 0 就是檢核。
     會計科目表上的科目都列(沒有金額也列,顯示 0;不含 3353 / 5950 這種算出來的)。
     「3353 本期損益」這列 = 這一年 4~7 開頭科目的淨額(不含年度結轉傳票,所以結轉前後都看得到當年損益;
@@ -1106,7 +1109,8 @@ def trial_balance(year):
                SUM(CASE WHEN entry_date BETWEEN ? AND ? THEN debit ELSE 0 END) dr,
                SUM(CASE WHEN entry_date BETWEEN ? AND ? THEN credit ELSE 0 END) cr
           FROM ledger_entry WHERE entry_date <= ?
-         GROUP BY account_code""", (lo, lo, hi, lo, hi, hi))}
+           AND NOT (source_type = 'year_closing' AND source_id = ?)
+         GROUP BY account_code""", (lo, lo, hi, lo, hi, hi, int(year)))}
     rows = []
     for a in _chart.accounts(active_only=False, postable_only=True):
         g = agg.pop(a["code"], None) or {}

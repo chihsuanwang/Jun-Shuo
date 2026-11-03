@@ -17,7 +17,7 @@
       <form method="post" action="/statements/reopen-year"
             onsubmit="return confirm('確定撤銷 {{ year }} 年度結轉?')" style="display:inline;margin-left:6px">
         <input type="hidden" name="year" value="{{ year }}">
-        <span class="muted" style="font-size:12px;margin-right:8px">{{ year }} 年已結轉</span>
+        <span class="muted" style="font-size:12px;margin-right:8px">{{ year }} 年已結轉(這張表不含 {{ year }} 年自己的結轉傳票,收入 / 成本 / 費用的期末看得到當年金額)</span>
         <button type="submit" class="ghost">撤銷結轉</button>
       </form>
       {% else %}
