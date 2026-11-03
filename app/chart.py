@@ -221,6 +221,7 @@ CHART_ADDITIONS = {
     3: add_other_sales_accounts,
     4: ["2219"],   # 2026-11-01:營運支出 / 其他支出可以先記應付(2026-11-03 同仁確認代碼)
     5: rename_expense_ap,
+    6: lambda: None,   # 2026-11-03:科目沒變,記帳規則改了(稅全部由商品吸收),main.migrate_db 看到 < 6 會排重記銷售訂單
 }
 
 

@@ -326,8 +326,10 @@ def migrate_db():
         # 原本只看 user_version,版本一升上去,重記失敗就再也不會重試)
         execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT)")
         chart_ver = q1("PRAGMA user_version").get("user_version") or 0
-        if chart_ver < 3:   # 運費改記 4119-02:舊訂單要照新規則重記(函式在檔案後面定義,檔尾再跑)
-            execute("INSERT OR IGNORE INTO app_meta(key, value) VALUES('repost_sales_v3', '1')")
+        # 運費改記 4119-02(版本 3)、稅額全部由商品吸收(版本 6,2026-11-03 同仁回覆):舊訂單要照新規則重記
+        # (函式在檔案後面定義,檔尾再跑)
+        if chart_ver < 6:
+            execute("INSERT OR IGNORE INTO app_meta(key, value) VALUES('repost_sales', '1')")
         chart.apply_chart_additions()
         gcols = [r["name"] for r in q("PRAGMA table_info(goods_purchase)")]
         if gcols and "order_id" not in gcols:
@@ -3134,7 +3136,8 @@ def manuals_download(key: str):
 # 開機升級的後半段:migrate_db() 跑的時候 _post_order_ledger 還沒定義,要重記的訂單留到這裡做。
 # app_meta 的待辦全部成功才刪,失敗就留著,下次開機再試。
 try:
-    if q1("SELECT 1 x FROM app_meta WHERE key='repost_sales_v3'") and _repost_sales_orders():
-        execute("DELETE FROM app_meta WHERE key='repost_sales_v3'")
+    # repost_sales_v3 是 2026-11-01 那版用的名字,一樣認
+    if q1("SELECT 1 x FROM app_meta WHERE key IN ('repost_sales','repost_sales_v3')") and _repost_sales_orders():
+        execute("DELETE FROM app_meta WHERE key IN ('repost_sales','repost_sales_v3')")
 except Exception as e:
     print("[migrate] 重記銷售訂單失敗(下次開機再試):", e)

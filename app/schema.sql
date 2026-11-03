@@ -330,7 +330,7 @@ CREATE TABLE expense_payment (
 );
 
 -- 18d. 開機升級的待辦(2026-11-01):可能中途失敗的升級步驟先記一筆,做成功才刪,失敗下次開機再試。
---      目前只有 repost_sales_v3(運費改記 4119-02 後重記舊銷售訂單)。
+--      目前只有 repost_sales(記帳規則改了之後重記未結轉年度的銷售訂單:運費改記 4119-02、稅額全部由商品吸收)。
 CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT);
 
 -- 19. 總帳明細(方案 B 試點:進貨 / 營運費用 自動過帳,2026-09) ----

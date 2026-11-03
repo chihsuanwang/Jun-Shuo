@@ -200,10 +200,13 @@ def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, c
     - lines = [(產品線名稱或 None, 含稅小計, 成本), …]。成本是家易在每個品項自己填的金額
       (2026-10-16:系統不算,商品目錄也不再有單位成本)。
     - 跟客人收的運費整筆貸記 4119-02(2026-11-01 起;以前是依各線佔比分進產品線收入)。
-    - 家易填的銷項稅額依金額佔比從各產品線收入、運費扣掉,每個收入科目記的都是未稅金額;
-      尾差併進金額最大的那一項。運費支出不在這裡記,家易從營運支出記 6114 運費。
     - discount = 商品小計 − 「本次實際收費」(2026-11-01):正數借記 4119-01 折扣;負數(收得比小計多)
-      一樣記 4119-01,方向反過來(貸方)。產品線收入照原本的單價小計記,稅額也照佔比分到折扣上。
+      一樣記 4119-01,方向反過來(貸方)。
+    - **銷項稅額、運費、折扣都照實際金額記**,應收跟它們的差額按售價比例分到各產品線收入
+      (2026-11-03 同仁回覆;原本稅額照佔比從產品線、運費、折扣一起扣):
+      產品線收入合計 = 應收 − 稅額 − 運費 + 折扣 = 商品小計 − 稅額,依各線含稅小計佔比分,尾差併進最大的那條線。
+      例:龍眼乾 350 + 龍眼肉 600、實收 900(折扣 50)、運費 100、稅 45 → 借 應收 1,000 + 折扣 50 /
+      貸 龍眼乾 333.42 + 龍眼肉 571.58 + 稅 45 + 運費 100。運費支出不在這裡記,家易從營運支出記 6114 運費。
     order_kind 不是「銷售」(贈送/樣品/內部領用等)回傳空 list,不記這筆。"""
     if order_kind != "銷售":
         return []
@@ -221,17 +224,23 @@ def compose_order_sale_entries(lines, order_kind, shipping_fee=0, sales_tax=0, c
         return []
     legs = []
     if total > 0:
-        # 各收入項目(含稅,貸方為正):產品線 + 運費 − 折扣;稅額照佔比扣掉,記未稅金額
-        parts = {("pg", pg): amt for pg, amt in gross.items() if amt}
+        # 貸方為正:運費、折扣照實際金額;產品線分「應收 − 稅 − 運費 + 折扣」(= 商品小計 − 稅),照售價比例
+        net = {}
         if shipping_fee:
-            parts[("ship", None)] = shipping_fee
+            net[("ship", None)] = round(shipping_fee, 2)
         if discount:
-            parts[("disc", None)] = -discount
-        net = {k: round(v - sales_tax * v / total, 2) for k, v in parts.items()}
-        diff = round(total - sales_tax - sum(net.values()), 2)
-        if diff and net:
-            biggest = max(net, key=lambda k: abs(parts[k]))
-            net[biggest] = round(net[biggest] + diff, 2)
+            net[("disc", None)] = round(-discount, 2)
+        pgs = {pg: amt for pg, amt in gross.items() if amt}
+        if pgs:
+            prod = round(total - sales_tax - shipping_fee + discount, 2)
+            for pg, amt in pgs.items():
+                net[("pg", pg)] = round(prod * amt / goods, 2)
+            diff = round(prod - sum(v for k, v in net.items() if k[0] == "pg"), 2)
+            if diff:
+                biggest = max(pgs, key=lambda k: pgs[k])
+                net[("pg", biggest)] = round(net[("pg", biggest)] + diff, 2)
+        elif ("ship", None) in net:   # 沒有商品收入(全是贈品)只有運費:稅只能從運費扣
+            net[("ship", None)] = round(net[("ship", None)] - sales_tax, 2)
         legs.append(dict(account_code=AR_ACCOUNT[0], account_name=AR_ACCOUNT[1], debit=total, credit=0))
         if sales_tax:
             legs.append(dict(account_code=SALES_TAX_OUTPUT_ACCOUNT[0], account_name=SALES_TAX_OUTPUT_ACCOUNT[1],
