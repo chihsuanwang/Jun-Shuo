@@ -373,6 +373,9 @@ def _xlsx_bytes(header, rows, sheet="資料"):
     ws = wb.active
     ws.title = re.sub(r'[\/*?:\[\]]', "", sheet)[:31] or "資料"
     width = {}
+    # 年份 / 編號這類欄位不要千分位(2026-11-03:試算表「期別」2025 會變 2,025),照一般數字顯示
+    plain = {i for i, h in enumerate(header or [], 1)
+             if any(k in str(h) for k in ("期別", "產季", "年度", "年份", "統一編號", "電話", "代碼", "編號"))}
     def note(i, v):
         t = f"{v:,.2f}" if isinstance(v, float) else str(v)
         width[i] = max(width.get(i, 0), sum(2 if ord(ch) > 0x2E80 else 1 for ch in t))
@@ -391,7 +394,7 @@ def _xlsx_bytes(header, rows, sheet="資料"):
                 continue
             if isinstance(v, str) and v.startswith("="):
                 cell.data_type = "s"
-            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+            elif isinstance(v, (int, float)) and not isinstance(v, bool) and i not in plain:
                 cell.number_format = "#,##0" if float(v).is_integer() else "#,##0.00"
             note(i, v)
     for i, w in width.items():
