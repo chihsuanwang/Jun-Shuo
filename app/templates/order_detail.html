@@ -99,7 +99,7 @@
       <tr><td colspan="3" class="r"><b>應收合計(含稅)</b></td><td class="r"><b id="ordertotal">0</b></td></tr></tfoot>
   </table>
   <button type="button" id="addline" class="ghost" style="margin-top:10px">＋ 加一列</button>
-  <p class="muted" style="font-size:11px;margin-top:10px">成本記成「應付帳款」(欠小農);真的付錢給小農時,到左邊「應付帳款」頁(付小農)勾選付款。</p>
+  <p class="muted" style="font-size:11px;margin-top:10px">成本自動記為應付帳款(應付小農);付款時到左側「應付帳款」頁勾選付款。</p>
   <p style="font-size:12px;margin-top:4px">付小農:{% if order_cost > 0 %}{% if farmer_paid >= order_cost %}<span class="pos">已付清 {{ farmer_paid|money }} 元</span>{% elif farmer_paid > 0 %}已付 {{ farmer_paid|money }} / {{ order_cost|money }} 元{% else %}<span class="neg">還沒付</span>({{ order_cost|money }} 元){% endif %} · <a href="/payables">應付帳款</a>{% else %}<span class="muted">這張單沒有成本移轉價</span>{% endif %}</p>
   <p class="muted" style="font-size:11px;margin-top:6px">改完按上方「儲存」,應收合計會重算。</p>
 </div>
@@ -181,7 +181,7 @@
   <p class="muted" style="font-size:12px;margin-top:10px;line-height:1.7">
     <b>退貨又退款</b>:不用在這裡登記,直接按最上面的「刪除訂單」,總帳會一起刪掉。<br>
     <b>退款</b>(只退錢、貨不用退回):金額填退給客人多少,不管多少都算「其他支出」。<br>
-    <b>退回小農</b>(客人退貨但不退錢):貨退給小農。{% if farmer_paid %}這張單已經付過小農,小農把錢退回來,金額填退回多少、退回哪個帳戶,{% else %}這張單還沒付小農,直接少欠小農(沖應付帳款),不用選帳戶;{% endif %}
+    <b>退回小農</b>(客人退貨但不退錢):貨退給小農。{% if farmer_paid %}這張單已經付過小農,小農把錢退回來,金額填退回多少、退回哪個帳戶,{% else %}這張單還沒付小農,直接沖減應付小農的帳款,不用選帳戶;{% endif %}
     會從選的那項採購成本扣掉。這張訂單填的成本移轉價合計是 {{ order_cost|money }} 元,全部退回就填這個數字。
   </p>
 </div>

@@ -184,7 +184,7 @@
 {% endif %}
 
 <p class="muted" style="font-size:12px;margin-top:16px">
-<b>這頁的數字都從總帳抓</b>(2026-10-20 起):營收 = 銷貨收入(不含銷項稅額、含跟客人收的運費,<b>開單就算</b>);
+<b>本頁數字由總帳自動彙整</b>:營收 = 銷貨收入(未稅,含向客戶收取的運費,<b>開單即認列</b>);
 退款 = 原料報廢損失;銷貨成本 = 其他 5 開頭的採購成本 / 製造費用;營運費用 = 6 開頭科目(含折舊);
 業外收支 = 利息收入、利息費用等(不含所得稅,所以是「稅前」)。年度結轉的傳票不算進來。
 <b>營運支出要每筆記</b>(淡月也要記)。退回小農在發生月份從銷貨成本扣掉 —— 所以沒銷售的月份可能出現負的「銷貨成本」。目前為示範假資料。</p>
@@ -196,7 +196,15 @@
   if (!FIN.length) return;
 
   var span = Math.min(12, FIN.length);            // 一次看幾個月(縮放),其餘靠拖曳
-  var sel = new Set([FIN[FIN.length - 1].ym]);
+  // 預設選「最近一個有金額的月份」(2026-11-05):月初這個月還沒有資料,預設選它會整張都是 0,看起來像壞掉
+  function lastWithData() {
+    for (var i = FIN.length - 1; i >= 0; i--) {
+      var t = FIN[i];
+      if (t.revenue || t.cogs || t.opex_total || t.returns || t.nonop) return t.ym;
+    }
+    return FIN[FIN.length - 1].ym;
+  }
+  var sel = new Set([lastWithData()]);
 
   var wrap = document.getElementById('trendWrap');
   var tip = document.getElementById('ftip');
@@ -343,7 +351,7 @@
     scrollT = setTimeout(drawChart, 120);   // 捲動停下後,Y 軸依新的可視範圍重算
   });
   document.getElementById('selClear').addEventListener('click', function (e) {
-    e.preventDefault(); sel = new Set([FIN[FIN.length - 1].ym]); drawChart(); drawSel();
+    e.preventDefault(); sel = new Set([lastWithData()]); drawChart(); drawSel();
   });
 
   // 拖拉捲動

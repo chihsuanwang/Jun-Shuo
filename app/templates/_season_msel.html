@@ -36,9 +36,10 @@
   var wrap = document.getElementById('seasonMsel');
   if (!wrap || wrap.dataset.wired) return;
   wrap.dataset.wired = '1';
-  var fieldName = {{ "'year'" if view == 'calendar' else "'season'" }};
-  var allLabel = {{ "'全部年度'" if view == 'calendar' else "'全部產季'" }};
-  var unitLabel = {{ "'年'" if view == 'calendar' else "'產季'" }};
+  // 2026-11-05:原本直接輸出帶引號的字串,被 Jinja 自動跳脫成 &#39;,整段 JS 語法錯誤、多選產季選單沒反應;改用 tojson
+  var fieldName = {{ ('year' if view == 'calendar' else 'season')|tojson }};
+  var allLabel = {{ ('全部年度' if view == 'calendar' else '全部產季')|tojson }};
+  var unitLabel = {{ ('年' if view == 'calendar' else '產季')|tojson }};
   var f = wrap.closest('form');
   var btn = document.getElementById('seasonBtn');
   var panel = document.getElementById('seasonPanel');

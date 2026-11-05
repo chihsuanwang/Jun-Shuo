@@ -181,7 +181,7 @@ def alerts(season=None, asof=None, mode="season", year=None):
         out.append({"text": f"折扣佔比 {d['disc']/d['base']*100:.0f}%(少收的錢)", "href": "/reports"})
     nc = q1(f'SELECT COUNT(*) n FROM "order" o WHERE {sc} AND {NOCOST_O}', sp)["n"]
     if nc:
-        out.append({"text": f"{nc} 張銷售訂單還沒填成本移轉價(欠小農沒記到)", "href": "/orders?filter=nocost"})
+        out.append({"text": f"{nc} 張銷售訂單還沒填成本移轉價(應付小農的帳款尚未入帳)", "href": "/orders?filter=nocost"})
     rv = q1("SELECT COUNT(*) n FROM review_queue WHERE status='待處理'")["n"]
     if rv:
         out.append({"text": f"待確認資料 {rv} 筆", "href": "/review"})
