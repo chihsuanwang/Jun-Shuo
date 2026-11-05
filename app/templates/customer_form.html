@@ -13,7 +13,7 @@
 <div class="card" style="max-width:760px;margin-bottom:16px;border-color:#E4B79C;background:var(--warn-bg)">
   <h3 class="serif" style="color:var(--seal)">已有 {{ dups|length }} 位「{{ cust.display_name }}」</h3>
   <table style="margin-bottom:10px">
-    <thead><tr><th>名稱</th><th>分級</th><th>電話</th><th>訂單數</th><th>最近購買</th><th>地址</th><th></th></tr></thead>
+    <thead><tr><th>名稱</th><th>分類</th><th>電話</th><th>訂單數</th><th>最近購買</th><th>地址</th><th></th></tr></thead>
     <tbody>{% for d in dups %}
       <tr><td>{{ d.display_name }}</td><td>{{ d.customer_type or '—' }}</td><td>{{ d.phone or '—' }}</td>
           <td>{{ d.n }}</td><td>{{ d.last_order or '—' }}</td>

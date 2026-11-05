@@ -303,7 +303,8 @@ def new_vs_repeat(season=None, mode="season", year=None):
 
 def top_customers(season=None, n=5, mode="season", year=None):
     sc, sp = _S(season, mode=mode, year=year)
-    return q(f"""SELECT cu.display_name, cu.segment, SUM(o.order_total) v
+    # 2026-11-05:原本帶 cu.segment(2026-10-16 起不分級、欄位是空的),報表在名字後面印出「None」;改帶客戶分類
+    return q(f"""SELECT cu.display_name, cu.customer_type, SUM(o.order_total) v
                  FROM "order" o JOIN customer cu ON cu.customer_id=o.customer_id
                  WHERE {sc} AND o.order_kind='銷售'
                  GROUP BY cu.customer_id ORDER BY v DESC LIMIT ?""", sp + [n])

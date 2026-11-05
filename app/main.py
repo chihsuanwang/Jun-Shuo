@@ -1152,7 +1152,7 @@ async def customer_save(request: Request):
     else:
         # 擋重名:同名已存在且未確認 -> 退回表單並列出既有客戶
         if not f.get("confirm_dup"):
-            dups = q("""SELECT c.customer_id, c.display_name, c.segment, c.phone,
+            dups = q("""SELECT c.customer_id, c.display_name, c.customer_type, c.phone,
                           (SELECT COUNT(*) FROM "order" o WHERE o.customer_id=c.customer_id) n,
                           (SELECT MAX(order_date) FROM "order" o WHERE o.customer_id=c.customer_id) last_order,
                           (SELECT address_full FROM address a WHERE a.customer_id=c.customer_id
@@ -1189,7 +1189,7 @@ async def customer_save(request: Request):
 
 # ---------- 客戶合併 --------------------------------------------
 def _cust_brief(cid):
-    c = q("SELECT customer_id, display_name, segment, phone FROM customer WHERE customer_id=?", (cid,))
+    c = q("SELECT customer_id, display_name, customer_type, phone FROM customer WHERE customer_id=?", (cid,))
     if not c:
         return None
     c = c[0]
