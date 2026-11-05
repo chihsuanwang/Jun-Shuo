@@ -32,9 +32,10 @@
   .pc-verdict.good{background:#E7EBDC;border:1px solid #C7D3AE}
   .pc-verdict.bad{background:var(--warn-bg);border:1px solid #E4B79C}
   .pc-verdict .pct{font-size:18px;font-weight:900;font-variant-numeric:tabular-nums}
-  .pc-verdict.good .pct,.pc-verdict.good .lbl{color:var(--good)}
-  .pc-verdict.bad .pct,.pc-verdict.bad .lbl{color:var(--seal)}
-  .pc-verdict .lbl{font-size:11px;font-weight:700}
+  .pc-verdict.good .pct,.pc-verdict.good .pc-lbl{color:var(--good)}
+  .pc-verdict.bad .pct,.pc-verdict.bad .pc-lbl{color:var(--seal)}
+  /* 2026-11-05:原本叫 .lbl,跟 app.css 出貨標籤的 .lbl(黑框、寬 padding)撞名,標籤被加框、長字被擠到換行 */
+  .pc-verdict .pc-lbl{font-size:12px;font-weight:700;white-space:nowrap;margin-right:8px}
   .pc-connector{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--ink-2)}
   .pc-connector .pc-line{width:2px;flex:1;min-height:18px;background:linear-gradient(var(--rule),var(--gold),var(--rule))}
   .pc-connector .pc-ratio{font-size:11px;font-weight:700;color:var(--gold);white-space:nowrap;background:var(--paper-2);border:1px solid var(--rule);border-radius:999px;padding:4px 8px}
@@ -93,9 +94,8 @@
 
   function stageCard(kicker, title, unit, rowsHtml, compareLabel, compareVal, marginOrDiff, isMoney, lossLabel, goodLabel) {
     var ok = marginOrDiff >= 0;
-    var pct = isMoney
-      ? (ok ? '' : '−') + '$' + Math.abs(marginOrDiff).toFixed(2)
-      : pctd(marginOrDiff);
+    // 金額型(龍眼肉「賣一台斤,虧 / 賺」)標籤已經說了虧或賺,數字不再加負號(原本是「虧 −$117.47」)
+    var pct = isMoney ? '$' + Math.abs(marginOrDiff).toFixed(2) : pctd(marginOrDiff);
     return '<div class="pc-stage">'
       + '<div class="pc-kicker">' + kicker + '</div>'
       + '<h3 class="serif">' + title + '</h3>'
@@ -103,7 +103,7 @@
       + '<div class="pc-rows">' + rowsHtml + '</div>'
       + '<div class="pc-compare"><span>' + compareLabel + '</span><b>' + money2(compareVal) + '</b></div>'
       + '<div class="pc-verdict ' + (ok ? 'good' : 'bad') + '">'
-      + '<span class="lbl">' + (ok ? goodLabel : lossLabel) + '</span><span class="pct">' + pct + '</span>'
+      + '<span class="pc-lbl">' + (ok ? goodLabel : lossLabel) + '</span><span class="pct">' + pct + '</span>'
       + '</div></div>';
   }
 
