@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}匯入完成 · 匯入訂單 · 桂圓帳房{% endblock %}
+{% block body %}
+{# 2026-11-07:匯入結果頁。待補事項每次打開都從資料庫重算,到訂單補好就會消失。 #}
+<div class="head"><div><div class="sup">桂圓帳房 / 訂單 / 匯入</div><h1 class="serif">匯入完成</h1></div></div>
+<hr class="rule">
+
+<div class="ok" style="margin-bottom:16px">
+  已經開好 <b>{{ orders|length }}</b> 張訂單{% if newcust %}、建了 <b>{{ newcust|length }}</b> 位新客戶{% endif %},總帳也記好了。
+  應收合計 <b>{{ total|money }}</b> 元 · 銷項稅額 {{ tax|money }} 元 · 成本移轉價 {{ cost|money }} 元。
+</div>
+
+{% if todo_count %}
+<div class="card" style="margin-bottom:16px;border-left:4px solid var(--gold)">
+  <h3 class="serif">還要補的</h3>
+  <p style="font-size:13px;margin:4px 0 0;line-height:1.8">
+    {% for t, n in todo_count.items() %}<span style="margin-right:14px">⚠️ <b>{{ n }}</b> 張{{ t }}</span>{% endfor %}
+  </p>
+  <p class="muted" style="font-size:12px;margin:6px 0 0">點下面的訂單號碼進去補;補好之後重新打開這頁,那一項就會消失。
+    (這頁的網址可以先留著,或之後到「訂單」頁用「還沒填成本移轉價」篩選。)</p>
+</div>
+{% else %}
+<div class="card" style="margin-bottom:16px;border-left:4px solid var(--leaf)"><b>✅ 沒有要補的。</b></div>
+{% endif %}
+
+{% if edited %}
+<div class="ok" style="background:#E8EEF5;border-color:#B6C7DA;color:#2F5E8A;margin-bottom:16px">
+  ✏️ 第 {{ edited|join('、') }} 列是在預覽頁修正後匯入的 —— 原始的 Google 表單 / Excel 還是舊的內容,要的話記得也改。
+</div>
+{% endif %}
+
+<div class="card" style="margin-bottom:16px;overflow-x:auto">
+  <h3 class="serif">這次開的訂單</h3>
+  <table class="gl">
+    <thead><tr><th>訂單號碼</th><th>日期</th><th>客戶</th><th data-num>應收合計</th><th data-num>銷項稅額</th><th>發票號碼</th><th data-num>成本移轉價</th><th>要補</th></tr></thead>
+    <tbody>{% for o in orders %}
+      <tr>
+        <td><a href="/orders/{{ o.order_id }}">{{ o.order_no }}</a></td>
+        <td>{{ o.order_date }}</td>
+        <td>{{ o.cust or '' }}{% if o.customer_id in newcust|map(attribute='customer_id')|list %} <span class="muted" style="font-size:11px">(新)</span>{% endif %}</td>
+        <td class="r">{{ o.order_total|money }}</td>
+        <td class="r {{ 'neg' if not o.sales_tax }}">{{ o.sales_tax|money }}</td>
+        <td>{{ o.tax_doc_no or '—' }}</td>
+        <td class="r {{ 'neg' if o.nocost }}">{{ o.cost|money }}</td>
+        <td style="color:#8A6410;font-size:12px">{{ o.todo|join('、') or '—' }}</td>
+      </tr>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">沒有訂單。</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+
+{% if newcust %}
+<div class="card" style="margin-bottom:16px">
+  <h3 class="serif">這次建的新客戶</h3>
+  <p style="font-size:13px;line-height:1.9;margin:6px 0 0">
+    {% for c in newcust %}<a href="/customers/{{ c.customer_id }}">{{ c.cust_no }} {{ c.display_name }}</a> <span class="muted" style="font-size:11px">{{ c.phone or '' }}</span>{% if not loop.last %}　·　{% endif %}{% endfor %}
+  </p>
+  <p class="muted" style="font-size:12px;margin:6px 0 0">新客戶的分類先設「個人戶」;是企業戶、要開三聯式發票的,點進去改。</p>
+</div>
+{% endif %}
+
+<div style="display:flex;gap:10px">
+  <a href="/orders"><button type="button">回訂單列表</button></a>
+  <a href="/orders/import"><button type="button" class="ghost">再匯入一批</button></a>
+</div>
+{% endblock %}

@@ -1,6 +1,39 @@
 {% extends "base.html" %}
 {% block title %}預覽與確認 · 匯入訂單 · 桂圓帳房{% endblock %}
 {% block body %}
+{# 2026-11-07 整理:每列顯示金額 / 成本 / 檢查結果;⚠️ 列要勾「已確認」(或略過)才能按確認匯入;
+   新客戶 / 可能是舊客戶在這頁選,按確認匯入時才建立(跟訂單同一筆交易)。 #}
+<style>
+  .imp td{vertical-align:top;padding:9px 8px;border-bottom:1px solid var(--rule);text-align:left}
+  .imp th{font-size:12px;text-align:left;padding:6px 8px;border-bottom:2px solid var(--rule)}
+  .imp tr.skipped td{opacity:.4}
+  .imp tr.need td{background:#FBF3E0}
+  .imp tr.acked td{background:transparent}
+  .imp .msg{font-size:11.5px;margin-top:3px;line-height:1.5}
+  .imp .m-err{color:var(--seal)}
+  .imp .m-warn{color:#8A6410}
+  .imp .m-red{color:var(--seal);font-weight:600}
+  .imp .m-info{color:var(--ink-3)}
+  .imp .amt{font-size:11px;color:var(--ink-3);line-height:1.6;white-space:nowrap}
+  .pill{display:inline-flex;align-items:center;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}
+  .p-ok{background:#E4EFDD;border:1px solid #9DBE86;color:#2F7A4F}
+  .p-warn{background:#F7ECD3;border:1px solid var(--gold);color:#8A6410}
+  .p-err{background:#F6E3D6;border:1px solid #E4B79C;color:#A8321E}
+  .p-dup{background:var(--paper-2);border:1px solid var(--rule);color:var(--ink-3)}
+  .imp label.ck{font-weight:400;font-size:12px;display:flex;align-items:center;gap:5px;margin-top:6px;cursor:pointer}
+  .imp label.ck input{width:auto}
+  .imp label.acklbl{font-weight:700;color:#8A6410}
+  .imp tr.errrow td{color:var(--ink-2)}
+  .imp tr.editrow td{background:var(--paper-2);border-bottom:2px solid var(--gold)}
+  .edgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px 12px}
+  .edgrid label{font-size:11px;color:var(--ink-3);font-weight:400}
+  .edgrid input,.edgrid select{font-size:12.5px;padding:4px 6px}
+  .edgrid input.chg,.edgrid select.chg{border-color:var(--gold);background:#FFF8E6}
+  .btn-sm{font-size:11.5px;padding:3px 10px}
+  #impBar{position:sticky;bottom:0;background:var(--card);border-top:2px solid var(--rule);padding:12px 4px;margin-top:8px;
+          display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+</style>
+
 <div class="head">
   <div><div class="sup">桂圓帳房 / 訂單 / 匯入</div><h1 class="serif">預覽與確認</h1></div>
   <div class="muted" style="font-size:12px;align-self:flex-end">{{ filename }} · 管道:{{ channel_name }}</div>
@@ -11,97 +44,218 @@
 <div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E;margin-bottom:16px">
   以下欄位在「商品目錄」裡找不到完全相同名稱的在售商品,已經忽略、不會被匯入 ——
   如果這其實是某個商品,請改表單欄名跟商品名稱一致,或改商品名稱跟表單一致:
-  {% for h in unmatched_headers %}「{{ h }}」{% if not loop.last %}、{% endif %}{% endfor %}
+  {% for h in unmatched_headers %}「{{ h }}」{% if h in stopped_headers %}(這是已停售的商品){% endif %}{% if not loop.last %}、{% endif %}{% endfor %}
 </div>
 {% endif %}
 
-<div style="display:flex;gap:14px;margin-bottom:16px">
-  <div class="card kpi" style="flex:1;border-top-color:var(--leaf)">
+<div style="display:flex;gap:14px;margin-bottom:12px;flex-wrap:wrap">
+  <div class="card kpi" style="flex:1;min-width:150px;border-top-color:var(--leaf)">
     <div style="font-size:22px;font-weight:900;color:var(--leaf)">{{ summary.ok }}</div>
-    <div class="lab">筆可匯入(客戶 / 商品都比對成功)</div>
+    <div class="lab">✅ 筆可以直接匯入</div>
   </div>
-  <div class="card kpi" style="flex:1;border-top-color:var(--gold)">
+  <div class="card kpi" style="flex:1;min-width:150px;border-top-color:var(--gold)">
     <div style="font-size:22px;font-weight:900;color:var(--gold)">{{ summary.warn }}</div>
-    <div class="lab">筆待確認(可能是新客戶)</div>
+    <div class="lab">⚠️ 筆要確認(逐列看過、勾「已確認」)</div>
   </div>
-  <div class="card kpi" style="flex:1;border-top-color:var(--seal)">
+  <div class="card kpi" style="flex:1;min-width:150px;border-top-color:var(--seal)">
     <div style="font-size:22px;font-weight:900;color:var(--seal)">{{ summary.err }}</div>
-    <div class="lab">筆有問題,不會匯入</div>
+    <div class="lab">❌ 筆有問題,不會匯入</div>
   </div>
-  <div class="card kpi" style="flex:1;border-top-color:var(--rule)">
+  <div class="card kpi" style="flex:1;min-width:150px;border-top-color:var(--rule)">
     <div style="font-size:22px;font-weight:900;color:var(--ink-3)">{{ summary.dup }}</div>
     <div class="lab">筆之前已經匯入過,自動略過</div>
   </div>
 </div>
+<p class="muted" style="font-size:12.5px;margin:0 0 14px;line-height:1.7">
+  ❌ 的列回原始檔案改好再重新上傳(已經匯入的列會自動略過,不會重複)。⚠️ 的列請逐列看過提醒,選好客戶、勾「已確認」;
+  不想匯入的勾「略過」。全部處理完,下面的「確認匯入」才按得下去。<b>按下去之前,資料庫完全不會動。</b>
+</p>
 
-<form method="post" action="/orders/import/confirm">
+{% if notice %}
+<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E;margin-bottom:14px">{{ notice }}</div>
+{% endif %}
+{% if rechecked %}
+<div class="ok" style="margin-bottom:14px">已重新檢查。{% if n_edited %}有 <b>{{ n_edited }}</b> 列在這裡修正過 —— 原始的 Google 表單 / Excel 還是舊的內容,要的話記得也改。{% endif %}</div>
+{% endif %}
+
+{% macro edit_panel(r) %}
+<tr class="editrow" id="edit_{{ r.idx }}" hidden><td colspan="6">
+  <div style="font-size:12px;font-weight:700;margin-bottom:8px">✏️ 修正第 {{ r.line_no }} 列
+    <span class="muted" style="font-weight:400">(只改這次匯入的內容,不會改到原始檔案;時間戳記不能改)</span></div>
+  <div class="edgrid">
+    {% for fd, v in r.edit %}
+    <div><label>{{ fd }}</label>
+      {% if fd == '付款方式' %}
+        <select name="e_{{ r.idx }}_{{ fd }}" data-orig="{{ v }}">
+          <option value="" {{ 'selected' if not v }}>(不填)</option>
+          {% if v and v not in pay_methods %}<option value="{{ v }}" selected>{{ v }}(系統不認得)</option>{% endif %}
+          {% for m in pay_methods %}<option value="{{ m }}" {{ 'selected' if v == m }}>{{ m }}</option>{% endfor %}
+        </select>
+      {% else %}
+        <input name="e_{{ r.idx }}_{{ fd }}" value="{{ v }}" data-orig="{{ v }}" {% if fd == '訂單日期' %}placeholder="2026/10/2"{% endif %}>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <div style="margin-top:10px"><button type="submit" class="btn-sm recheck" formaction="/orders/import/recheck">🔄 重新檢查</button>
+    <span class="muted" style="font-size:11.5px;margin-left:8px">改完按這裡,整頁重新檢查(不用重新上傳)</span></div>
+</td></tr>
+{% endmacro %}
+
+{% macro edited_note(r) %}{% if r.edited_fields %}<div class="msg" style="color:#2F5E8A">✏️ 已在這裡修正:{{ r.edited_fields|join('、') }}</div>{% endif %}{% endmacro %}
+
+{% macro fix_links(e) %}{% if '商品目錄' in e %} <a href="/products" target="_blank">開商品目錄 ↗</a>{% elif '年度結轉' in e %} <a href="/statements" target="_blank">開試算表 ↗</a>{% endif %}{% endmacro %}
+
+<form method="post" action="/orders/import/confirm" id="impForm">
 <input type="hidden" name="channel_id" value="{{ channel_id }}">
-<input type="hidden" name="rows_json" value='{{ rows_json }}'>
+<input type="hidden" name="raw_json" value="{{ raw_json }}">
 
-<div class="card" style="margin-bottom:16px">
-  <table>
-    <thead><tr><th>客戶</th><th>商品明細</th><th data-num>金額</th><th>狀態 / 需要處理</th></tr></thead>
+<div class="card" style="margin-bottom:0;overflow-x:auto">
+  <table class="imp" style="width:100%;border-collapse:collapse">
+    <thead><tr><th>列</th><th>日期</th><th>客戶</th><th>商品(數量 × 單價)</th><th style="text-align:right">金額</th><th>檢查結果</th></tr></thead>
     <tbody>
     {% for r in actionable %}
-      <tr>
-        <td style="vertical-align:top">
-          {{ r.customer_name or '(沒填姓名)' }}<br>
-          <span class="muted" style="font-size:11px">{{ r.phone }}</span>
-        </td>
-        <td style="vertical-align:top">
-          {% for ln in r.lines %}{{ ln.name }} ×{{ ln.qty|int }}{% if not loop.last %}、{% endif %}{% endfor %}
-        </td>
-        <td class="r muted" style="vertical-align:top;font-size:11px">確認匯入時<br>帶商品售價</td>
-        <td style="vertical-align:top">
-          {% if r.status == 'ok' %}
-            <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#E4EFDD;border:1px solid #9DBE86;color:#2F7A4F">可匯入</span>
-            <span class="muted" style="font-size:11px;margin-left:6px">= 既有客戶「{{ r.matched_customer_name }}」</span>
+      <tr class="irow {{ 'need' if r.status == 'warn' }}" data-idx="{{ r.idx }}" data-warn="{{ 1 if r.status == 'warn' else 0 }}"
+          data-total="{{ r.total }}" data-tax="{{ r.sales_tax or 0 }}" data-cost="{{ r.cost_total }}">
+        <td class="muted" style="font-size:12px">{{ r.line_no }}</td>
+        <td style="white-space:nowrap;font-size:12.5px">{{ r.order_date }}</td>
+        <td style="min-width:190px">
+          <b>{{ r.customer_name }}</b><br><span class="muted" style="font-size:11px">{{ r.phone }}{% if r.email %} · {{ r.email }}{% endif %}</span>
+          {% if r.address %}<br><span class="muted" style="font-size:11px">{{ r.address }}</span>{% endif %}
+          {% if r.cust_mode == 'existing' %}
+            <input type="hidden" name="resolve_{{ r.idx }}" value="{{ r.matched_customer_id }}">
+            <div class="msg" style="color:#2F7A4F">= 舊客戶「{{ r.matched_customer_name }}」</div>
           {% else %}
-            <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#F7ECD3;border:1px solid var(--gold);color:#8A6410">新客戶?</span>
-            <div style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:12px">
-              找不到電話「{{ r.phone }}」—
-              <select name="resolve_{{ loop.index0 }}" style="width:auto;display:inline-block">
-                <option value="new" selected>建立新客戶</option>
-                {% for c in customers %}<option value="{{ c.customer_id }}">其實是:{{ c.display_name }}（{{ c.phone or '沒留電話' }}）</option>{% endfor %}
-              </select>
-            </div>
+            <select name="resolve_{{ r.idx }}" class="resolve" style="margin-top:6px;font-size:12px;padding:4px 6px">
+              <option value="new" {{ 'selected' if r.default_customer == 'new' }}>➕ 建立新客戶「{{ r.customer_name }}」</option>
+              {% if r.candidates %}<optgroup label="可能是這位舊客戶">
+                {% for c in r.candidates %}<option value="{{ c.customer_id }}" {{ 'selected' if r.default_customer == c.customer_id }}>是「{{ c.display_name }}」({{ c.phone or '沒留電話' }};{{ c.reasons|join('、') }}相同)</option>{% endfor %}
+              </optgroup>{% endif %}
+              <optgroup label="其他舊客戶">
+                {% for c in customers %}{% if c.customer_id not in r.candidates|map(attribute='customer_id')|list %}<option value="{{ c.customer_id }}" {{ 'selected' if r.default_customer == c.customer_id }}>是「{{ c.display_name }}」({{ c.phone or '沒留電話' }})</option>{% endif %}{% endfor %}
+              </optgroup>
+            </select>
           {% endif %}
-          <label style="font-weight:400;font-size:11px;margin-top:6px;display:flex;align-items:center;gap:5px">
-            <input type="checkbox" name="skip_{{ loop.index0 }}" style="width:auto"> 略過這筆,不匯入
-          </label>
+        </td>
+        <td style="font-size:12.5px;line-height:1.6">
+          {% for ln in r.lines %}<div>{{ ln.name }} × {{ ln.qty_txt }} <span class="muted">× {{ ln.unit_price|money }} = {{ ln.subtotal|money }}</span></div>{% endfor %}
+          {% if r.payment_method %}<div class="muted" style="font-size:11px">付款方式:{{ r.payment_method }}</div>{% endif %}
+          {% if r.invoice_no %}<div class="muted" style="font-size:11px">發票:{{ r.invoice_no }}</div>{% endif %}
+          {% if r.note %}<div class="muted" style="font-size:11px">備註:{{ r.note }}</div>{% endif %}
+        </td>
+        <td style="text-align:right">
+          <div style="font-weight:800;font-size:14px">{{ r.total|money }}</div>
+          <div class="amt">
+            小計 {{ r.subtotal|money }}<br>
+            {% if r.discount %}{{ '折扣 −' if r.discount > 0 else '多收 +' }}{{ (r.discount if r.discount > 0 else -r.discount)|money }}<br>{% endif %}
+            {% if r.shipping_fee %}運費 {{ r.shipping_fee|money }}<br>{% endif %}
+            {% if r.sales_tax %}稅額 {{ r.sales_tax|money }}{% else %}<span class="m-red">稅額 0</span>{% endif %}<br>
+            成本 {{ r.cost_total|money }}
+          </div>
+        </td>
+        <td style="min-width:240px">
+          {% if r.status == 'ok' %}<span class="pill p-ok">✅ 可匯入</span>{% else %}<span class="pill p-warn">⚠️ 要確認</span>{% endif %}
+          {% for w in r.warnings %}<div class="msg {{ 'm-red' if w.startswith('銷項稅額') else 'm-warn' }}">⚠️ {{ w }}</div>{% endfor %}
+          {% for i in r.infos %}<div class="msg m-info">ⓘ {{ i }}</div>{% endfor %}
+          {{ edited_note(r) }}
+          {% if r.status == 'warn' %}
+          <label class="ck acklbl"><input type="checkbox" name="ack_{{ r.idx }}" class="ackbox" value="{{ r.warn_sig }}" {{ 'checked' if r.ack }}> 以上我都看過,已確認</label>
+          {% endif %}
+          <label class="ck"><input type="checkbox" name="skip_{{ r.idx }}" class="skip" {{ 'checked' if r.skip }}> 略過這筆,不匯入</label>
+          <button type="button" class="ghost btn-sm editbtn" data-idx="{{ r.idx }}" style="margin-top:6px">✏️ 修正</button>
         </td>
       </tr>
+      {{ edit_panel(r) }}
     {% endfor %}
     {% for r in display_only %}
-      <tr style="opacity:.65">
-        <td style="vertical-align:top">{{ r.customer_name or '(沒填姓名)' }}<br><span class="muted" style="font-size:11px">{{ r.phone or '(沒填電話)' }}</span></td>
-        <td style="vertical-align:top">{% for ln in r.lines %}{{ ln.name }} ×{{ ln.qty|int }}{% if not loop.last %}、{% endif %}{% endfor %}</td>
-        <td class="r" style="vertical-align:top">—</td>
-        <td style="vertical-align:top">
+      <tr class="errrow">
+        <td class="muted" style="font-size:12px">{{ r.line_no }}</td>
+        <td style="white-space:nowrap;font-size:12.5px">{{ r.order_date or '—' }}</td>
+        <td>{{ r.customer_name or '(沒填姓名)' }}<br><span class="muted" style="font-size:11px">{{ r.phone or '(沒填電話)' }}</span></td>
+        <td style="font-size:12.5px">{% for ln in r.lines %}<div>{{ ln.name }} × {{ ln.qty_txt }}</div>{% endfor %}</td>
+        <td style="text-align:right" class="muted">{{ r.total|money if r.lines else '—' }}</td>
+        <td>
           {% if r.status == 'duplicate' %}
-            <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;background:var(--paper-2);border:1px solid var(--rule);color:var(--ink-3)">已匯入過,略過</span>
+            <span class="pill p-dup">已匯入過,略過</span><div class="msg m-info">{{ r.dup_reason }}</div>
           {% else %}
-            <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#F6E3D6;border:1px solid #E4B79C;color:#A8321E">有問題</span>
-            <div class="muted" style="font-size:11px;margin-top:4px;color:var(--seal)">{{ r.error_reason }}</div>
+            <span class="pill p-err">❌ 不會匯入</span>
+            {% for e in r.errors %}<div class="msg m-err">❌ {{ e }}{{ fix_links(e) }}</div>{% endfor %}
+            {% for w in r.warnings %}<div class="msg m-warn">⚠️ {{ w }}</div>{% endfor %}
+            {{ edited_note(r) }}
+            <button type="button" class="ghost btn-sm editbtn" data-idx="{{ r.idx }}" style="margin-top:6px">✏️ 修正</button>
           {% endif %}
         </td>
       </tr>
+      {% if r.status != 'duplicate' %}{{ edit_panel(r) }}{% endif %}
     {% endfor %}
     {% if not actionable and not display_only %}
-      <tr><td colspan="4" class="muted" style="text-align:left">這個檔案沒有解析出任何一列資料。</td></tr>
+      <tr><td colspan="6" class="muted" style="text-align:left">這個檔案沒有解析出任何一列資料。</td></tr>
     {% endif %}
     </tbody>
   </table>
 </div>
 
-<div style="display:flex;justify-content:space-between;align-items:center">
-  <div class="muted" style="font-size:12.5px">
-    上面「待確認」的列,選好要建立新客戶還是指到既有客戶再送出;有問題的列不會被匯入,回原始檔案修正後重新上傳即可。
+<div id="impBar">
+  <div style="font-size:13px">
+    <div id="impSum"></div>
+    <div id="impNeed" style="color:var(--seal);font-weight:600;font-size:12.5px;margin-top:3px"></div>
   </div>
   <div style="display:flex;gap:10px">
     <a href="/orders/import"><button type="button" class="ghost">取消</button></a>
-    <button type="submit" {% if not actionable %}disabled{% endif %}>確認匯入（{{ summary.ok + summary.warn }} 筆）</button>
+    <button type="submit" class="ghost recheck" formaction="/orders/import/recheck">🔄 重新檢查</button>
+    <button type="submit" id="impGo" disabled>確認匯入</button>
   </div>
 </div>
 </form>
+
+<script>
+(function () {
+  var form = document.getElementById('impForm'), go = document.getElementById('impGo');
+  var rows = [].slice.call(document.querySelectorAll('tr.irow'));
+  function fmt(v) { return Math.round(v).toLocaleString(); }
+  var dirty = false;
+  [].forEach.call(document.querySelectorAll('.editbtn'), function (b) {
+    b.addEventListener('click', function () {
+      var p = document.getElementById('edit_' + b.dataset.idx);
+      p.hidden = !p.hidden;
+      if (!p.hidden) { var i = p.querySelector('input'); if (i) i.focus(); }
+    });
+  });
+  // 修正欄位改了還沒按「重新檢查」,不能按確認匯入(不然改的不會算數)
+  function onEdit(e) {
+    if (!e.target.closest('.editrow')) return;
+    var el = e.target; el.classList.toggle('chg', el.value !== el.dataset.orig);
+    dirty = [].some.call(document.querySelectorAll('.editrow input, .editrow select'),
+                         function (x) { return x.value !== x.dataset.orig; });
+    refresh();
+  }
+  form.addEventListener('input', onEdit);
+  function refresh() {
+    var n = 0, total = 0, tax = 0, cost = 0, need = [];
+    rows.forEach(function (tr) {
+      var skip = tr.querySelector('.skip').checked, ack = tr.querySelector('.ackbox');
+      tr.classList.toggle('skipped', skip);
+      tr.classList.toggle('acked', !!(ack && ack.checked));
+      if (skip) return;
+      if (tr.dataset.warn === '1' && !(ack && ack.checked)) need.push(tr.children[0].textContent.trim());
+      n++; total += +tr.dataset.total; tax += +tr.dataset.tax; cost += +tr.dataset.cost;
+    });
+    document.getElementById('impSum').innerHTML = n
+      ? '要匯入 <b>' + n + '</b> 張訂單 · 應收合計 <b>' + fmt(total) + '</b> 元 · 銷項稅額 ' + fmt(tax) + ' 元 · 成本移轉價 ' + fmt(cost) + ' 元'
+      : '沒有要匯入的訂單';
+    document.getElementById('impNeed').textContent = dirty
+      ? '有修正還沒套用,請先按「🔄 重新檢查」'
+      : need.length ? '還有 ' + need.length + ' 列 ⚠️ 沒勾「已確認」(第 ' + need.join('、') + ' 列)' : '';
+    go.disabled = dirty || !n || need.length > 0;
+    go.textContent = n ? '確認匯入(' + n + ' 張)' : '確認匯入';
+  }
+  form.addEventListener('change', function (e) { if (e.target.closest('.editrow')) onEdit(e); else refresh(); });
+  form.addEventListener('submit', function (e) {
+    if (e.submitter && e.submitter.classList.contains('recheck')) return;   // 重新檢查不受「已確認」限制
+    if (go.disabled) { e.preventDefault(); return; }
+    go.disabled = true; go.textContent = '匯入中…';   // 按一次就鎖住,不會連按匯兩次(伺服器端另外再擋)
+  });
+  refresh();
+})();
+</script>
 {% endblock %}

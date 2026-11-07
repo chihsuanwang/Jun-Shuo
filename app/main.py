@@ -1530,8 +1530,11 @@ def order_import_page(request: Request):
 @app.get("/orders/import/template")
 def order_import_template():
     products = q("SELECT name FROM product WHERE status='在售' ORDER BY sku")
-    header = ["時間戳記", "客戶姓名", "客戶電話", "收件地址", "付款方式", "備註"] + [p["name"] for p in products]
-    example = ["2026/10/2 下午 3:00:00", "王小明", "0933-111-222", "南投縣中寮鄉", "銀行匯款", "這是範例,請刪除這一列"]
+    # 2026-11-07 整理:加訂單日期 / Email / 發票號碼 / 銷項稅額 / 運費 / 實際收費。範例列的備註有「這是範例」,
+    # 忘了刪也會被預覽擋下來,不會變成一張真的訂單。
+    header = OI.TEMPLATE_HEADERS + [p["name"] for p in products]
+    example = ["2026/10/2 下午 3:00:00", "", "王小明", "0933-111-222", "wang@example.com", "南投縣中寮鄉永平路 1 號",
+               "銀行匯款", "", "", "100", "", "這是範例,請刪除這一列(忘了刪也不會匯入)"]
     example += (["2"] + [""] * (len(products) - 1)) if products else []
     return csv_response("訂單匯入範本.csv", header, [example])
 
@@ -1556,75 +1559,235 @@ async def order_import_preview(request: Request):
             request=request, active="order",
             channels=q("SELECT channel_id,name FROM channel ORDER BY channel_id"),
             parse_err="這個檔案解析不出任何一列資料,確認檔案跟表頭對不對。"))
-    result = OI.match_rows(headers, raw_rows, PAY_METHODS)
-    actionable = [r for r in result["rows"] if r["status"] in ("ok", "new_customer")]
+    raw_rows = [OI.serialize_raw(r) for r in raw_rows]
+    return _import_preview(request, int(channel_id), upload.filename, headers, raw_rows, [dict(r) for r in raw_rows])
+
+
+def _import_preview(request, channel_id, filename, headers, raw_rows, orig_rows, prev=None, changed=(), notice=None):
+    """預覽頁(第一次上傳 / 改完按「重新檢查」共用)。raw_rows = 現在的內容(可能在預覽頁改過),
+    orig_rows = 原始檔案的內容;prev = 上一輪畫面的表單(保留客戶選擇 / 略過 / 已確認),
+    changed = 這一輪剛改過的列(那幾列的「已確認」要重勾)。"""
+    result = OI.match_rows(headers, raw_rows, PAY_METHODS, closed_years=_closed_years(),
+                           invoice_taken=_invoice_taken, orig_rows=orig_rows)
+    fields = OI.EDIT_FIELDS + result["product_headers"]
+    for r in result["rows"]:
+        raw, orig = raw_rows[r["idx"]], orig_rows[r["idx"]]
+        r["edit"] = [(fd, OI.field_value(raw, fd)) for fd in fields]
+        r["edited_fields"] = [fd for fd in fields if OI.field_value(raw, fd) != OI.field_value(orig, fd)]
+        r["warn_sig"] = OI.warn_sig(r)
+        if prev is not None:
+            i = r["idx"]
+            r["skip"] = bool(prev.get(f"skip_{i}"))
+            # 「已確認」只在這列沒改過、提醒內容也沒變時保留
+            r["ack"] = prev.get(f"ack_{i}") == r["warn_sig"] and i not in changed
+            rv = prev.get(f"resolve_{i}") or ""
+            if r["cust_mode"] != "existing" and (rv == "new" or rv.isdigit()):
+                r["default_customer"] = "new" if rv == "new" else int(rv)
+    actionable = [r for r in result["rows"] if r["status"] in ("ok", "warn")]
     display_only = [r for r in result["rows"] if r["status"] in ("error", "duplicate")]
-    chan = q1("SELECT name FROM channel WHERE channel_id=?", (int(channel_id),))
+    chan = q1("SELECT name FROM channel WHERE channel_id=?", (channel_id,))
     return tpl.TemplateResponse("orders_import_preview.html", dict(
         request=request, active="order",
-        filename=upload.filename, channel_id=int(channel_id), channel_name=chan.get("name"),
+        filename=filename, channel_id=channel_id, channel_name=chan.get("name"),
         summary=result["summary"], unmatched_headers=result["unmatched_headers"],
-        actionable=actionable, display_only=display_only,
+        stopped_headers=result["stopped_headers"], pay_methods=PAY_METHODS,
+        actionable=actionable, display_only=display_only, rechecked=prev is not None and not notice,
+        notice=notice,
+        n_edited=sum(1 for r in result["rows"] if r["edited_fields"]),
         customers=q("SELECT customer_id,display_name,phone FROM customer ORDER BY display_name"),
-        rows_json=json.dumps(actionable, ensure_ascii=False)))
+        raw_json=json.dumps(dict(filename=filename, headers=headers, rows=raw_rows, orig=orig_rows), ensure_ascii=False)))
+
+
+@app.post("/orders/import/recheck")
+async def order_import_recheck(request: Request):
+    """預覽頁「重新檢查」(2026-11-07):套用畫面上「修正」改的欄位,整頁重新檢查,不用重新上傳檔案。
+    時間戳記不能改;沒時間戳記的列防重複仍用原始檔案的內容。"""
+    f = await request.form()
+    st = _import_load(f)
+    if not st:
+        return RedirectResponse("/orders/import?err=required", status_code=303)
+    channel_id, filename, headers, raw_rows, orig_rows = st
+    changed = _import_apply_edits(f, headers, raw_rows)
+    return _import_preview(request, channel_id, filename, headers, raw_rows, orig_rows, prev=f, changed=changed)
+
+
+def _import_load(f):
+    """預覽頁帶回來的檔案內容(raw_json)+ 管道;壞掉回 None。"""
+    try:
+        data = json.loads(f.get("raw_json") or "")
+        headers, raw_rows, orig_rows = data["headers"], data["rows"], data["orig"]
+        assert isinstance(raw_rows, list) and len(raw_rows) == len(orig_rows)
+        assert all(isinstance(r, dict) for r in raw_rows + orig_rows)
+    except (ValueError, TypeError, KeyError, AssertionError):
+        return None
+    channel_id = int(f.get("channel_id")) if str(f.get("channel_id") or "").isdigit() else 0
+    if not q1("SELECT channel_id FROM channel WHERE channel_id=?", (channel_id,)):
+        return None
+    return channel_id, str(data.get("filename") or ""), headers, raw_rows, orig_rows
+
+
+def _import_apply_edits(f, headers, raw_rows):
+    """套用預覽頁「修正」改的欄位,回傳改到的列(idx)。"""
+    product_headers = OI.match_rows(headers, [], PAY_METHODS)["product_headers"]
+    changed = set()
+    for i, raw in enumerate(raw_rows):
+        for fd in OI.EDIT_FIELDS + product_headers:
+            key = f"e_{i}_{fd}"
+            if key in f:
+                v = str(f.get(key) or "").strip()
+                if v != OI.field_value(raw, fd):
+                    OI.set_field(raw, fd, v)
+                    changed.add(i)
+    return changed
+
+
+class _ImportStale(Exception):
+    """確認匯入時重新檢查,跟預覽時看到的不一樣(被別人先匯入、商品被改、提醒變了…)。"""
 
 
 @app.post("/orders/import/confirm")
 async def order_import_confirm(request: Request):
+    """確認匯入(2026-11-07 整理):
+    ① 不相信畫面送回來的結果,伺服器拿檔案內容整批重新檢查一次;
+    ② 每一列要嘛略過、要嘛可匯入(⚠️ 的要勾「已確認」,而且提醒內容跟勾的時候一樣),有一列對不上就整批不寫、回預覽頁;
+    ③ 建客戶、開訂單、記總帳包在同一筆交易(db.transaction),中途出錯整批還原;
+       BEGIN IMMEDIATE 讓連按 / 兩個分頁同時送出時,第二個會看到第一個已經匯入、全部變成「已匯入過」。"""
     f = await request.form()
-    try:
-        rows = json.loads(f.get("rows_json") or "[]")
-    except (ValueError, TypeError):
-        rows = []
-    channel_id = int(f.get("channel_id") or 0) if (f.get("channel_id") or "").isdigit() else 0
-    if not channel_id or not q1("SELECT channel_id FROM channel WHERE channel_id=?", (channel_id,)):
+    st = _import_load(f)
+    if not st:
         return RedirectResponse("/orders/import?err=required", status_code=303)
+    channel_id, filename, headers, raw_rows, orig_rows = st
+    changed = _import_apply_edits(f, headers, raw_rows)
+    if changed:   # 有修正沒按重新檢查(畫面會擋,這裡再保險一次)
+        return _import_preview(request, channel_id, filename, headers, raw_rows, orig_rows, prev=f, changed=changed,
+                               notice="有修正還沒套用,已經幫你重新檢查,請再看一次、確認後再按「確認匯入」。")
+    try:
+        with _db.transaction():
+            created, newcust, edited = _import_write(f, channel_id, headers, raw_rows, orig_rows)
+    except _ImportStale as e:
+        return _import_preview(request, channel_id, filename, headers, raw_rows, orig_rows, prev=f,
+                               notice="這批還沒匯入(資料庫沒有動):" + ";".join(e.args[0]))
+    except Exception as e:
+        print("[import] 確認匯入失敗,整批還原:", repr(e))
+        return _import_preview(request, channel_id, filename, headers, raw_rows, orig_rows, prev=f,
+                               notice=f"匯入時出錯,整批都沒有寫進去(資料庫沒有動):{e}")
+    qs = f"ids={','.join(map(str, created))}&newc={','.join(map(str, newcust))}&edited={','.join(map(str, edited))}"
+    return RedirectResponse(f"/orders/import/done?{qs}", status_code=303)
 
-    imported = 0
-    for i, row in enumerate(rows):
+
+def _import_write(f, channel_id, headers, raw_rows, orig_rows):
+    """在交易裡:重新檢查 → 對不上就丟 _ImportStale → 建新客戶(同電話只建一位)→ 開訂單 → 記總帳。
+    回傳 (訂單 id 清單, 新客戶 id 清單, 在預覽頁修正過的列號)。"""
+    result = OI.match_rows(headers, raw_rows, PAY_METHODS, closed_years=_closed_years(),
+                           invoice_taken=_invoice_taken, orig_rows=orig_rows)
+    problems, todo, dups = [], [], []
+    for r in result["rows"]:
+        i, line = r["idx"], f"第 {r['line_no']} 列"
+        shown = f"resolve_{i}" in f            # 預覽時是「可匯入 / 要確認」的列才有客戶欄位
+        if not shown:
+            if r["status"] in ("ok", "warn"):
+                problems.append(f"{line}現在變成可以匯入了,請重新確認")
+            continue
         if f.get(f"skip_{i}"):
             continue
-        resolve = f.get(f"resolve_{i}", "new")
-        if resolve == "new":
-            cid = execute("""INSERT INTO customer(cust_no,display_name,customer_type,primary_channel_id,phone)
-                              VALUES(?,?,?,?,?)""",
-                          (next_cust_no(), row["customer_name"] or row["phone"], "個人戶", channel_id,
-                           row["phone_raw"] or row["phone"]))
-            execute("INSERT OR IGNORE INTO customer_alias(customer_id,alias_text) VALUES(?,?)",
-                    (cid, row["customer_name"] or row["phone"]))
-            if row.get("address"):
-                execute("""INSERT INTO address(customer_id,label,is_default,address_full)
-                           VALUES(?,'匯入',1,?)""", (cid, row["address"]))
-        elif resolve.isdigit():
-            cid = int(resolve)
+        if r["status"] == "duplicate":
+            dups.append(str(r["line_no"]))
+            continue
+        if r["status"] == "error":
+            problems.append(f"{line}現在有問題:{r['errors'][0]}")
+            continue
+        if r["status"] == "warn" and f.get(f"ack_{i}") != OI.warn_sig(r):
+            problems.append(f"{line}的提醒有變動,請重新看過、勾「已確認」")
+            continue
+        rv = str(f.get(f"resolve_{i}") or "")
+        if r["cust_mode"] == "existing":
+            if rv != str(r["matched_customer_id"]):
+                problems.append(f"{line}的客戶對不上,請重新確認")
+                continue
+            cid = r["matched_customer_id"]
+        elif rv == "new":
+            cid = None
+        elif rv.isdigit() and q1("SELECT 1 x FROM customer WHERE customer_id=?", (int(rv),)):
+            cid = int(rv)
         else:
+            problems.append(f"{line}選的客戶已經不在了,請重新選")
             continue
+        todo.append((r, cid))
+    if dups:
+        problems.insert(0, f"第 {'、'.join(dups)} 列已經匯入過了(可能剛剛已經按過確認,不會重複寫入)")
+    if problems:
+        raise _ImportStale(problems)
+    if not todo:
+        raise _ImportStale(["沒有要匯入的訂單(全部都勾了略過)"])
 
-        seg_row = q1("SELECT segment FROM customer WHERE customer_id=?", (cid,))
-        pseg = SEG_MAP.get(seg_row.get("segment"), "零售")
-        stdprice = {r["product_id"]: r["unit_price"]
-                    for r in q("SELECT product_id,unit_price FROM price_list WHERE customer_segment=? AND channel_id IS NULL",
-                               (pseg,))}
-        built_lines, subtotal = [], 0.0
-        for ln in (row.get("lines") or []):
-            up = stdprice.get(ln["product_id"], 0)
-            built_lines.append((ln["product_id"], ln["qty"], up))
-            subtotal = round(subtotal + _line_sub(ln["qty"], up), 2)
-        if not built_lines:
-            continue
-
+    created, newcust, edited, by_phone = [], [], [], {}
+    fields = OI.EDIT_FIELDS + result["product_headers"]
+    for r, cid in todo:
+        if cid is None:                       # 新客戶:同一個電話這一批只建一位
+            pkey = OI.normalize_phone(r["phone"])
+            cid = by_phone.get(pkey)
+            if cid is None:
+                cid = execute("""INSERT INTO customer(cust_no,display_name,customer_type,primary_channel_id,phone,email)
+                                 VALUES(?,?,?,?,?,?)""",
+                              (next_cust_no(), r["customer_name"], "個人戶", channel_id,
+                               r["phone_raw"] or r["phone"], r["email"] or None))
+                execute("INSERT OR IGNORE INTO customer_alias(customer_id,alias_text) VALUES(?,?)",
+                        (cid, r["customer_name"]))
+                if r["address"]:
+                    execute("""INSERT INTO address(customer_id,label,is_default,address_full,recipient_name,recipient_phone)
+                               VALUES(?,'匯入',1,?,?,?)""", (cid, r["address"], r["customer_name"], r["phone"]))
+                by_phone[pkey] = cid
+                newcust.append(cid)
+        tax_no = r["invoice_no"] or None
         oid = execute("""INSERT INTO "order"(order_no,order_date,season,customer_id,channel_id,order_kind,
-                         order_total,payment_method,payment_status,ship_status,source_ref,note)
-                         VALUES(?,?,?,?,?, '銷售', ?,?, '待收款', '待出貨', ?,?)""",
-                      (next_order_no(row["order_date"]), row["order_date"], Q.season_of(row["order_date"]), cid, channel_id,
-                       subtotal, row.get("payment_method"), row["source_ref"], row.get("note") or None))
-        for pid, qty, up in built_lines:
-            execute("""INSERT INTO order_line(order_id,product_id,qty,unit_price,line_subtotal,line_cost)
-                       VALUES(?,?,?,?,?,0)""", (oid, pid, qty, up, _line_sub(qty, up)))
+                         discount_total,order_total,sales_tax,payment_method,payment_status,
+                         shipping_fee_charged,ship_status,invoiced,tax_doc_no,source_ref,note)
+                         VALUES(?,?,?,?,?,'銷售',?,?,?,?,'待收款',?,'待出貨',?,?,?,?)""",
+                      (next_order_no(r["order_date"]), r["order_date"], Q.season_of(r["order_date"]), cid, channel_id,
+                       r["discount"], r["total"], r["sales_tax"] or 0, r["payment_method"],
+                       r["shipping_fee"] or 0, 1 if tax_no else 0, tax_no, r["source_ref"], r["note"] or None))
+        for ln in r["lines"]:
+            execute("""INSERT INTO order_line(order_id,product_id,qty,unit_price,list_price,line_subtotal,line_cost,unit_cost)
+                       VALUES(?,?,?,?,?,?,?,?)""",
+                    (oid, ln["product_id"], ln["qty"], ln["unit_price"], ln["unit_price"],
+                     _line_sub(ln["qty"], ln["unit_price"]), ln["line_cost"], ln["unit_cost"]))
         _post_order_ledger(oid)
-        imported += 1
+        created.append(oid)
+        raw, orig = raw_rows[r["idx"]], orig_rows[r["idx"]]
+        if any(OI.field_value(raw, fd) != OI.field_value(orig, fd) for fd in fields):
+            edited.append(r["line_no"])
+    return created, newcust, edited
 
-    return RedirectResponse(f"/orders?imported={imported}", status_code=303)
+
+@app.get("/orders/import/done", response_class=HTMLResponse)
+def order_import_done(request: Request):
+    """匯入結果:這批開了哪些訂單、建了哪些新客戶、哪些還要補(稅額 0 / 沒發票 / 沒成本)。
+    待補事項每次打開都從資料庫重算,補好的會自己消失。"""
+    def ids(name):
+        return [int(x) for x in (request.query_params.get(name) or "").split(",") if x.isdigit()]
+    oids, cids = ids("ids"), ids("newc")
+    orders = []
+    if oids:
+        orders = q(f"""SELECT o.order_id, o.order_no, o.order_date, o.order_total, o.sales_tax, o.tax_doc_no,
+                              o.payment_method, o.shipping_fee_charged, o.discount_total, c.display_name cust, c.customer_id,
+                              (SELECT COALESCE(SUM(line_cost),0) FROM order_line WHERE order_id=o.order_id) cost,
+                              (SELECT COUNT(*) FROM order_line WHERE order_id=o.order_id AND COALESCE(line_cost,0)<=0) nocost
+                       FROM "order" o LEFT JOIN customer c ON c.customer_id=o.customer_id
+                       WHERE o.order_id IN ({','.join('?' * len(oids))}) ORDER BY o.order_no""", oids)
+    for o in orders:
+        o["todo"] = [t for t, bad in (("銷項稅額 0", not o["sales_tax"]), ("沒有發票號碼", not o["tax_doc_no"]),
+                                      ("成本移轉價沒填", o["nocost"])) if bad]
+    newcust = q(f"""SELECT customer_id, cust_no, display_name, phone FROM customer
+                    WHERE customer_id IN ({','.join('?' * len(cids))}) ORDER BY cust_no""", cids) if cids else []
+    todo_count = {}
+    for o in orders:
+        for t in o["todo"]:
+            todo_count[t] = todo_count.get(t, 0) + 1
+    return tpl.TemplateResponse("orders_import_done.html", dict(
+        request=request, active="order", orders=orders, newcust=newcust, todo_count=todo_count,
+        edited=[x for x in (request.query_params.get("edited") or "").split(",") if x.isdigit()],
+        total=sum(o["order_total"] or 0 for o in orders), tax=sum(o["sales_tax"] or 0 for o in orders),
+        cost=sum(o["cost"] or 0 for o in orders)))
 
 
 @app.get("/orders", response_class=HTMLResponse)
