@@ -186,7 +186,7 @@
   </p>
 </div>
 
-<script src="/static/order_charge.js?v=20261101"></script>
+<script src="/static/order_charge.js?v=20261107"></script>
 <script>
 (function () {
   var k = document.getElementById('retKind'), cf = document.getElementById('retCostField'),
@@ -372,6 +372,7 @@
       document.getElementById('markShippedDate').value = (dateField2 && dateField2.value) || today;
     });
   }
+  GYCharge.wireTaxReminder(document.getElementById('orderForm'));   // 銷項稅額 0 的提醒,放在所有送出檢查最後
   recalc();
 })();
 </script>

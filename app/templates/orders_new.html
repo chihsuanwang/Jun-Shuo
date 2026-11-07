@@ -116,7 +116,7 @@
 <a href="/" style="margin-left:12px">取消</a>
 </form>
 
-<script src="/static/order_charge.js?v=20261101"></script>
+<script src="/static/order_charge.js?v=20261107"></script>
 <script>
 (function () {
   var body = document.getElementById('lines');
@@ -336,6 +336,7 @@
   search.form.addEventListener('submit', function (e) {
     if (!custId.value) { e.preventDefault(); alert('請先從搜尋結果選一位客戶。'); search.focus(); }
   });
+  GYCharge.wireTaxReminder(search.form);   // 銷項稅額 0 的提醒,放在所有送出檢查最後
 })();
 </script>
 {% include "_invoice_check.html" %}
