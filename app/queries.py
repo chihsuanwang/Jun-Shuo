@@ -6,14 +6,24 @@ from db import q, q1, execute
 import ledger
 
 
+# 總帳裡有損益科目(4~7 開頭)的分錄也算「有動靜」(2026-11-19:例如只用帳務調整補登過去帳的年度,
+# 儀表板也要選得到,方便回顧);年度結轉的傳票不算。
+_LEDGER_PNL_DATES = """SELECT entry_date d FROM ledger_entry
+                        WHERE source_type <> 'year_closing' AND substr(account_code,1,1) IN ('4','5','6','7')"""
+
+
 def seasons():
-    """所有「有動靜」的產季 —— 只要有訂單或有營運費用就納入(前期只有支出、還沒開賣的產季也會出現)。"""
-    rows = q("""
+    """所有「有動靜」的產季 —— 有訂單、有營運費用、或總帳有損益分錄就納入(前期只有支出、還沒開賣的產季也會出現)。"""
+    rows = q(f"""
         SELECT season FROM "order"
         UNION
         SELECT CAST(substr(ym, 1, 4) AS INT)
                - (CASE WHEN CAST(substr(ym, 6, 2) AS INT) < 4 THEN 1 ELSE 0 END)
           FROM op_expense
+        UNION
+        SELECT CAST(substr(d, 1, 4) AS INT)
+               - (CASE WHEN CAST(substr(d, 6, 2) AS INT) < 4 THEN 1 ELSE 0 END)
+          FROM ({_LEDGER_PNL_DATES})
         ORDER BY season""")
     return [r["season"] for r in rows]
 
@@ -25,11 +35,13 @@ def latest_sold_season():
 
 
 def calendar_years():
-    """所有「有動靜」的西曆年——跟 seasons() 同一組資料來源(訂單 + 營運費用),只是
+    """所有「有動靜」的西曆年——跟 seasons() 同一組資料來源(訂單 + 營運費用 + 總帳損益分錄),只是
     切法改成 1~12 月而非產季(2026-10 新增,給經營報表的「依西曆年」檢視用)。"""
-    rows = q("""SELECT CAST(strftime('%Y', order_date) AS INT) y FROM "order"
+    rows = q(f"""SELECT CAST(strftime('%Y', order_date) AS INT) y FROM "order"
                 UNION
                 SELECT CAST(substr(ym, 1, 4) AS INT) y FROM op_expense
+                UNION
+                SELECT CAST(substr(d, 1, 4) AS INT) y FROM ({_LEDGER_PNL_DATES})
                 ORDER BY y""")
     return [r["y"] for r in rows]
 
