@@ -3089,10 +3089,13 @@ def _convert_same_day_farmer_payments():
         execute('UPDATE "order" SET cost_payment_account=NULL WHERE order_id=?', (o["order_id"],))
         _post_order_ledger(o["order_id"])
 
-try:
-    _convert_same_day_farmer_payments()
-except Exception as _e:
-    print("[migrate] 付小農轉換略過:", _e)
+def _convert_farmer_payments_safe():
+    try:
+        _convert_same_day_farmer_payments()
+    except Exception as _e:
+        print("[migrate] 付小農轉換略過:", _e)
+
+_convert_farmer_payments_safe()
 
 
 # ---------- 定價試算(管理估算,不進帳本) --------------------
@@ -3323,14 +3326,30 @@ def _db_download(content: bytes, fname: str):
     cd = f"attachment; filename=guiyuan_backup.db; filename*=UTF-8''{quote(fname)}"
     return Response(content, media_type="application/octet-stream", headers={"Content-Disposition": cd})
 
+# 開機自動備份 guiyuan_ledger_YYYYMMDD.db;還原前自動另存 before_restore_YYYYMMDD_HHMMSS.db(最多留 10 份)
+_AUTO_RE = re.compile(r"guiyuan_ledger_(\d{4})(\d{2})(\d{2})\.db")
+_PRE_RE = re.compile(r"before_restore_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.db")
+
 def _auto_backups():
     out = []
-    for f in sorted(glob.glob(os.path.join(paths.BACKUP_DIR, "guiyuan_ledger_*.db")), reverse=True):
-        m = re.search(r"guiyuan_ledger_(\d{4})(\d{2})(\d{2})\.db$", f)
+    for f in glob.glob(os.path.join(paths.BACKUP_DIR, "*.db")):
+        name = os.path.basename(f)
+        m, p = _AUTO_RE.fullmatch(name), _PRE_RE.fullmatch(name)
         if m:
-            out.append(dict(name=os.path.basename(f), date=f"{m[1]}-{m[2]}-{m[3]}",
-                            kb=max(1, round(os.path.getsize(f) / 1024))))
-    return out
+            label, sort, kind = f"{m[1]}-{m[2]}-{m[3]}", f"{m[1]}{m[2]}{m[3]}000000", "auto"
+        elif p:
+            label, sort, kind = f"{p[1]}-{p[2]}-{p[3]} {p[4]}:{p[5]}", "".join(p.groups()), "pre"
+        else:
+            continue
+        out.append(dict(name=name, date=label, sort=sort, kind=kind, kb=max(1, round(os.path.getsize(f) / 1024))))
+    return sorted(out, key=lambda a: a["sort"], reverse=True)
+
+def _backup_file(name):
+    """只收自動備份 / 還原前備份的檔名,回傳完整路徑;不合格或不存在回 None。"""
+    if not (_AUTO_RE.fullmatch(name or "") or _PRE_RE.fullmatch(name or "")):
+        return None
+    path = os.path.join(paths.BACKUP_DIR, name)
+    return path if os.path.exists(path) else None
 
 @app.get("/backup", response_class=HTMLResponse)
 def backup_page(request: Request):
@@ -3342,7 +3361,9 @@ def backup_page(request: Request):
         kb=max(1, round(os.path.getsize(_db.DB) / 1024)) if os.path.exists(_db.DB) else 0,
     )
     return tpl.TemplateResponse("backup.html", dict(request=request, active="backup",
-                                                    stats=stats, autos=_auto_backups()))
+                                                    stats=stats, autos=_auto_backups(),
+                                                    restored=request.query_params.get("restored"),
+                                                    err=request.query_params.get("err")))
 
 @app.get("/backup/download")
 def backup_download():
@@ -3351,21 +3372,65 @@ def backup_download():
 
 @app.get("/backup/auto/{name}")
 def backup_auto_download(name: str):
-    if not re.fullmatch(r"guiyuan_ledger_\d{8}\.db", name):
-        return RedirectResponse("/backup", status_code=303)
-    path = os.path.join(paths.BACKUP_DIR, name)
-    if not os.path.exists(path):
+    path = _backup_file(name)
+    if not path:
         return RedirectResponse("/backup", status_code=303)
     with open(path, "rb") as f:
         content = f.read()
-    return _db_download(content, f"桂圓帳房自動備份_{name[15:23]}.db")
+    tag = "自動備份" if _AUTO_RE.fullmatch(name) else "還原前備份"
+    return _db_download(content, f"桂圓帳房{tag}_{''.join(re.findall(r'[0-9_]+', name)).strip('_')}.db")
+
+@app.post("/backup/restore")
+async def backup_restore(request: Request):
+    """把網站資料換成某一份自動備份。換之前先把現在的資料另存一份(before_restore_...),
+    之後可以在同一頁再換回來。換完跑一次開機升級,舊版本的備份也會補上新欄位 / 新科目。"""
+    import sqlite3
+    f = await request.form()
+    name = f.get("name") or ""
+    path = _backup_file(name)
+    if not path or f.get("confirm") != "1":
+        return RedirectResponse("/backup?err=name", status_code=303)
+    try:
+        cx = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            ok = cx.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            tables = {r[0] for r in cx.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            cx.close()
+        if not ok or not {"order", "ledger_entry", "account"} <= tables:
+            return RedirectResponse("/backup?err=bad", status_code=303)
+    except sqlite3.Error:
+        return RedirectResponse("/backup?err=bad", status_code=303)
+
+    os.makedirs(paths.BACKUP_DIR, exist_ok=True)
+    stamp = dt.datetime.now(_TW).strftime("%Y%m%d_%H%M%S")
+    with open(os.path.join(paths.BACKUP_DIR, f"before_restore_{stamp}.db"), "wb") as out:
+        out.write(_db_snapshot())
+    for old in sorted(glob.glob(os.path.join(paths.BACKUP_DIR, "before_restore_*.db")))[:-10]:
+        os.remove(old)
+
+    src = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    dst = sqlite3.connect(_db.DB, timeout=30)
+    try:
+        src.backup(dst)          # 整份換掉(SQLite 自己處理鎖,不會跟正在存檔的請求打架)
+    finally:
+        dst.close(); src.close()
+
+    migrate_db()
+    _convert_farmer_payments_safe()
+    _repost_pending()
+    label = next((a["date"] for a in _auto_backups() if a["name"] == name), name)
+    return RedirectResponse(f"/backup?restored={quote(label)}", status_code=303)
 
 
 # 開機升級的後半段:migrate_db() 跑的時候 _post_order_ledger 還沒定義,要重記的訂單留到這裡做。
 # app_meta 的待辦全部成功才刪,失敗就留著,下次開機再試。
-try:
-    # repost_sales_v3 是 2026-11-01 那版用的名字,一樣認
-    if q1("SELECT 1 x FROM app_meta WHERE key IN ('repost_sales','repost_sales_v3')") and _repost_sales_orders():
-        execute("DELETE FROM app_meta WHERE key IN ('repost_sales','repost_sales_v3')")
-except Exception as e:
-    print("[migrate] 重記銷售訂單失敗(下次開機再試):", e)
+def _repost_pending():
+    try:
+        # repost_sales_v3 是 2026-11-01 那版用的名字,一樣認
+        if q1("SELECT 1 x FROM app_meta WHERE key IN ('repost_sales','repost_sales_v3')") and _repost_sales_orders():
+            execute("DELETE FROM app_meta WHERE key IN ('repost_sales','repost_sales_v3')")
+    except Exception as e:
+        print("[migrate] 重記銷售訂單失敗(下次開機再試):", e)
+
+_repost_pending()

@@ -1,8 +1,10 @@
 {% extends "base.html" %}
-{% block title %}下載備份 · 桂圓帳房{% endblock %}
+{% block title %}備份 / 還原 · 桂圓帳房{% endblock %}
 {% block body %}
-<div class="head"><div><div class="sup">桂圓帳房</div><h1 class="serif">下載備份</h1></div></div>
+<div class="head"><div><div class="sup">桂圓帳房</div><h1 class="serif">備份 / 還原</h1></div></div>
 <hr class="rule">
+{% if restored %}<div class="ok">已經換成 {{ restored }} 那份資料。換之前的資料另存在下方「還原前自動存的」,要換回來按那一列的「用這份還原」。</div>{% endif %}
+{% if err %}<div class="ok" style="background:#F6E3D6;border-color:#E4B79C;color:#A8321E">{% if err == 'bad' %}這份備份檔打不開或不完整,沒有還原,網站資料沒動。{% else %}找不到這份備份,沒有還原,網站資料沒動。{% endif %}</div>{% endif %}
 <p class="muted" style="font-size:13px;margin:-4px 0 18px;line-height:1.7">
   按下面的按鈕,會把系統裡<b>所有的資料</b>(客戶、商品、訂單、總帳……)存成一個檔案下載到你的電腦。
   建議<b>每週下載一次</b>,放在自己的電腦或雲端硬碟。萬一網站出問題,拿這個檔案就能把資料救回來。
@@ -20,7 +22,7 @@
   </div>
   <div class="muted" style="font-size:12px;margin-top:10px">
     檔名會帶下載的日期時間,例如「桂圓帳房備份_20261119_1530.db」。這個檔案不能用 Excel 開,好好存著就好;
-    要還原時交給負責架網站的人。
+    要用這個檔案還原,交給負責架網站的人;網站自己留的備份可以直接在下面按「用這份還原」。
   </div>
 </div>
 
@@ -28,15 +30,27 @@
   <h3 class="serif" style="margin:0 0 6px">系統自動留的備份</h3>
   <div class="muted" style="font-size:12.5px;line-height:1.7;margin-bottom:10px">
     網站每次重新啟動(例如更新版本)會自動留一份當天的資料,最多留最近 30 份。
-    不小心刪錯東西時,可以下載那天以前的版本。這些備份跟網站放在同一個地方,所以還是要自己定期下載上面那份。
+    不小心刪錯東西時,可以按「用這份還原」把網站資料換回那一天(那天之後輸入的會不見,要重新補)。
+    還原前系統會先把現在的資料另存一份(列在表裡「還原前自動存的」),換錯了可以再換回來。
+    這些備份跟網站放在同一個地方,所以還是要自己定期下載上面那份。
   </div>
   {% if autos %}
   <table>
-    <thead><tr><th>日期</th><th class="num">大小</th><th></th></tr></thead>
+    <thead><tr><th>日期</th><th>哪一種</th><th class="num">大小</th><th></th><th></th></tr></thead>
     <tbody>
     {% for a in autos %}
-      <tr><td>{{ a.date }}</td><td class="num">{{ a.kb }} KB</td>
-          <td><a href="/backup/auto/{{ a.name }}">下載</a></td></tr>
+      <tr><td>{{ a.date }}</td>
+          <td class="muted">{{ '網站啟動時留的' if a.kind == 'auto' else '還原前自動存的' }}</td>
+          <td class="num">{{ a.kb }} KB</td>
+          <td><a href="/backup/auto/{{ a.name }}">下載</a></td>
+          <td style="text-align:right">
+            <form method="post" action="/backup/restore" style="display:inline"
+                  data-date="{{ a.date }}" onsubmit="return confirm('確定要把網站資料換成 ' + this.dataset.date + ' 那份嗎?那之後輸入的資料會不見。現在的資料會先另存一份,換錯了可以再換回來。')">
+              <input type="hidden" name="name" value="{{ a.name }}">
+              <input type="hidden" name="confirm" value="1">
+              <button type="submit" class="ghost" style="padding:4px 10px;font-size:12.5px">用這份還原</button>
+            </form>
+          </td></tr>
     {% endfor %}
     </tbody>
   </table>
