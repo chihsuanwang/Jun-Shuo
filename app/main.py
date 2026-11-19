@@ -3299,6 +3299,68 @@ def manuals_download(key: str):
     return Response(content, media_type="text/html; charset=utf-8", headers={"Content-Disposition": cd})
 
 
+# ---------- 下載備份(整個資料庫一個檔案)-------------------------------
+# 雲端主機的自動備份跟資料庫放同一顆硬碟,主機壞了會一起不見,所以讓使用者自己定期下載一份放自己電腦。
+_TW = dt.timezone(dt.timedelta(hours=8))
+
+def _db_snapshot():
+    """用 SQLite 的 backup 複製一份當下完整的資料(有人正在存檔也不會拿到寫一半的檔案)。"""
+    import sqlite3, tempfile
+    fd, tmp = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        src, dst = sqlite3.connect(_db.DB), sqlite3.connect(tmp)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close(); src.close()
+        with open(tmp, "rb") as f:
+            return f.read()
+    finally:
+        os.remove(tmp)
+
+def _db_download(content: bytes, fname: str):
+    cd = f"attachment; filename=guiyuan_backup.db; filename*=UTF-8''{quote(fname)}"
+    return Response(content, media_type="application/octet-stream", headers={"Content-Disposition": cd})
+
+def _auto_backups():
+    out = []
+    for f in sorted(glob.glob(os.path.join(paths.BACKUP_DIR, "guiyuan_ledger_*.db")), reverse=True):
+        m = re.search(r"guiyuan_ledger_(\d{4})(\d{2})(\d{2})\.db$", f)
+        if m:
+            out.append(dict(name=os.path.basename(f), date=f"{m[1]}-{m[2]}-{m[3]}",
+                            kb=max(1, round(os.path.getsize(f) / 1024))))
+    return out
+
+@app.get("/backup", response_class=HTMLResponse)
+def backup_page(request: Request):
+    stats = dict(
+        customers=q1("SELECT COUNT(*) n FROM customer")["n"],
+        orders=q1('SELECT COUNT(*) n FROM "order"')["n"],
+        entries=q1("SELECT COUNT(*) n FROM ledger_entry")["n"],
+        last_order=q1('SELECT MAX(order_date) d FROM "order"')["d"],
+        kb=max(1, round(os.path.getsize(_db.DB) / 1024)) if os.path.exists(_db.DB) else 0,
+    )
+    return tpl.TemplateResponse("backup.html", dict(request=request, active="backup",
+                                                    stats=stats, autos=_auto_backups()))
+
+@app.get("/backup/download")
+def backup_download():
+    stamp = dt.datetime.now(_TW).strftime("%Y%m%d_%H%M")
+    return _db_download(_db_snapshot(), f"桂圓帳房備份_{stamp}.db")
+
+@app.get("/backup/auto/{name}")
+def backup_auto_download(name: str):
+    if not re.fullmatch(r"guiyuan_ledger_\d{8}\.db", name):
+        return RedirectResponse("/backup", status_code=303)
+    path = os.path.join(paths.BACKUP_DIR, name)
+    if not os.path.exists(path):
+        return RedirectResponse("/backup", status_code=303)
+    with open(path, "rb") as f:
+        content = f.read()
+    return _db_download(content, f"桂圓帳房自動備份_{name[15:23]}.db")
+
+
 # 開機升級的後半段:migrate_db() 跑的時候 _post_order_ledger 還沒定義,要重記的訂單留到這裡做。
 # app_meta 的待辦全部成功才刪,失敗就留著,下次開機再試。
 try:

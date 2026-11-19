@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}下載備份 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head"><div><div class="sup">桂圓帳房</div><h1 class="serif">下載備份</h1></div></div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 18px;line-height:1.7">
+  按下面的按鈕,會把系統裡<b>所有的資料</b>(客戶、商品、訂單、總帳……)存成一個檔案下載到你的電腦。
+  建議<b>每週下載一次</b>,放在自己的電腦或雲端硬碟。萬一網站出問題,拿這個檔案就能把資料救回來。
+</p>
+
+<div class="card" style="margin-bottom:18px">
+  <h3 class="serif" style="margin:0 0 10px">現在的資料</h3>
+  <div class="muted" style="font-size:13px;line-height:1.9">
+    客戶 {{ stats.customers }} 位 · 訂單 {{ stats.orders }} 張 · 總帳 {{ stats.entries }} 筆
+    {% if stats.last_order %} · 最近一張訂單 {{ stats.last_order }}{% endif %}
+    · 檔案大約 {{ stats.kb }} KB
+  </div>
+  <div style="margin-top:14px">
+    <a href="/backup/download"><button type="button">下載目前的資料(.db)</button></a>
+  </div>
+  <div class="muted" style="font-size:12px;margin-top:10px">
+    檔名會帶下載的日期時間,例如「桂圓帳房備份_20261119_1530.db」。這個檔案不能用 Excel 開,好好存著就好;
+    要還原時交給負責架網站的人。
+  </div>
+</div>
+
+<div class="card">
+  <h3 class="serif" style="margin:0 0 6px">系統自動留的備份</h3>
+  <div class="muted" style="font-size:12.5px;line-height:1.7;margin-bottom:10px">
+    網站每次重新啟動(例如更新版本)會自動留一份當天的資料,最多留最近 30 份。
+    不小心刪錯東西時,可以下載那天以前的版本。這些備份跟網站放在同一個地方,所以還是要自己定期下載上面那份。
+  </div>
+  {% if autos %}
+  <table>
+    <thead><tr><th>日期</th><th class="num">大小</th><th></th></tr></thead>
+    <tbody>
+    {% for a in autos %}
+      <tr><td>{{ a.date }}</td><td class="num">{{ a.kb }} KB</td>
+          <td><a href="/backup/auto/{{ a.name }}">下載</a></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="muted" style="font-size:13px">目前還沒有自動備份。</div>
+  {% endif %}
+</div>
+{% endblock %}
