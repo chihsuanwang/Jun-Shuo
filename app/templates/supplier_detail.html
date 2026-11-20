@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ s.name }} · 供應商 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup"><a href="/suppliers">供應商</a> / 明細</div>
+    <h1 class="serif">{{ s.name }}{% if not s.active %} <span class="muted" style="font-size:15px">(停用)</span>{% endif %}</h1></div>
+  <a href="/suppliers/{{ s.supplier_id }}/edit"><button class="ghost">編輯</button></a>
+</div>
+<hr class="rule">
+{% if request.query_params.get('ok') %}<div class="ok">已儲存。</div>{% endif %}
+
+<div class="card" style="margin-bottom:16px">
+  <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+    <div><div class="muted" style="font-size:11.5px">聯絡人</div>{{ s.contact or '—' }}</div>
+    <div><div class="muted" style="font-size:11.5px">電話</div>{{ s.phone or '—' }}</div>
+    <div><div class="muted" style="font-size:11.5px">狀態</div>{{ '使用中' if s.active else '停用' }}</div>
+    <div><div class="muted" style="font-size:11.5px">地址</div>{{ s.address or '—' }}</div>
+    <div><div class="muted" style="font-size:11.5px">匯款帳戶</div>{{ s.bank_account or '—' }}</div>
+    <div><div class="muted" style="font-size:11.5px">備註</div>{{ s.note or '—' }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <h3 class="serif" style="margin:0 0 4px">這個供應商的訂單</h3>
+  <div class="muted" style="font-size:12.5px;margin-bottom:10px">開訂單時選了「{{ s.name }}」的品項都列在這裡,點單號打開那張訂單。</div>
+  <table>
+    <thead><tr><th>訂單日</th><th>訂單</th><th>客戶</th><th>品項</th><th class="r">數量</th><th class="r">成本移轉價</th><th class="r">移轉價小計</th><th>付小農</th></tr></thead>
+    <tbody>{% for l in lines %}
+      <tr>
+        <td>{{ l.order_date }}</td>
+        <td><a href="/orders/{{ l.order_id }}">{{ l.order_no }}</a>{% if l.order_kind != '銷售' %} <span class="muted" style="font-size:11px">{{ l.order_kind }}</span>{% endif %}</td>
+        <td>{{ l.cust or '' }}</td>
+        <td>{{ l.pname }}{% if l.is_gift %} <span class="muted" style="font-size:11px">贈品</span>{% endif %}</td>
+        <td class="r">{{ l.qty|plain_num }}</td>
+        <td class="r">{{ l|unit_cost_value or '—' }}</td>
+        <td class="r">{{ (l.line_cost or 0)|money }}</td>
+        <td>{% set pd, ct = paid[l.order_id] %}{% if ct <= 0 %}<span class="muted">—</span>{% elif pd >= ct %}已付{% elif pd > 0 %}付了一部分{% else %}還沒付{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:left">還沒有訂單選這個供應商。</td></tr>{% endfor %}</tbody>
+    {% if lines %}<tfoot><tr><td colspan="6"><b>合計({{ lines|length }} 列、{{ n_orders }} 張訂單)</b></td><td class="r"><b>{{ total_cost|money }}</b></td><td></td></tr></tfoot>{% endif %}
+  </table>
+  <div class="muted" style="font-size:12px;margin-top:8px">「付小農」看的是整張訂單付了沒(應付帳款頁是一張單一起付的)。</div>
+</div>
+{% endblock %}

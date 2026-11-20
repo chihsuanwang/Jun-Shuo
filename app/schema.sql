@@ -173,6 +173,19 @@ CREATE INDEX ix_order_date   ON "order"(order_date);
 CREATE INDEX ix_order_season ON "order"(season);
 CREATE INDEX ix_order_cust   ON "order"(customer_id);
 
+-- 7b. 供應商(2026-11-20):訂單每一列可以記是跟哪個供應商(小農)買的,只是查詢用,不影響記帳 ----
+CREATE TABLE supplier (
+  supplier_id     INTEGER PRIMARY KEY,
+  name            TEXT    NOT NULL,
+  contact         TEXT,                 -- 聯絡人
+  phone           TEXT,
+  address         TEXT,
+  bank_account    TEXT,                 -- 匯款帳戶(付小農貨款時對帳用)
+  note            TEXT,
+  active          INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),   -- 0 = 停用:新訂單選不到,舊訂單照樣顯示
+  created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
 -- 8. 訂單明細 ---------------------------------------------------
 CREATE TABLE order_line (
   line_id         INTEGER PRIMARY KEY,
@@ -189,7 +202,8 @@ CREATE TABLE order_line (
   unit_cost       REAL,                           -- 成本移轉價(每單位):2026-10-22 起存家易輸入的原值,編輯畫面帶回用;
                                                   -- 舊資料可能是 NULL 或舊 migration 從商品目錄帶的值,跟 line_cost 對不上時以 line_cost 為準
   is_gift         INTEGER NOT NULL DEFAULT 0 CHECK (is_gift IN (0,1)),
-  expiry_stated   TEXT                            -- 歷史「保存期限」原值,保留欄
+  expiry_stated   TEXT,                           -- 歷史「保存期限」原值,保留欄
+  supplier_id     INTEGER REFERENCES supplier(supplier_id)   -- 供應商(2026-11-20,不必填,NULL = 無)
 );
 CREATE INDEX ix_line_order   ON order_line(order_id);
 CREATE INDEX ix_line_product ON order_line(product_id);

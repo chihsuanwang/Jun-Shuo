@@ -223,6 +223,21 @@ ORDERS = [
 ]
 oids = [make_order(*row) for row in ORDERS]
 
+# ---- 供應商(2026-11-20):訂單品項記是跟誰買的,只是查詢用,不影響記帳 ----------
+SUPPLIERS = [   # 名稱, 聯絡人, 電話, 地址, 匯款帳戶, 備註, 使用中, 供應哪些品項
+    ("陳家龍眼園", "陳大哥", "0912-345-678", "南投縣中寮鄉永平村", "中寮農會 0000-00-000000", "龍眼乾、禮盒都跟他拿", 1,
+     ("GY-DRY-300", "GY-GIFT")),
+    ("林記蜂場", "林小姐", "049-2690000", "南投縣中寮鄉內城村", None, None, 1, ("HNY-LONGAN-420",)),
+    ("中寮張家焙灶", "張阿伯", "0933-000-000", None, None, "龍眼肉,9 月才開始烘", 1, ("LG-MEAT-600",)),
+    ("老王果園", "王先生", None, None, None, "今年沒合作", 0, ()),
+]
+for name, contact, phone, addr, bank, note, active, skus in SUPPLIERS:
+    c.execute("""INSERT INTO supplier(name,contact,phone,address,bank_account,note,active)
+                 VALUES(?,?,?,?,?,?,?)""", (name, contact, phone, addr, bank, note, active))
+    sid = c.lastrowid
+    for sku in skus:   # 贈品(is_gift)不填,鮮果那張也留空,示範「不填 = 無」
+        c.execute("UPDATE order_line SET supplier_id=? WHERE product_id=? AND is_gift=0", (sid, prod[sku]["id"]))
+
 # ---- 物流異常(1 筆未處理的破損)-------------------------------
 issue_oid = oids[6]      # 2026-05-20 莊麗芳那筆
 c.execute("""INSERT INTO shipment_issue(order_id,issue_type,issue_date,qty_affected,

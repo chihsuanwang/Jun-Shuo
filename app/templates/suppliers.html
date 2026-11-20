@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}供應商 · 桂圓帳房{% endblock %}
+{% block body %}
+<div class="head">
+  <div><div class="sup">桂圓帳房 / 基本資料</div><h1 class="serif">供應商</h1></div>
+  <a href="/suppliers/new"><button>＋ 新增供應商</button></a>
+</div>
+<hr class="rule">
+<p class="muted" style="font-size:13px;margin:-4px 0 14px">
+  開訂單時,每一列品項可以選是跟哪個供應商買的(不用填)。點名稱看這個供應商的資料跟他的訂單。
+</p>
+<div class="card">
+  <table>
+    <thead><tr><th>名稱</th><th>聯絡人</th><th>電話</th><th class="r">訂單品項</th><th>最近一次</th><th>狀態</th><th></th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr>
+        <td><a href="/suppliers/{{ r.supplier_id }}">{{ r.name }}</a></td>
+        <td>{{ r.contact or '' }}</td><td>{{ r.phone or '' }}</td>
+        <td class="r">{{ r.n_lines }}</td>
+        <td>{{ r.last_order or '—' }}</td>
+        <td>{% if r.active %}使用中{% else %}<span class="muted">停用</span>{% endif %}</td>
+        <td><a href="/suppliers/{{ r.supplier_id }}/edit">編輯</a></td>
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted" style="text-align:left">還沒有供應商。按右上「＋ 新增供應商」建第一個。</td></tr>{% endfor %}</tbody>
+  </table>
+  <div class="muted" style="font-size:12px;margin-top:8px">「訂單品項」= 有幾列訂單品項選了這個供應商。</div>
+</div>
+{% endblock %}

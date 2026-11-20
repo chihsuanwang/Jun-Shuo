@@ -192,6 +192,13 @@ def migrate_db():
             execute("""UPDATE order_line SET unit_cost=(SELECT unit_cost FROM product p
                        WHERE p.product_id=order_line.product_id)""")
             print("[migrate] order_line.unit_cost 已補上(用商品目錄目前的成本)")
+        # 供應商(2026-11-20):新表 + 訂單明細多一欄,舊訂單都是 NULL(= 無)
+        execute("""CREATE TABLE IF NOT EXISTS supplier (supplier_id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                   contact TEXT, phone TEXT, address TEXT, bank_account TEXT, note TEXT,
+                   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+                   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')))""")
+        if "supplier_id" not in lcols:
+            execute("ALTER TABLE order_line ADD COLUMN supplier_id INTEGER REFERENCES supplier(supplier_id)")
         icols = [r["name"] for r in q("PRAGMA table_info(other_income)")]
         for col in ("account_code", "doc_type", "invoice_no"):
             if col not in icols:
@@ -1004,6 +1011,90 @@ async def channel_save(request: Request):
     return RedirectResponse("/channels", status_code=303)
 
 
+# ---------- 供應商(2026-11-20)----------------------------------
+# 訂單每一列可以選供應商,方便訂單出問題時查是跟誰買的;只是記錄,不影響總帳 / 應付帳款。
+SUPPLIER_FIELDS = ("name", "contact", "phone", "address", "bank_account", "note")
+
+def _supplier_options(keep_ids=()):
+    """訂單選單用:使用中的供應商,加上這張訂單已經選了、但後來停用的(不然打開舊訂單會被洗掉)。"""
+    keep = [int(i) for i in keep_ids if i]
+    marks = ",".join("?" * len(keep)) or "NULL"
+    return q(f"""SELECT supplier_id, name, active FROM supplier
+                 WHERE active=1 OR supplier_id IN ({marks}) ORDER BY active DESC, name""", keep)
+
+def _line_suppliers(f, n):
+    """表單送回的每列供應商(跟 product_id 同一列對齊);空白 / 不存在的 → None。"""
+    raw = f.getlist("supplier_id")
+    valid = {r["supplier_id"] for r in q("SELECT supplier_id FROM supplier")}
+    out = []
+    for i in range(n):
+        v = raw[i] if i < len(raw) else ""
+        out.append(int(v) if str(v).isdigit() and int(v) in valid else None)
+    return out
+
+@app.get("/suppliers", response_class=HTMLResponse)
+def suppliers_page(request: Request):
+    rows = q("""SELECT s.*,
+                  (SELECT COUNT(*) FROM order_line ol WHERE ol.supplier_id=s.supplier_id) n_lines,
+                  (SELECT MAX(o.order_date) FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
+                    WHERE ol.supplier_id=s.supplier_id) last_order
+                FROM supplier s ORDER BY s.active DESC, s.name""")
+    return tpl.TemplateResponse("suppliers.html", dict(request=request, active="supplier", rows=rows))
+
+@app.get("/suppliers/new", response_class=HTMLResponse)
+def supplier_new(request: Request):
+    return tpl.TemplateResponse("supplier_form.html", dict(request=request, active="supplier", s=None, n_lines=0))
+
+@app.get("/suppliers/{sid}", response_class=HTMLResponse)
+def supplier_detail(request: Request, sid: int):
+    s = q1("SELECT * FROM supplier WHERE supplier_id=?", (sid,))
+    if not s:
+        return RedirectResponse("/suppliers", status_code=303)
+    lines = q("""SELECT o.order_id, o.order_no, o.order_date, o.order_kind, cu.display_name cust,
+                        p.name pname, p.uom, ol.qty, ol.unit_cost, ol.line_cost, ol.is_gift
+                   FROM order_line ol JOIN "order" o ON o.order_id=ol.order_id
+                   JOIN product p ON p.product_id=ol.product_id
+                   LEFT JOIN customer cu ON cu.customer_id=o.customer_id
+                  WHERE ol.supplier_id=? ORDER BY o.order_date DESC, o.order_id DESC, ol.line_id""", (sid,))
+    oids = list(dict.fromkeys(l["order_id"] for l in lines))
+    paid = {oid: (_farmer_paid(oid), q1("SELECT COALESCE(SUM(line_cost),0) c FROM order_line WHERE order_id=?",
+                                        (oid,))["c"]) for oid in oids}
+    return tpl.TemplateResponse("supplier_detail.html", dict(
+        request=request, active="supplier", s=s, lines=lines, paid=paid, n_orders=len(oids),
+        total_cost=sum(l["line_cost"] or 0 for l in lines)))
+
+@app.get("/suppliers/{sid}/edit", response_class=HTMLResponse)
+def supplier_edit(request: Request, sid: int):
+    s = q1("SELECT * FROM supplier WHERE supplier_id=?", (sid,))
+    if not s:
+        return RedirectResponse("/suppliers", status_code=303)
+    n_lines = q1("SELECT COUNT(*) n FROM order_line WHERE supplier_id=?", (sid,))["n"]
+    return tpl.TemplateResponse("supplier_form.html", dict(request=request, active="supplier", s=s, n_lines=n_lines))
+
+@app.post("/suppliers")
+async def supplier_save(request: Request):
+    f = await request.form()
+    sid = f.get("supplier_id")
+    sid = int(sid) if str(sid or "").isdigit() else None
+    if f.get("_delete"):
+        if sid:
+            if q1("SELECT COUNT(*) n FROM order_line WHERE supplier_id=?", (sid,))["n"]:
+                return RedirectResponse(f"/suppliers/{sid}/edit?err=used", status_code=303)
+            execute("DELETE FROM supplier WHERE supplier_id=?", (sid,))
+        return RedirectResponse("/suppliers", status_code=303)
+    cols = {k: (f.get(k) or "").strip() or None for k in SUPPLIER_FIELDS}
+    if not cols["name"]:
+        back = f"/suppliers/{sid}/edit" if sid else "/suppliers/new"
+        return RedirectResponse(f"{back}?err=name", status_code=303)
+    cols["active"] = 0 if f.get("active") == "0" else 1
+    if sid:
+        sets = ",".join(f"{k}=:{k}" for k in cols)
+        execute(f"UPDATE supplier SET {sets} WHERE supplier_id=:id", {**cols, "id": sid})
+    else:
+        sid = execute(f"INSERT INTO supplier({','.join(cols)}) VALUES({','.join(':' + k for k in cols)})", cols)
+    return RedirectResponse(f"/suppliers/{sid}?ok=1", status_code=303)
+
+
 # ---------- 客戶資料庫 -----------------------------------------
 CUST_TYPES = ['企業戶', '個人戶']   # 客戶分類(2026-10-16 依 Excel,客戶不分級)
 
@@ -1254,6 +1345,7 @@ def order_new(request: Request):
         prices_json=json.dumps(prices), cust_seg_json=json.dumps(cust_seg),
         lastcost=Q.last_unit_costs(),
         copy_o=copy_o, copy_lines=copy_lines if copy_o else [],
+        suppliers=_supplier_options([l["supplier_id"] for l in copy_lines] if copy_o else []),
     ))
 
 
@@ -1284,7 +1376,8 @@ async def order_create(request: Request):
     prods = f.getlist("product_id"); qtys = f.getlist("qty")
     ups   = f.getlist("unit_price")
     ucosts = f.getlist("unit_cost")   # 每列成本移轉價(每單位),家易自己填(2026-10-22 起不再是這列總額)
-    lines, line_costs, unit_costs = [], [], []
+    sups = _line_suppliers(f, len(prods))   # 每列供應商(2026-11-20,不必填)
+    lines, line_costs, unit_costs, line_sups = [], [], [], []
     for i, p in enumerate(prods):
         if not p:
             continue
@@ -1306,6 +1399,7 @@ async def order_create(request: Request):
         lines.append((pid, qv, up, None, lp))
         unit_costs.append(uc)
         line_costs.append(_line_cost(qv, uc))
+        line_sups.append(sups[i])
     if _cost_missing(order_kind, line_costs):
         return RedirectResponse("/orders/new?err=cost", status_code=303)
     nopg = _no_product_line(order_kind, [p for p, *_ in lines])
@@ -1352,9 +1446,9 @@ async def order_create(request: Request):
     if recv:
         execute('UPDATE "order" SET paid_date=order_date, paid_amount=order_total, payment_account=? WHERE order_id=?',
                 (recv, oid))
-    for (p, qv, up, b, lp), lc, uc in zip(lines, line_costs, unit_costs):
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,line_cost,unit_cost)
-                   VALUES(?,?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, _line_sub(qv, up), lc, uc))
+    for (p, qv, up, b, lp), lc, uc, sp in zip(lines, line_costs, unit_costs, line_sups):
+        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,list_price,line_subtotal,line_cost,unit_cost,supplier_id)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, lp, _line_sub(qv, up), lc, uc, sp))
     _post_order_ledger(oid)
     return RedirectResponse(f"/orders/{oid}?ok=1", status_code=303)
 
@@ -1815,6 +1909,7 @@ def order_detail(request: Request, oid: int):
         order_cost=sum(l["line_cost"] or 0 for l in lines),
         farmer_paid=_farmer_paid(oid),
         lastcost=Q.last_unit_costs(exclude_order=oid),
+        suppliers=_supplier_options([l["supplier_id"] for l in lines]),
         today=dt.date.today().isoformat()))
 
 
@@ -1907,7 +2002,8 @@ async def order_update(request: Request, oid: int):
     prods, qtys = f.getlist("product_id"), f.getlist("qty")
     ups, gl = f.getlist("unit_price"), f.getlist("is_gift")
     ucosts = f.getlist("unit_cost")
-    new_lines, new_costs, new_ucosts = [], [], []
+    sups = _line_suppliers(f, len(prods))
+    new_lines, new_costs, new_ucosts, new_sups = [], [], [], []
     for i, p in enumerate(prods):
         if not p:
             continue
@@ -1927,6 +2023,7 @@ async def order_update(request: Request, oid: int):
         new_lines.append((pid, qv, up if not is_gift else 0, None, is_gift))
         new_ucosts.append(uc)
         new_costs.append(_line_cost(qv, uc))
+        new_sups.append(sups[i])
 
     subtotal = round(sum(_line_sub(qv, up) for _, qv, up, _, gf in new_lines if not gf), 2)
     kind = g("order_kind") or o["order_kind"]
@@ -1964,9 +2061,9 @@ async def order_update(request: Request, oid: int):
         return RedirectResponse(f"/orders/{oid}?shiperr=1", status_code=303)
 
     execute("DELETE FROM order_line WHERE order_id=?", (oid,))
-    for (p, qv, up, b, gf), lc, uc in zip(new_lines, new_costs, new_ucosts):
-        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,line_cost,unit_cost)
-                   VALUES(?,?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, _line_sub(qv, up), gf, lc, uc))
+    for (p, qv, up, b, gf), lc, uc, sp in zip(new_lines, new_costs, new_ucosts, new_sups):
+        execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,line_cost,unit_cost,supplier_id)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""", (oid, p, b, qv, up, _line_sub(qv, up), gf, lc, uc, sp))
     cust_id = f.get("customer_id")
     cols = dict(order_date=g("order_date"), order_kind=kind,
                 payment_status=pay_status,
@@ -2079,8 +2176,8 @@ async def issue_update(request: Request, iid: int):
                        (next_order_no(), dt.date.today().isoformat(), o["season"], o["customer_id"],
                         o["channel_id"], f"由 {o['order_no']} 的{si['issue_type']}理賠重寄"))
         for l in lines:
-            execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,line_cost)
-                       VALUES(?,?,?,?,0,0,1,0)""", (noid, l["product_id"], l["batch_id"], l["qty"]))
+            execute("""INSERT INTO order_line(order_id,product_id,batch_id,qty,unit_price,line_subtotal,is_gift,line_cost,supplier_id)
+                       VALUES(?,?,?,?,0,0,1,0,?)""", (noid, l["product_id"], l["batch_id"], l["qty"], l["supplier_id"]))
         execute("UPDATE shipment_issue SET linked_reship_order_id=? WHERE issue_id=?", (noid, iid))
         return RedirectResponse("/issues", status_code=303)
 
